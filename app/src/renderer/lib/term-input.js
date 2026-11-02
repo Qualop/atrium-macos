@@ -37,9 +37,9 @@ export function keyAction(e, hasSelection) {
   if (e.type !== 'keydown') return 'pass';
   const k = String(e.key || '').toLowerCase();
   if (e.ctrlKey && !e.altKey && !e.metaKey && k === 'g') return 'block-ctrl-g';
-  if (e.ctrlKey && !e.altKey && k === 'v') return 'paste';
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && k === 'v') return 'paste';
   if (e.shiftKey && !e.ctrlKey && k === 'insert') return 'paste';
-  if (e.ctrlKey && !e.altKey && k === 'c' && (e.shiftKey || hasSelection)) return 'copy';
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && k === 'c' && (e.shiftKey || hasSelection)) return 'copy';
   return 'pass';
 }
 

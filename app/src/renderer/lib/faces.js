@@ -30,7 +30,7 @@ export function faceFor(nodeWidth, zoom, prev = null) {
 // nodes: [{ id, x, y, w, h }] (판 좌표), viewport: { x, y, zoom } (React Flow), screen: { width, height } (화면 px)
 // 돌려줌: 제어기를 붙일 노드 id 목록(가까운 순). margin만큼 화면 밖도 보이는 것으로 친다(끌 때 깜빡이지 않게).
 // prev: 지금 붙어 있는 노드 id 모음. 그 노드에는 얼굴 이력을 적용한다(SessionNode와 같은 기준).
-export function pickAttached(nodes, viewport, screen, { max = DEFAULT_MAX_CONTROLLERS, margin = 80, prev = null } = {}) {
+export function pickAttached(nodes, viewport, screen, { max = DEFAULT_MAX_CONTROLLERS, margin = 80, prev = null, focusId = null } = {}) {
   const { x: vx, y: vy, zoom } = viewport;
   const cx = screen.width / 2, cy = screen.height / 2;
   const seen = [];
@@ -41,7 +41,7 @@ export function pickAttached(nodes, viewport, screen, { max = DEFAULT_MAX_CONTRO
     const dx = clampDist(cx, left, right), dy = clampDist(cy, top, bottom);
     seen.push({ id: n.id, d: dx * dx + dy * dy });
   }
-  seen.sort((a, b) => a.d - b.d);
+  seen.sort((a, b) => Number(b.id === focusId) - Number(a.id === focusId) || a.d - b.d);
   return seen.slice(0, max).map((s) => s.id);
 }
 const clampDist = (c, lo, hi) => (c < lo ? lo - c : c > hi ? c - hi : 0);

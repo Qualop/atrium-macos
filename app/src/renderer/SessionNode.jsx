@@ -47,7 +47,7 @@ export function StatePill({ s }) {
   const t = useT();
   const review = s.unseen && (s.state === 'ready' || s.state === 'shell_idle');
   const label = s.waking ? t('sleep.waking') : review ? t('node.review') : STATE_LABEL[s.state] || s.state; // P21: 깨우는 동안
-  const title = `${s.state}${s.estimate ? t('node.estimate', { v: s.estimate }) : ''} · herdr ${s.herdrStatus ?? '-'}`;
+  const title = `${STATE_LABEL[s.state] || s.state}${s.estimate ? t('node.estimate', { v: s.estimate }) : ''}`;
   return <span className={`mt-pill st-${s.state}${review ? ' st-review' : ''}${s.estimate ? ' estimate' : ''}${s.waking ? ' st-waking' : ''}`} data-state={s.state} data-waking={s.waking ? '1' : undefined} title={title}>{s.state === 'sleeping' && !s.waking && <Icon name="moon" />}{label}{s.estimate ? '?' : ''}</span>;
 }
 
@@ -58,7 +58,7 @@ function Badges({ s }) {
     {s.delivering > 0 && <span className="mt-badge deliver" title={t('node.deliverTitle')}>{t('node.deliver', { n: s.delivering })}</span>}
     {s.quiet && <span className="mt-badge quiet">{t('node.quiet')}</span>}
     {s.interruptedTurn && (s.kind === 'shell' ? <span className="mt-badge warn" data-role="interrupted-badge" title={t('node.interruptedCmdTitle')}>{t('node.interruptedCmd')}</span> : <span className="mt-badge warn" data-role="interrupted-badge" title={t('node.interruptedTurnTitle')}>{t('node.interruptedTurn')}</span>)}
-    {s.permissionMode && s.permissionMode !== 'default' && s.permissionMode !== 'manual' && s.hooked && <span className="mt-badge mode">{s.permissionMode}</span>}
+    {s.permissionMode && s.permissionMode !== 'default' && s.permissionMode !== 'manual' && s.hooked && <span className="mt-badge mode">{tOr(`permissionModes.${s.permissionMode}`, s.permissionMode)}</span>}
   </>;
 }
 

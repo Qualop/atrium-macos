@@ -5,6 +5,7 @@
 //      옮기기 시험(assertLegacyTestBoard)은 옛 판 값(ATRIUM_LEGACY_*)도 시험 판 값인지 본다
 import os from 'node:os';
 import path from 'node:path';
+import { appDataDir, canonicalPath } from '../../../backend/src/platform.mjs';
 
 const NAMES = ['HERDR_SESSION', 'PORT', 'DATA_DIR', 'APP_USERDATA'];
 const IDS = ['atrium', 'multitask'];
@@ -23,10 +24,10 @@ function checkSession(s, what = 'herdr 세션') {
   if (!s || IDS.some((id) => s === id || s === `${id}-dev`) || s === 'default' || !ok) throw new Error(`${what} ${s}: 시험 판 이름(atrium-dev-<이름>)만 쓴다`);
 }
 function checkDataDir(d, what = '데이터 폴더') {
-  for (const id of IDS) if (same(d, path.join(localAppData(), id))) throw new Error(`${what}가 실제 판의 폴더다(${id})`);
+  for (const id of IDS) if ([localAppData(), appDataDir()].some((base) => same(canonicalPath(d), canonicalPath(path.join(base, id))))) throw new Error(`${what}가 실제 판의 폴더다(${id})`);
 }
 function checkAppProfile(d, what = '창 프로필') {
-  for (const id of IDS) for (const p of [`${id}-app-real`, `${id}-app-dev`]) if (same(d, path.join(appData(), p))) throw new Error(`${what}이 ${p}다`);
+  for (const id of IDS) for (const p of [`${id}-app-real`, `${id}-app-dev`]) if ([appData(), appDataDir({ roaming: true })].some((base) => same(canonicalPath(d), canonicalPath(path.join(base, p))))) throw new Error(`${what}이 ${p}다`);
 }
 
 // env: 창에 넘길 환경 변수, root: 시험 데이터가 있어야 할 폴더(이 워크트리의 backend/.dev) → 문제가 있으면 Error를 던진다

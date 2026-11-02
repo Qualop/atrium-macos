@@ -9,7 +9,7 @@
 [시험용 CLI: atrium]                           ─┘          │
                                                            ▼
                   [Atrium 백엔드: Node 24]
-                   ├─ herdr 어댑터: 소켓 API(이름 있는 파이프, 요청마다 연결) + events.subscribe
+                   ├─ herdr 어댑터: 소켓 API(Windows 파이프 / macOS Unix 소켓, 요청마다 연결) + events.subscribe
                    ├─ 화면 중계: 가까이 보이는 노드마다 `herdr terminal session control` 자식 프로세스
                    ├─ hook 수신기(HTTP POST) ← 각 claude의 http hook
                    ├─ 대화 기록 읽기(~/.claude/projects/*.jsonl)

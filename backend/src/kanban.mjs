@@ -101,10 +101,10 @@ export class Kanbans {
   // op: addColumn{name,index?} renameColumn{column,name} moveColumn{column,index} removeColumn{column} addCard{column?,text,session?,index?}
   //     editCard{card,text} moveCard{card,column?,index?} removeCard{card} linkCard{card,session|null}
   async update(p) {
+    const ws = await this.wsKey(p.workspace);
     const k = this.find(p.kanban);
     const f = geometry(p, {}, KANBAN);
     if (p.title !== undefined) f.title = this.title(p.title);
-    const ws = await this.wsKey(p.workspace);
     if (ws !== undefined) f.workspaceKey = ws;
     const ops = [...(p.op ? [typeof p.op === 'string' ? { ...p, op: p.op } : p.op] : []), ...(Array.isArray(p.ops) ? p.ops : [])];
     let cols = k.columns;

@@ -93,9 +93,9 @@ test('A1: 내 차례는 오래 기다린 순서, N은 다음으로 돈다', () =
 
 test('전달 상태와 묻는 내용 글', (tc) => {
   setLanguage('ko'); tc.after(() => setLanguage('en'));
-  assert.equal(deliveryText({ status: 'queued', reason: 'waiting' }), '대기 중(답 기다리는 중)');
-  assert.equal(deliveryText({ status: 'confirmed' }), '제출 확인');
-  assert.equal(deliveryText({ status: 'cancelled', reason: 'user' }), '취소함');
-  assert.equal(askLine({ state: 'waiting', ask: { kind: 'permission', tool: 'Write', summary: 'Write: a.txt' } }), '권한: Write: a.txt');
-  assert.equal(askLine({ state: 'trust_wait' }), '처음 쓰는 폴더 신뢰 확인');
+  assert.equal(deliveryText({ status: 'queued', reason: 'waiting' }), '전송 대기 중 (사용자 응답 대기 중)');
+  assert.equal(deliveryText({ status: 'confirmed' }), '제출 확인됨');
+  assert.equal(deliveryText({ status: 'cancelled', reason: 'user' }), '전송 취소됨');
+  assert.equal(askLine({ state: 'waiting', ask: { kind: 'permission', tool: 'Write', summary: 'Write: a.txt' } }), '권한 승인 요청: Write: a.txt');
+  assert.equal(askLine({ state: 'trust_wait' }), '새 폴더를 신뢰할지 확인 필요');
 });

@@ -35,6 +35,7 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
   onInputRef.current = onInput;
   const hostRef = useRef(null);
   const ref = useRef({});
+  const restoreFocus = useRef(false);
   const [status, setStatus] = useState({ kind: 'attaching' });
   const [hint, setHint] = useState(null);
   const [retry, setRetry] = useState(0);
@@ -44,6 +45,7 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
     const st = ref.current = { pid: null, alive: true, acc: 0, lastSize: null };
     const term = new Terminal({ allowProposedApi: true, fontFamily: TERM_FONT, fontSize: TERM_FONT_SIZE, lineHeight: TERM_LINE_HEIGHT, fontWeight: 500, fontWeightBold: 700, scrollback: 0, cursorBlink: false, theme: termTheme(), drawBoldTextInBrightColors: false });
     const u11 = new Unicode11Addon();
+    term.options.disableStdin = true;
     term.loadAddon(u11);
     term.unicode.activeVersion = '11';
     const fit = new FitAddon();
@@ -69,7 +71,8 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
     }
 
     const send = (data) => {
-      if (!data) return;
+      if (!data || !st.alive) return;
+      if (!st.pid || api.status !== 'open' || term.options.disableStdin) { flash(t('terminal.attaching')); return; }
       markInput(sessionId);
       if (onInputRef.current) onInputRef.current();
       api.call('terminal.input', { session: sessionId, data }).catch((e) => setHint(t('terminal.inputFail', { error: errText(e) })));
@@ -109,10 +112,17 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
       term.write(bytes, () => onWritten(t0));
     });
     // 백엔드에 다시 붙으면(백엔드 재시작, C2) 옛 연결의 제어기는 이미 놓였다. 다시 붙는다.
-    const offOpen = api.on('$open', () => { if (st.alive) { perfLog('term_reattach_on_reconnect', { sessionId }); setStatus({ kind: 'attaching' }); setRetry((x) => x + 1); } });
+    const offClose = api.on('$close', () => {
+      if (!st.alive) return;
+      restoreFocus.current ||= document.activeElement === term.textarea;
+      term.options.disableStdin = true;
+      setStatus({ kind: 'detached', reason: 'disconnected' });
+    });
+    const offOpen = api.on('$open', () => { if (st.alive) { restoreFocus.current ||= document.activeElement === term.textarea; perfLog('term_reattach_on_reconnect', { sessionId }); setStatus({ kind: 'attaching' }); setRetry((x) => x + 1); } });
     const offDetached = api.on('terminal.detached', (d) => {
       if (d.sessionId !== sessionId || !st.alive || (st.pid !== null && d.controllerPid !== st.pid)) return;
       perfLog('term_detached', { sessionId, reason: d.reason });
+      term.options.disableStdin = true;
       setStatus({ kind: 'detached', reason: d.reason });
     });
 
@@ -125,7 +135,10 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
       .then((r) => {
         st.pid = r.controllerPid;
         if (!st.alive) return;
+        term.options.disableStdin = false;
+        setHint(null);
         setStatus({ kind: 'attached', pid: r.controllerPid });
+        if (restoreFocus.current) { restoreFocus.current = false; term.focus(); }
         // H4: 들어가며 친 글이 있으면 넣고 터미널에 초점을 준다
         if (pendingFor(sessionId)) { const buf = takePendingInput(sessionId); if (buf) { perfLog('pending_input', { sessionId, chars: buf.length }); send(buf); } term.focus(); }
       })
@@ -135,7 +148,8 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
     return () => {
       st.alive = false;
       perfLog('term_unmount', { sessionId });
-      offFrame(); offDetached(); offOpen();
+      offFrame(); offDetached(); offOpen(); offClose();
+      clearTimeout(st.hintTimer);
       host.removeEventListener('paste', onPaste, true);
       api.call('terminal.detach', { session: sessionId }).catch(() => {});
       budget.release(sessionId);
@@ -182,7 +196,7 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
   useEffect(() => {
     if (status.kind === 'attached') { autoTries.current = 0; return; }
     if (status.kind !== 'detached' && status.kind !== 'error') return;
-    if (status.reason === 'takeover' || !herdrUp || !sstate || sstate === 'exited' || sstate === 'starting' || autoTries.current >= 5) return;
+    if (status.reason === 'takeover' || api.status !== 'open' || !herdrUp || !sstate || sstate === 'exited' || sstate === 'starting' || autoTries.current >= 5) return;
     const t = setTimeout(() => { autoTries.current++; perfLog('term_auto_reattach', { sessionId, reason: status.reason, state: sstate }); setStatus({ kind: 'attaching' }); setRetry((x) => x + 1); }, 800);
     return () => clearTimeout(t);
   }, [status.kind, status.reason, herdrUp, sstate, sessionId]);

@@ -59,7 +59,7 @@ export function ThreadPanel() {
   return (
     <div className="mt-thread" data-role="thread">
       <div className="mt-thread-head">
-        <b>Thread</b> <span className="dim">{t('thread.sub')}</span>
+        <b>{t('thread.title')}</b> <span className="dim">{t('thread.sub')}</span>
         <span className="mt-node-sp" />
         <button className="mt-x" data-action="thread-close" onClick={() => setThreadOpen(false)} title={t('thread.collapse')}>▾</button>
       </div>

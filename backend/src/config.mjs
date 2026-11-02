@@ -3,8 +3,10 @@
 // P18: 환경 변수는 ATRIUM_*가 본 이름이고 옛 이름 MTASK_*도 받는다(둘 다 있으면 ATRIUM_*). 다른 모듈도 envVar로 읽는다.
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_HEALTH_URL as DEEPSEEK_HEALTH_URL } from './deepseek.mjs';
+import { appDataDir, defaultHerdrPath, canonicalPath } from './platform.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const BACKEND_ROOT = path.resolve(HERE, '..');
@@ -22,8 +24,8 @@ export function envVar(name, env = process.env) {
   return v !== undefined ? v : env[`MTASK_${name}`];
 }
 
-const localAppData = () => process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-const appData = () => process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+const localAppData = () => appDataDir();
+const appData = () => appDataDir({ roaming: true });
 const PROFILES = {
   real: {
     herdrSession: APP_ID,
@@ -38,18 +40,19 @@ const PROFILES = {
 };
 // 옛 실제 판(P18 전)의 값. dev 프로필이 가리키지 못하게 막고, 옮기기의 기본 출처다
 export const LEGACY_REAL = { herdrSession: LEGACY_ID, dataDir: path.join(localAppData(), LEGACY_ID), appUserData: path.join(appData(), `${LEGACY_ID}-app-real`) };
-const samePath = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+const samePath = (a, b) => process.platform === 'win32' ? canonicalPath(a).toLowerCase() === canonicalPath(b).toLowerCase() : canonicalPath(a) === canonicalPath(b);
 
 export function loadConfig({ argv = process.argv.slice(2), env = process.env } = {}) {
   const E = (name) => envVar(name, env);
   const profile = argv.includes('--dev') || E('PROFILE') === 'dev' ? 'dev' : 'real';
   const base = PROFILES[profile];
+  const bundledHerdr = path.resolve(BACKEND_ROOT, '..', '.tools', 'herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr');
   const cfg = {
     profile,
     herdrSession: E('HERDR_SESSION') || base.herdrSession,
     port: Number(E('PORT') || base.port),
     dataDir: path.resolve(E('DATA_DIR') || base.dataDir),
-    herdrPath: E('HERDR') || path.join(os.homedir(), '.herdr', 'packages', 'standalone', 'releases', `${HERDR_VERSION}-x86_64-pc-windows-msvc`, 'herdr.exe'),
+    herdrPath: E('HERDR') || (process.platform === 'darwin' && fs.existsSync(bundledHerdr) ? bundledHerdr : defaultHerdrPath(HERDR_VERSION, { env })),
     claudeCommand: 'claude',
     ocxHealthUrl: E('OCX_HEALTH') || DEEPSEEK_HEALTH_URL, // P25: DeepSeek 세션 전에 opencodex 프록시가 도는지 보는 주소(`ocx status`의 Health)
     ocxBaseUrl: E('OCX_BASE_URL') || null, // P25: DeepSeek 세션의 ANTHROPIC_BASE_URL. 비우면 health 주소의 origin(deepseek.mjs baseUrlOf)
@@ -59,7 +62,7 @@ export function loadConfig({ argv = process.argv.slice(2), env = process.env } =
     // 판이 띄운 세션의 대화 기록(claudeProjects)은 바꾸지 않는다. Claude Code는 늘 ~/.claude/projects에 쓴다
     convoRoots: (E('CLAUDE_PROJECTS') || path.join(os.homedir(), '.claude', 'projects')).split(';').filter(Boolean).map((p) => path.resolve(p)),
     claudeSessionsDir: path.resolve(E('CLAUDE_SESSIONS') || path.join(os.homedir(), '.claude', 'sessions')),
-    desktopSessionsDir: E('CLAUDE_DESKTOP') === 'none' ? null : path.resolve(E('CLAUDE_DESKTOP') || path.join(localAppData(), 'Claude-Data')),
+    desktopSessionsDir: E('CLAUDE_DESKTOP') === 'none' ? null : path.resolve(E('CLAUDE_DESKTOP') || path.join(localAppData(), process.platform === 'darwin' ? 'Claude' : 'Claude-Data')),
     convoScanMs: Number(E('CONVO_SCAN_MS') || 15000),
     // P13(BRIEF "판 밖 대화"): missed로 보는 이 앱의 시험 폴더. 판 코드 저장소(이 코드가 있는 저장소와 그 본 저장소)의 backend/.dev·experiments, OS 임시 폴더, 이름 접두어.
     // 시험 판은 고정 자료 폴더 이름(mtask-p13-*)이 접두어에 걸리지 않게 ATRIUM_TEST_PREFIX로 바꾼다(빈 글이면 접두어 규칙을 끈다).

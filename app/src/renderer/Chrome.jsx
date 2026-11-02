@@ -18,6 +18,7 @@ import { KindIcon } from './SessionNode.jsx';
 import { Icon } from './lib/icons.jsx';
 import { STATE_LABEL, EXIT_LABEL, ago, askLine } from './lib/labels.js';
 import { useT, errText, fmtTime } from './lib/i18n.js';
+import { shortcutText } from './lib/shortcuts.js';
 import { workspaceCounts } from '../../../backend/src/workspaces.mjs';
 import { sleepIdle, asleepStats, memByRepo } from './sleep.js'; // P21(D4), P24: 리포별로 묶는다
 
@@ -84,7 +85,7 @@ export function TopLeft() {
       {api.info && api.info.profile === 'dev' && <span className="mt-dev-badge" data-role="dev-badge" title={t('top.devBadge', { session: api.info.herdrSession, port: api.info.port })}>dev</span>}
       <WorkspaceTabs />
       <button className="mt-cp" data-action="search" title={t('top.searchTitle')} onClick={() => setSearchOpen(true)}>
-        <Icon name="search" /><span className="dim">{t('top.search')}</span><span className="mt-kbd">Ctrl F</span>
+        <Icon name="search" /><span className="dim">{t('top.search')}</span><span className="mt-kbd">{shortcutText('Ctrl F')}</span>
       </button>
     </div>
   );

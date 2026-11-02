@@ -105,6 +105,7 @@ function App() {
     const onKeyCapture = (e) => {
       // Ctrl+F는 판의 검색이다. 터미널에 초점이 있어도 터미널보다 먼저 받는다(H2)
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); e.stopPropagation(); setSearchOpen(true); return; }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); e.stopPropagation(); cmd.current?.focus(); return; }
       const st = getState();
       const p = st.pendingInput && pendingFor(st.pendingInput.id);
       if (!p) return;

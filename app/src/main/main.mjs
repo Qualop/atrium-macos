@@ -3,7 +3,7 @@
 // - P18: 실제 판 프로필은 처음 뜰 때 옛 창 프로필(multitask-app-real)을 새 프로필(atrium-app-real)로 복사한다(창 크기·사이드바 접힘 등 localStorage).
 // - 백엔드가 없으면 띄운다. 백엔드는 herdr 서버가 없으면 깨끗한 환경으로 띄운다. 창을 닫아도 백엔드와 herdr는 계속 돈다(ARCH 1절 "백엔드 수명", P2에서 정함).
 // - 창(renderer)은 백엔드 WebSocket API에 직접 붙는다. main은 주소와 토큰만 넘긴다.
-import { app, BrowserWindow, ipcMain, shell, Notification, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, Notification, dialog, Menu } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -15,8 +15,16 @@ import { migrateAppProfile } from './profile.mjs'; // P18: 옛 창 프로필 옮
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(HERE, '..', '..');
+// Finder 실행은 터미널 PATH를 물려받지 않으므로 설치 시 확인한 CLI 위치를 보완한다.
+if (fs.existsSync(path.join(process.resourcesPath, 'runtime', 'cli-paths.json'))) {
+  try {
+    const dirs = JSON.parse(fs.readFileSync(path.join(process.resourcesPath, 'runtime', 'cli-paths.json'), 'utf8'));
+    if (Array.isArray(dirs)) process.env.PATH = [...new Set([...dirs.filter((d) => typeof d === 'string' && path.isAbsolute(d)), ...(process.env.PATH || '').split(path.delimiter)])].join(path.delimiter);
+  } catch {}
+}
+const bundledNode = path.join(process.resourcesPath, 'runtime', 'node');
 // Atrium 로고(app/design/brand에서 가져옴): 창·작업 표시줄·Alt+Tab은 ico, 알림은 256px PNG
-const WINDOW_ICON = path.join(APP_ROOT, 'assets', 'icon.ico');
+const WINDOW_ICON = path.join(APP_ROOT, 'assets', process.platform === 'win32' ? 'icon.ico' : 'atrium-icon-256.png');
 const NOTIFY_ICON = path.join(APP_ROOT, 'assets', 'atrium-icon-256.png');
 const cfg = loadConfig({ argv: process.argv });
 
@@ -40,7 +48,7 @@ let starting = null;
 async function ensureBackend() {
   const info = backendInfo(cfg);
   if (info && (await health(info.port))) return info;
-  starting ||= startBackend(cfg, { nodePath: envVar('NODE') || 'node' })
+  starting ||= startBackend(cfg, { nodePath: envVar('NODE') || (fs.existsSync(bundledNode) ? bundledNode : 'node') })
     .then((r) => { log('backend', JSON.stringify({ ...r, herdr: r.herdr && r.herdr.compat })); return backendInfo(cfg); })
     .catch((e) => { log('backend start failed', e.message); if (tray) tray.noteError(e.message); throw e; }) // P18: 옛 판을 옮기지 못한 까닭 등을 트레이에 보인다
     .finally(() => { starting = null; });
@@ -120,7 +128,8 @@ function createWindow() {
 
 app.on('second-instance', () => showNode(null)); // 트레이에 남아 있을 때 다시 실행하면 창을 다시 연다(I7)
 // Windows 알림의 앱 이름. 실제 판과 개발용을 나눈다
-app.setAppUserModelId(`${APP_ID}.${cfg.profile}`);
+if (process.platform === 'win32') app.setAppUserModelId(`${APP_ID}.${cfg.profile}`);
+app.on('activate', () => showNode(null));
 // P14: 트레이 메뉴의 확인창. 시험은 global.__mtTrayConfirm으로 답을 정한다
 const tr = (key, vars) => translate(tray ? tray.lang() : DEFAULT_LANGUAGE, key, vars);
 async function trayConfirm({ message, detail, ok }) {
@@ -129,6 +138,10 @@ async function trayConfirm({ message, detail, ok }) {
   return r.response === 0;
 }
 app.whenReady().then(() => {
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]));
+    app.dock?.setIcon(NOTIFY_ICON);
+  }
   log(`app start profile=${cfg.profile} pid=${process.pid}`);
   for (const l of early) log(l);
   createWindow();

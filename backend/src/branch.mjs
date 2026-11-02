@@ -157,7 +157,7 @@ description: 워커(하위 세션)를 만들어 일을 나눠 맡기고 답을 �
 // 플러그인 bin/: Git Bash(Bash 도구)용 sh와 PowerShell·cmd용 .cmd. 이 판의 node와 명령 파일을 절대 경로로 부른다
 // P18: atrium이 본 이름이고, 옛 이름 mtask도 같은 명령이다(P18 전에 띄운 세션의 스킬 글이 mtask child를 말한다)
 export function childShims({ node = process.execPath, script = path.join(BACKEND_ROOT, 'bin', 'atrium-child.mjs') } = {}) {
-  const fwd = (p) => p.split(path.sep).join('/');
+  const fwd = (p) => p.replace(/\\/g, '/').replace(/["`$]/g, '\\$&');
   const out = {};
   for (const c of ['atrium', 'mtask']) {
     out[c] = `#!/bin/sh\n# Atrium 판(P8): 하위 세션 명령. ${c} child | children | child-kill | wake 만 된다\nexec "${fwd(node)}" "${fwd(script)}" "$@"\n`;

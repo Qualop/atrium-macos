@@ -10,6 +10,10 @@
     "node": ">=24 <25"
   },
   "scripts": {
+    "setup:mac": "node scripts/setup-macos.mjs",
+    "mac": "node scripts/start-macos.mjs",
+    "test:mac": "node test/e2e/mac-smoke.mjs",
+    "test:mac:stress": "ATRIUM_STRESS=1 node test/e2e/mac-smoke.mjs",
     "build": "node scripts/build.mjs",
     "start": "node scripts/build.mjs && electron . --dev",
     "real": "node scripts/build.mjs && electron .",

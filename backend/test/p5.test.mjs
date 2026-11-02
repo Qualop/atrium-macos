@@ -17,7 +17,7 @@ import { Store } from '../src/store.mjs';
 import { Backend } from '../src/backend.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p5-'));
+const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p5-')));
 const git = (cwd, ...a) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
 function makeRepo(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -44,12 +44,12 @@ test('G1: 워크스페이스 키 — 저장소, 하위 폴더, 워크트리는 �
   assert.equal(w.key, a.key, '워크트리는 본 저장소와 같은 워크스페이스');
   assert.equal(w.root, normPath(repo), '워크트리의 워크스페이스 폴더는 본 저장소');
   // 경로 대소문자, 역슬래시, 끝 슬래시
-  assert.equal((await workspaceOf(repo.toUpperCase())).key, a.key);
+  if (process.platform === 'win32') assert.equal((await workspaceOf(repo.toUpperCase())).key, a.key);
   assert.equal((await workspaceOf(repo.split(path.sep).join('/') + '/')).key, a.key);
   // git이 아닌 폴더: 그 폴더가 워크스페이스. 그 아래 폴더는 다른 워크스페이스다(시작한 폴더 자체)
   const p = await workspaceOf(plain);
   assert.deepEqual({ kind: p.kind, key: p.key }, { kind: 'folder', key: pathKey(plain) });
-  assert.equal((await workspaceOf(plain.toUpperCase() + '\\')).key, p.key);
+  if (process.platform === 'win32') assert.equal((await workspaceOf(plain.toUpperCase() + '\\')).key, p.key);
   assert.notEqual((await workspaceOf(path.join(plain, 'inner'))).key, p.key);
   // 저장소 안에 따로 git init한 폴더는 그 저장소의 워크스페이스
   const nested = makeRepo(path.join(repo, 'nested'));

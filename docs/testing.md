@@ -47,3 +47,4 @@
 
 - 백엔드: `cd backend && npm test`
 - 창: `cd app && npm test`, 빌드는 `npm run build`
+- macOS 통합: `cd app && npm run test:mac`, 확장 검증은 `npm run test:mac:stress`. 새 `/tmp` 폴더·포트·herdr 세션만 쓰며 종료 시 정리한다. `ATRIUM_SMOKE_AGENT=1`이면 새 Claude CLI 시작 화면도 확인한다. 신뢰는 수락하지 않는다. 설치는 `npm run setup:mac`.

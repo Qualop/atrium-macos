@@ -8,11 +8,12 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, envVar, APP_NAME } from '../../backend/src/config.mjs';
+import { electronExecutable } from './platform.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCES = [path.join(ROOT, 'src', 'renderer'), path.resolve(ROOT, '..', 'backend', 'src'), path.join(ROOT, 'scripts', 'build.mjs')];
 const DIST = path.join(ROOT, 'dist', 'renderer.js');
-const ELECTRON = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
+const ELECTRON = electronExecutable(ROOT);
 
 function newest(p) {
   let st;

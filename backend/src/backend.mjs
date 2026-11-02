@@ -18,6 +18,8 @@ import { writeSessionSettings, buildStartArgs, buildResumeArgv, buildResumeArgs,
 import { newRuntime, applyHook, applyHerdrStatus, applyAgentDetected, applyAgentReleased, applyHerdrDisconnected, deriveState, flags } from './state.mjs';
 import { summarizeChanges, CHANGE_KINDS } from './changes.mjs';
 import { ResourceMonitor, childProcesses } from './resources.mjs';
+import { listCodexModels } from './codex-models.mjs';
+import { withCodexModel, modelFromArgs } from './codex-args.mjs';
 import { SHELL_TOOLS, LINK_VERBS, parseHerdrCommands, parseHerdrOutput, readTextOf, tailText, screenAnswerText, roleNotice, unlinkNotice, paneChangedNotice, ROLE_RE } from './links.mjs';
 import { workspaceNames, workspaceCounts, elsewhereOf, pathKey } from './workspaces.mjs';
 import { migrateWorkspaces } from './migrate.mjs';
@@ -53,6 +55,7 @@ export class Backend {
   constructor(cfg) {
     this.cfg = cfg;
     this.sessions = new Map(); // sessionId → { ...행, rt, lastState }
+    this.spawningNames = new Set();
     this.herdrOk = false;
     this.herdrCompat = null;
     this.herdrStopping = false;
@@ -884,7 +887,7 @@ export class Backend {
     this.requireHerdr();
     const cwd = path.resolve(String(p.cwd || ''));
     if (!p.cwd || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw keyed(apiError('bad_request', `폴더가 없다: ${p.cwd}`), 'noFolder', { path: p.cwd });
-    const taken = new Set([...this.sessions.values()].map((s) => s.name));
+    const taken = new Set([...this.sessions.values()].map((s) => s.name).concat([...this.spawningNames]));
     // 받지 않은 값은 설정의 새 세션 기본값(settings.mjs claude*, codexArgs, deepseek*)으로 채운다
     const def = this.features && this.features.settings ? this.features.settings.get() : {};
     // P25: DeepSeek(종류 deepseek 또는 flavor deepseek). 기본은 판이 띄우는 Claude Code(모델만 DeepSeek), 직접 명령이 있으면 셸 패널에 그 명령을 친다
@@ -897,11 +900,18 @@ export class Backend {
     if (!name) { let i = 1; while (taken.has(`${prefix}${i}`)) i++; name = `${prefix}${i}`; }
     if (!NAME_RE.test(name) || name === 'all') throw apiError('bad_request', `이름은 영문, 숫자, -, _ 만(all 제외): ${name}`);
     if (taken.has(name)) throw keyed(apiError('name_taken', `이미 있는 이름: ${name}`), 'nameTaken', { name });
+    this.spawningNames.add(name);
+    try { return await this.spawnReserved(p, { name, cwd, flavor, command, kind, shell }); }
+    finally { this.spawningNames.delete(name); }
+  }
+
+  async spawnReserved(p, { name, cwd, flavor, command, kind, shell }) {
+    const def = this.features && this.features.settings ? this.features.settings.get() : {};
     const claude = kind === 'claude';
     const permissionMode = p.permissionMode || (claude && def.claudePermissionMode) || 'manual';
     if (!PERMISSION_MODES.has(permissionMode)) throw apiError('bad_request', `권한 모드: ${permissionMode}`);
     // DeepSeek 모델은 opencodex 프록시가 DeepSeek로 보낸다. Claude Code 노력 수준 기본값은 DeepSeek에 넘기지 않는다(받은 값만)
-    const model = claude ? (flavor ? p.model || def.deepseekModel || DEEPSEEK_MODEL : p.model || def.claudeModel || null) : null;
+    const model = claude ? (flavor ? p.model || def.deepseekModel || DEEPSEEK_MODEL : p.model || def.claudeModel || null) : kind === 'codex' ? (p.model !== undefined ? String(p.model).trim() || null : modelFromArgs(p.args ?? def.codexArgs) || null) : null;
     const effort = claude ? p.effort || (flavor ? null : def.claudeEffort) || null : null;
     const allowHerdr = claude && !!(p.allowHerdr ?? def.claudeAllowHerdr);
     // F5: herdr가 아는 에이전트 종류. Claude Code만 판의 hook과 이어 가기 등록을 붙인다
@@ -931,7 +941,7 @@ export class Backend {
     } else if (!shell) {
       // 다른 종류는 그 하네스의 인자를 그대로 넘긴다(예: codex -m 모델). 판은 규칙을 덧붙이지 않는다
       const a = p.args ?? (kind === 'codex' ? def.codexArgs : '');
-      args = Array.isArray(a) ? a.map(String) : String(a || '').split(/\s+/).filter(Boolean);
+      args = kind === 'codex' ? withCodexModel(a, p.model) : Array.isArray(a) ? a.map(String) : String(a || '').split(/\s+/).filter(Boolean);
     }
 
     this.ensureWorkspace(ws, `spawn ${name}`);
@@ -1589,6 +1599,11 @@ export class Backend {
       'link.delete': (p) => this.linkDelete(p),
       'link.log': (p) => { const l = this.store.getLink(p.link); if (!l) throw apiError('not_found', `없는 연결: ${p.link}`); return { link: this.linkView(l), events: this.store.linkEvents(l.linkId, p.limit || 200) }; },
       'agent.kinds': () => this.adapter.agentKinds(),
+      'agent.models': (p) => {
+        if (p.kind !== 'codex') return { models: [], source: null };
+        this.modelRequest ||= listCodexModels().finally(() => { this.modelRequest = null; });
+        return this.modelRequest;
+      },
       // 자원과 붙은 클라이언트(D1·D3)
       'resources.get': async (p) => (p.fresh ? this.resources.sample() : this.resources.last),
       'herdr.clients': () => this.checkClients(),

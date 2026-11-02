@@ -1,0 +1,29 @@
+name: Tests
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            app/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: backend
+      - run: npm ci --ignore-scripts
+        working-directory: app
+      - run: npm test
+        working-directory: backend
+      - run: npm test
+        working-directory: app
+      - run: npm run build
+        working-directory: app
+      - run: node scripts/check-docs.mjs

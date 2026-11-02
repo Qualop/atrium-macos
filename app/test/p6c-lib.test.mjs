@@ -57,16 +57,16 @@ test('I5: 루프 배지 — 돌고 있음·멈춤, 남은 횟수, 다음 시각.
   setLanguage('ko'); tc.after(() => setLanguage('en'));
   const now = 1_000_000;
   const l = { loopId: 'r1', target: { kind: 'session', id: 'S' }, status: 'active', runs: 1, stop: { maxRuns: 3 }, trigger: { type: 'interval', everyMs: 60000 }, nextAt: now + 45000 };
-  assert.equal(loopBadge(l, now), '⟳ 2회 남음 다음 45초');
-  assert.equal(loopBadge({ ...l, status: 'paused', history: [{ kind: 'paused', nextInMs: 30000 }] }, now), '⏸ 2회 남음 이어 가면 30초 뒤');
-  assert.equal(loopBadge({ ...l, stop: {}, trigger: { type: 'idle' } }, now), '⟳ 1회 쉴 때');
+  assert.equal(loopBadge(l, now), '⟳ 2회 남음 45초 후 실행');
+  assert.equal(loopBadge({ ...l, status: 'paused', history: [{ kind: 'paused', nextInMs: 30000 }] }, now), '⏸ 2회 남음 재개 후 30초 뒤 실행');
+  assert.equal(loopBadge({ ...l, stop: {}, trigger: { type: 'idle' } }, now), '⟳ 1회 실행 다음 요청 대기 시 실행');
   assert.equal(loopBadge({ ...l, status: 'done', runs: 3 }, now), '■ 0회 남음');
   const v = { loopId: 'r2', target: { kind: 'session', id: 'Y' }, targets: [{ sessionId: 'S' }], status: 'active' }; // 루프 보기의 대상 목록
   assert.deepEqual(loopsOfSession([l, v, { loopId: 'r3', target: { kind: 'session', id: 'X' } }], 'S').map((x) => x.loopId), ['r1', 'r2']);
   assert.equal(dur(3_723_000), '1시간 2분');
-  assert.equal(triggerText({ type: 'interval', everyMs: 60000, immediate: true }), '1분마다(지금 한 번 먼저)');
-  assert.equal(stopText({ maxRuns: 2, untilText: 'DONE' }), '2번 · 답에 "DONE"');
-  assert.equal(stopText({}), '사람이 멈출 때까지');
+  assert.equal(triggerText({ type: 'interval', everyMs: 60000, immediate: true }), '지금 한 번 실행한 뒤 1분마다 반복');
+  assert.equal(stopText({ maxRuns: 2, untilText: 'DONE' }), '2회 실행 · 응답에 "DONE" 문구가 나타나면 종료');
+  assert.equal(stopText({}), '직접 중지할 때까지');
 });
 
 test('I6: 미션 맵 배치 — 두 열(P22: 그룹 열 없음), 사람이 맨 위, 거르기, 선은 보이는 노드 사이만', () => {

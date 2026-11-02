@@ -1,3 +1,5 @@
+이 저장소는 [Gudals0320/atrium](https://github.com/Gudals0320/atrium)에 macOS 지원, 한국어 UI 개선, Codex 모델 선택과 안정성 수정을 추가한 버전입니다. 원본 프로젝트의 MIT 라이선스와 저작권 표시는 유지합니다.
+
 <p align="center">
   <img src="docs/images/banner.png" alt="Atrium" width="640">
 </p>
@@ -55,21 +57,39 @@ Atrium은 에이전트를 대신하지 않고 일하는 방식을 정하지도 �
 
 ## 필요한 것
 
-지금은 **Windows 전용**입니다(Windows 10, 11, x64).
+Windows 10·11(x64)과 **macOS 포팅 버전**을 제공합니다. macOS는 Apple Silicon에서 실행을 검증했으며, Intel용 설치 경로는 준비되어 있지만 실기기 검증은 하지 않았습니다.
 
 | | |
 |---|---|
 | [Node.js](https://nodejs.org/) | 24.x |
-| [herdr](https://herdr.dev) | 0.9.5. `%USERPROFILE%\.herdr\packages\standalone\releases\0.9.5-x86_64-pc-windows-msvc\herdr.exe`에서 찾습니다. 다른 경로는 `ATRIUM_HERDR`로 줍니다. |
+| [herdr](https://herdr.dev/tui/) | 0.9.5, 프로토콜 22. Mac 설치 명령은 프로젝트 안에 고정 버전을 받습니다. `ATRIUM_HERDR`로 직접 지정할 수 있고, 그 밖에는 PATH와 플랫폼별 설치 위치를 찾습니다. |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `PATH`에 있는 최근 `claude` CLI. |
 | Git | 저장소와 워크트리를 알아내는 데 씁니다. |
 | 선택 | Codex 세션에는 Codex CLI. DeepSeek 세션에는 `127.0.0.1:10100`의 Anthropic 호환 게이트웨이(예: opencodex). |
 
 ## 시작하기
 
+### macOS
+
+Node.js 24와 Git, 사용할 에이전트 CLI를 먼저 설치합니다. 이 저장소의 폴더에서:
+
+```sh
+cd app
+npm run setup:mac
+npm run mac
+```
+
+`setup:mac`은 Apple Silicon·Intel에 맞는 공식 herdr 0.9.5를 SHA-256으로 검증하여 `.tools/`에 저장하고 npm 의존성을 설치합니다. 전역 설치나 셸 설정 변경은 하지 않습니다. 설치 후에는 `npm run mac`만 실행합니다. 개발 프로필은 `npm run mac -- --dev`입니다.
+
+실제 판 데이터는 `~/Library/Application Support/atrium`, 창 프로필은 `~/Library/Application Support/atrium-app-real`에 저장됩니다. herdr는 `~/.config/herdr/sessions/atrium`의 Unix 소켓을 사용하며 `XDG_CONFIG_HOME`을 따릅니다. 창을 닫아도 세션은 남습니다. 완전히 종료하려면 트레이의 종료 메뉴를 이용합니다.
+
+Mac의 Command 복사·붙여넣기·검색, Dock 재열기, 휴지통 이동을 지원합니다. 실제 한글 IME 조합, OS 알림 클릭, 재부팅 복구는 별도 실사용 점검이 필요합니다. 서명·공증된 `.dmg` 배포판은 아직 없습니다.
+
+### Windows
+
 ```powershell
-git clone https://github.com/Gudals0320/atrium.git
-cd atrium\backend
+git clone https://github.com/Qualop/atrium-macos.git
+cd atrium-macos\backend
 npm install
 cd ..\app
 npm install

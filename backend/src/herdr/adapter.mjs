@@ -12,6 +12,7 @@ import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { spawn, execFile } from 'node:child_process';
 import { HERDR_VERSION, HERDR_PROTOCOL } from '../config.mjs';
+import { herdrDirectory, herdrSocket, findExecutable } from '../platform.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SUB_OVERLAP_MS = 1500; // 구독을 바꿀 때 옛 구독을 더 열어 두는 시간
@@ -38,10 +39,9 @@ function execText(file, args, opts = {}) {
 
 // herdr 세션 폴더와 소켓(Windows 이름 있는 파이프). 기본 세션은 %APPDATA%\herdr, 이름 있는 세션은 그 아래 sessions\<이름>
 export function herdrSessionDir(session) {
-  const base = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'herdr');
-  return session ? path.join(base, 'sessions', session) : base;
+  return herdrDirectory(session);
 }
-export const herdrPipe = (sessionDir) => '\\\\.\\pipe\\' + path.join(sessionDir, 'herdr.sock');
+export const herdrPipe = herdrSocket;
 
 // 요청 하나: 연결, 줄 하나 보내기, 응답 줄 하나 받기, 닫기(E0 2절)
 export function herdrCall(pipe, method, params = {}, timeoutMs = 15000) {
@@ -141,18 +141,27 @@ export class HerdrAdapter extends EventEmitter {
   async cliVersion() { const r = await execText(this.herdrPath, ['--version'], { env: cleanEnv() }); return r.stdout.trim(); }
   // P4: 고정한 herdr가 주는 에이전트 스킬 글(`herdr --skill`, ~/.agents/skills/herdr/SKILL.md와 같다)
   async skillText() { const r = await execText(this.herdrPath, ['--skill'], { env: cleanEnv() }); return r.code === 0 && r.stdout.includes('name: herdr') ? r.stdout : null; }
-  serverPid() { try { return parseInt(fs.readFileSync(path.join(this.sessionDir, 'herdr.sock'), 'utf8').split(':')[0], 10) || null; } catch { return null; } }
+  serverPid() {
+    if (process.platform !== 'win32') return this._serverPid || this.pong?.pid || null;
+    try { return parseInt(fs.readFileSync(path.join(this.sessionDir, 'herdr.sock'), 'utf8').split(':')[0], 10) || null; } catch { return null; }
+  }
 
   async startServer() {
     const p0 = await this.probe();
     if (p0.running) return { started: false, pong: p0.pong, pid: this.serverPid() };
     fs.mkdirSync(this.logDir, { recursive: true });
     const out = fs.openSync(path.join(this.logDir, `herdr-server-${this.session}.out`), 'a');
-    const proc = spawn(this.herdrPath, ['--session', this.session, 'server'], { env: cleanEnv(), detached: true, stdio: ['ignore', out, out], windowsHide: true });
+    const env = cleanEnv();
+    if (path.isAbsolute(this.herdrPath)) env.PATH = `${path.dirname(this.herdrPath)}${path.delimiter}${env.PATH || ''}`;
+    const proc = spawn(this.herdrPath, ['--session', this.session, 'server'], { env, detached: true, stdio: ['ignore', out, out], windowsHide: true });
+    let spawnError = null;
+    proc.on('error', (e) => { spawnError = e; });
+    this._serverPid = proc.pid;
     proc.unref();
     fs.closeSync(out);
     const t0 = Date.now();
     while (Date.now() - t0 < 15000) {
+      if (spawnError) throw new HerdrError('start_failed', `Cannot start ${this.herdrPath}: ${spawnError.message}. Install herdr ${HERDR_VERSION} or set ATRIUM_HERDR.`, 'server');
       const p = await this.probe();
       if (p.running) return { started: true, pong: p.pong, pid: this.serverPid() || proc.pid, ms: Date.now() - t0 };
       await sleep(100);
@@ -274,7 +283,8 @@ export class HerdrAdapter extends EventEmitter {
     return { workspaceId: r.workspace.workspace_id, paneId: r.root_pane.pane_id };
   }
   async waitShellReady(paneId, timeoutMs = 15000) {
-    try { await this.call('pane.wait_for_output', { pane_id: paneId, source: 'visible', match: { type: 'regex', value: 'PS [^\\n]*>' }, timeout_ms: timeoutMs }, timeoutMs + 2000); return true; } catch (e) { return false; }
+    const prompt = process.platform === 'win32' ? 'PS [^\\n]*>' : '(?m)[^\\n]*[$#%❯]\\s*$';
+    try { await this.call('pane.wait_for_output', { pane_id: paneId, source: 'visible', match: { type: 'regex', value: prompt }, timeout_ms: timeoutMs }, timeoutMs + 2000); return true; } catch (e) { return false; }
   }
   async startAgent({ name, paneId, args, kind = 'claude' }) {
     const r = await this.call('agent.start', { name, kind, pane_id: paneId, args, timeout_ms: 60000 }, 70000);
@@ -290,7 +300,7 @@ export class HerdrAdapter extends EventEmitter {
     if (this._kinds) return this._kinds;
     const r = await execText(this.herdrPath, ['agent'], { env: cleanEnv() });
     const kinds = parseKinds(r.stdout + '\n' + r.stderr);
-    const found = await Promise.all(kinds.map((k) => execText('where.exe', [k], { timeout: 5000 }).then((x) => (x.code === 0 ? x.stdout.split(/\r?\n/)[0].trim() : null))));
+    const found = kinds.map((k) => findExecutable(k));
     this._kinds = kinds.map((k, i) => ({ kind: k, installed: !!found[i], path: found[i] }));
     return this._kinds;
   }
@@ -389,6 +399,7 @@ class Controller extends EventEmitter {
       }
     });
     this.proc.stderr.on('data', (d) => this.emit('stderr', String(d)));
+    this.proc.on('error', (e) => { this.exited = -1; this.emit('stderr', e.message); this.emit('exit', -1); });
     this.proc.on('exit', (code) => { this.exited = code; this.emit('exit', code); });
     this.proc.stdin.on('error', () => {});
   }

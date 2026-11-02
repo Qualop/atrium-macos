@@ -4,6 +4,7 @@
 // - herdr 서버와 백엔드 자신의 메모리, 동시 실행 수(working·waiting)
 // 프로세스 표는 PowerShell의 Win32_Process 한 번으로 읽는다(읽기만 한다). 프로세스를 끄지 않는다.
 import { execFile } from 'node:child_process';
+import { readPosixProcesses } from './processes.mjs';
 
 const PS_SCRIPT = [
   "$ErrorActionPreference = 'SilentlyContinue'",
@@ -12,7 +13,11 @@ const PS_SCRIPT = [
   '[pscustomobject]@{ p = @($p); h = @($h) } | ConvertTo-Json -Compress -Depth 3',
 ].join('; ');
 
-export function readProcessTable() {
+export async function readProcessTable() {
+  if (process.platform !== 'win32') {
+    const procs = await readPosixProcesses();
+    return procs ? { procs, herdr: [...procs.values()].filter((p) => p.name === 'herdr').map(({ pid, cmd }) => ({ pid, cmd })), at: Date.now() } : null;
+  }
   return new Promise((resolve) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PS_SCRIPT], { encoding: 'utf8', windowsHide: true, timeout: 20000, maxBuffer: 32 * 1024 * 1024 }, (err, out) => {
       if (err) return resolve(null);
@@ -27,9 +32,13 @@ export function readProcessTable() {
 }
 
 // G2(P5): 셸 PID들의 바로 아래 프로세스(셸에서 돌고 있는 명령). Windows에서 herdr pane.process_info는 셸만 준다(P5에서 확인)
-export function childProcesses(pids) {
+export async function childProcesses(pids) {
   const ids = pids.map(Number).filter((p) => Number.isInteger(p) && p > 0);
   if (!ids.length) return Promise.resolve([]);
+  if (process.platform !== 'win32') {
+    const procs = await readPosixProcesses();
+    return procs ? [...procs.values()].filter((p) => ids.includes(p.ppid)).map(({ pid, ppid, name }) => ({ pid, ppid, name })) : [];
+  }
   const filter = ids.map((p) => `ParentProcessId=${p}`).join(' OR ');
   const ps = `$ErrorActionPreference = 'SilentlyContinue'; @(Get-CimInstance Win32_Process -Filter '${filter}' -Property ProcessId,ParentProcessId,Name | ForEach-Object { [pscustomobject]@{ i = $_.ProcessId; p = $_.ParentProcessId; n = $_.Name } }) | ConvertTo-Json -Compress`;
   return new Promise((resolve) => {
@@ -79,18 +88,25 @@ export class ResourceMonitor {
     Object.assign(this, { sessions, processInfo, controllers, herdrServerPid, session, readTable, intervalMs });
     this.last = null;
   }
-  start(onSample) { this.onSample = onSample; this.timer = setInterval(() => this.sample().catch(() => {}), this.intervalMs); setTimeout(() => this.sample().catch(() => {}), 3000); }
-  stop() { clearInterval(this.timer); }
+  start(onSample) {
+    this.stop(); this.stopped = false; this.onSample = onSample;
+    this.timer = setInterval(() => this.sample().catch(() => {}), this.intervalMs);
+    this.firstSample = setTimeout(() => this.sample().catch(() => {}), 3000);
+  }
+  stop() { clearInterval(this.timer); clearTimeout(this.firstSample); this.stopped = true; this.generation = (this.generation || 0) + 1; }
 
   async sample() {
+    if (this.stopped) return this.last;
+    const generation = this.generation;
     const t0 = Date.now();
     const table = await this.readTable();
+    if (this.stopped || this.generation !== generation) return this.last;
     if (!table) return this.last;
     const list = this.sessions();
     const rows = [];
     for (const s of list) {
       let info = null;
-      if (s.paneId && s.present) info = await this.processInfo(s.paneId).catch(() => null);
+      if (s.paneId) info = await this.processInfo(s.paneId).catch(() => null);
       const shell = info && info.shell_pid;
       const claude = info && (info.foreground_processes || []).find((p) => /claude/i.test(p.name || ''));
       const tree = shell ? descendants(table.procs, shell) : [];
@@ -102,7 +118,10 @@ export class ResourceMonitor {
     }
     const ctl = this.controllers();
     const ctlMB = mb(ctl.reduce((a, c) => a + ((table.procs.get(c.controllerPid) || {}).ws || 0), 0));
-    const hp = this.herdrServerPid();
+    const hp = this.herdrServerPid() || (table.herdr || []).find((h) => {
+      const args = argvOf(h.cmd), i = args.indexOf('--session');
+      return i >= 0 && args[i + 1] === this.session && args[i + 2] === 'server';
+    })?.pid;
     const snap = {
       at: Date.now(), ms: Date.now() - t0,
       sessions: rows,
@@ -116,7 +135,7 @@ export class ResourceMonitor {
       tuiProcesses: tuiClientsFor(table.herdr, this.session),
     };
     this.last = snap;
-    if (this.onSample) this.onSample(snap);
+    if (!this.stopped && this.generation === generation && this.onSample) this.onSample(snap);
     return snap;
   }
 }

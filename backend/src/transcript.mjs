@@ -10,7 +10,7 @@ function readLines(file) {
 function textOf(content) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
-  return content.filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+  return content.filter((c) => c && c.type === 'text').map((c) => c.text).join('\n');
 }
 
 export function readMessages(file, { afterSeq = -1, limit = 500 } = {}) {
@@ -20,9 +20,12 @@ export function readMessages(file, { afterSeq = -1, limit = 500 } = {}) {
   let lastSeq = -1;
   lines.forEach((line, seq) => {
     if (!line.trim()) return;
+    if (seq <= afterSeq) { lastSeq = seq; return; }
+    let o;
+    try { o = JSON.parse(line); }
+    catch { if (seq < lines.length - 1) lastSeq = seq; return; }
     lastSeq = seq;
-    if (seq <= afterSeq) return;
-    let o; try { o = JSON.parse(line); } catch { return; }
+    if (!o || typeof o !== 'object') return;
     if (o.isSidechain || o.isMeta) return;
     const at = o.timestamp ? Date.parse(o.timestamp) : null;
     if (o.type === 'user' && o.message) {
@@ -30,12 +33,14 @@ export function readMessages(file, { afterSeq = -1, limit = 500 } = {}) {
       if (typeof c === 'string') out.push({ seq, at, role: 'user', text: unwrapPasted(c) });
       else if (Array.isArray(c)) {
         for (const part of c) {
+          if (!part || typeof part !== 'object') continue;
           if (part.type === 'tool_result') out.push({ seq, at, role: 'tool_result', toolUseId: part.tool_use_id, isError: !!part.is_error, text: clip(typeof part.content === 'string' ? part.content : textOf(part.content), 2000) });
           else if (part.type === 'text') out.push({ seq, at, role: 'user', text: unwrapPasted(part.text) });
         }
       }
     } else if (o.type === 'assistant' && o.message && Array.isArray(o.message.content)) {
       for (const part of o.message.content) {
+        if (!part || typeof part !== 'object') continue;
         if (part.type === 'text' && part.text) out.push({ seq, at, role: 'assistant', text: part.text });
         else if (part.type === 'tool_use') out.push({ seq, at, role: 'tool_use', tool: part.name, toolUseId: part.id, input: part.input });
       }
@@ -49,7 +54,7 @@ export const isSyntheticUserText = (t) => /^\s*(\[Request interrupted|\[Tool cal
 
 // C2(백엔드 재시작)에서 놓친 hook을 메운다: 마지막 지시, 마지막 답, 마지막 턴이 끝났는지. E2 브리핑도 쓴다
 export function lastExchange(file) {
-  const { exists, messages } = readMessages(file);
+  const { exists, messages } = readMessages(file, { limit: Infinity });
   if (!exists) return { exists: false };
   let lastUser = null, lastAnswer = null;
   for (const m of messages) {
@@ -62,6 +67,6 @@ export function lastExchange(file) {
 
 // 보낸 시각 뒤에 제출된 사용자 지시들(전달 확인 보정용)
 export function userPromptsSince(file, sinceMs) {
-  const { messages } = readMessages(file);
+  const { messages } = readMessages(file, { limit: Infinity });
   return messages.filter((m) => m.role === 'user' && m.at && m.at >= sinceMs - 2000).map((m) => m.text);
 }

@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import { readPosixProcesses } from './processes.mjs';
 import { isSyntheticUserText } from './transcript.mjs';
 import { unwrapPasted, clip } from './text.mjs';
 import { pathKey, normPath } from './workspaces.mjs';
@@ -183,6 +184,8 @@ export function pidAlive(pid) { if (!Number.isInteger(pid) || pid <= 0) return f
 // 앱 프로필 폴더(base/<프로필>/claude-code-sessions)만 본다. 프로필 폴더의 나머지(브라우저 캐시 등)는 훑지 않는다
 export function desktopSessionRoots(base) {
   const out = [];
+  const direct = path.join(base, 'claude-code-sessions');
+  try { if (fs.statSync(direct).isDirectory()) out.push(direct); } catch {}
   let ps; try { ps = fs.readdirSync(base, { withFileTypes: true }); } catch { return out; }
   for (const p of ps) { if (!p.isDirectory()) continue; const d = path.join(base, p.name, 'claude-code-sessions'); try { if (fs.statSync(d).isDirectory()) out.push(d); } catch {} }
   return out;
@@ -224,7 +227,11 @@ export function parseClaudeCmdlines(rows) {
   }
   return out;
 }
-export function claudeProcesses() {
+export async function claudeProcesses() {
+  if (process.platform !== 'win32') {
+    const procs = await readPosixProcesses();
+    return procs ? [...procs.values()].filter((p) => p.name === 'claude' || /(?:^|\/)claude(?:\s|$)|@anthropic-ai\/claude-code\//.test(p.cmd)).map(({ pid, cmd }) => ({ pid, cmd })) : null;
+  }
   const ps = `$ErrorActionPreference = 'SilentlyContinue'; @(Get-CimInstance Win32_Process -Filter "Name='claude.exe'" -Property ProcessId,CommandLine | ForEach-Object { [pscustomobject]@{ i = $_.ProcessId; c = $_.CommandLine } }) | ConvertTo-Json -Compress`;
   return new Promise((resolve) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true, timeout: 10000 }, (err, out) => {

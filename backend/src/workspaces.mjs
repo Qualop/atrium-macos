@@ -8,12 +8,15 @@
 
 // 경로 맞추기: 역슬래시 → 슬래시, 겹친 슬래시와 끝 슬래시 빼기. 드라이브 문자와 대소문자는 키에서만 소문자로 맞춘다.
 export function normPath(p) {
-  let s = String(p || '').trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  const input = String(p || '').trim();
+  const unc = /^(?:\\\\|\/\/)[^\\/]/.test(input);
+  let s = input.replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  if (unc) s = '/' + s;
   if (s.length > 1 && !/^[A-Za-z]:\/$/.test(s)) s = s.replace(/\/+$/, '');
   if (/^[a-z]:/.test(s)) s = s[0].toUpperCase() + s.slice(1);
   return s;
 }
-export const pathKey = (p) => normPath(p).toLowerCase();
+export const pathKey = (p) => { const n = normPath(p); return /^[A-Za-z]:\//.test(n) || /^\/\//.test(n) ? n.toLowerCase() : n; };
 
 // rp: git.mjs parseRevParse 결과(저장소가 아니면 null), cwd: 시작 폴더
 // → { key, kind: 'repo' | 'folder', root }. root는 본 저장소 폴더(워크트리면 본 저장소 쪽), 폴더면 그 폴더

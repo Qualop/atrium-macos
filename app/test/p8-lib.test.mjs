@@ -9,7 +9,7 @@ test('K4: 머리줄 — atrium child로 만든 하위 세션만 "@부모의 역�
   setLanguage('ko'); // P16: 한국어 글을 본다(기본은 영어)
   try {
     assert.equal(branchLabel({ branch: { child: true, parentName: 'lead', role: '워커', depth: 2, parentOpen: true } }).text, '@lead의 워커 · 2단계');
-    assert.match(branchLabel({ branch: { child: true, parentName: null, role: '리뷰어', depth: 3, parentOpen: false } }).text, /리뷰어\(부모 닫힘\) · 3단계/);
+    assert.match(branchLabel({ branch: { child: true, parentName: null, role: '리뷰어', depth: 3, parentOpen: false } }).text, /리뷰어 \(상위 세션 닫힘\) · 3단계/);
   } finally { setLanguage('en'); }
   assert.equal(branchLabel({ branch: { child: false, depth: 2, parentName: 'lead' } }), null); // 판에 올린 에이전트는 지금 표시 그대로
   assert.equal(branchLabel({}), null);

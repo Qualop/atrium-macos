@@ -6,6 +6,7 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 import { profileEnv, BACKEND_ROOT } from './config.mjs';
+import { pendingRequest } from './requests.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -16,24 +17,30 @@ export function health(port) {
 }
 
 export class ApiClient {
-  constructor(info) { this.info = info; this.n = 0; this.wait = new Map(); this.handlers = []; }
+  constructor(info, { connectTimeoutMs = 10000 } = {}) { this.info = info; this.connectTimeoutMs = connectTimeoutMs; this.n = 0; this.wait = new Map(); this.handlers = []; }
   open() {
     return new Promise((res, rej) => {
-      this.ws = new WebSocket(`ws://127.0.0.1:${this.info.port}/api?token=${this.info.token}`);
+      this.closed = false;
+      this.ws = new WebSocket(`ws://127.0.0.1:${this.info.port}/api?token=${this.info.token}`, { handshakeTimeout: this.connectTimeoutMs });
       this.ws.on('open', res);
       this.ws.on('error', rej);
       this.ws.on('message', (raw) => {
-        const m = JSON.parse(String(raw));
+        let m; try { m = JSON.parse(String(raw)); } catch { return; }
+        if (!m || typeof m !== 'object') return;
         if (m.event) { for (const h of this.handlers) h(m.event, m.data); return; }
         const w = this.wait.get(m.id); if (!w) return; this.wait.delete(m.id);
         if (m.error) w.rej(Object.assign(new Error(`${m.error.code}: ${m.error.message}`), { code: m.error.code })); else w.res(m.result);
       });
-      this.ws.on('close', () => { for (const w of this.wait.values()) w.rej(new Error('connection closed')); this.closed = true; });
+      this.ws.on('close', () => { const error = new Error('connection closed'); rej(error); for (const w of this.wait.values()) w.rej(error); this.closed = true; });
     });
   }
-  call(method, params = {}) { const id = ++this.n; return new Promise((res, rej) => { this.wait.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params })); }); }
+  call(method, params = {}) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return Promise.reject(Object.assign(new Error('not connected'), { code: 'disconnected' }));
+    const id = ++this.n;
+    return pendingRequest(this.wait, id, () => this.ws.send(JSON.stringify({ id, method, params })), { method });
+  }
   on(h) { this.handlers.push(h); }
-  close() { this.ws.close(); }
+  close() { this.ws?.close(); }
 }
 
 export async function connect(cfg) {
@@ -51,11 +58,14 @@ export async function startBackend(cfg, { nodePath = process.execPath } = {}) {
   const log = fs.openSync(path.join(cfg.logDir, 'backend.out'), 'a');
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_EFFORT|CLAUDE_PID|CLAUDE_AGENT_SDK|ELECTRON_)/.test(k)));
   const p = spawn(nodePath, [path.join(BACKEND_ROOT, 'src', 'main.mjs')], { env: { ...env, ...profileEnv(cfg) }, detached: true, stdio: ['ignore', log, log], windowsHide: true });
+  let spawnError = null;
+  p.on('error', (e) => { spawnError = e; });
   p.unref();
   fs.closeSync(log);
   const t0 = Date.now();
   while (Date.now() - t0 < 60000) { // P18: 처음 뜰 때 옛 판 옮기기(옛 백엔드·herdr 끄기)가 몇십 초 걸릴 수 있다
     await sleep(200);
+    if (spawnError) throw new Error(`백엔드 Node 실행 실패 (${nodePath}): ${spawnError.message}`);
     const b = backendInfo(cfg);
     if (b && b.pid === p.pid && (await health(b.port))) {
       const c = new ApiClient(b); await c.open();

@@ -11,6 +11,7 @@
 //    새 herdr를 띄운 뒤 J1 되살리기(recoverAfterHerdr의 recreate_resume, restoreGone)가 같은 대화 ID로 이어 가고, 다 되면 옛 세션을 지운다(backend.mjs finishHerdrMigration).
 // 창 프로필은 Electron main이 옮긴다(app/src/main/main.mjs migrateAppProfile).
 import fs from 'node:fs';
+import { resolvePath, windowsPath } from './platform.mjs';
 import path from 'node:path';
 import { HerdrAdapter } from './herdr/adapter.mjs';
 import { backendInfo, health, ApiClient } from './client.mjs';
@@ -108,14 +109,14 @@ function removeEmptyDirs(dir) {
 // 기록 속 경로 고치기: 옛 데이터 폴더(역슬래시, 슬래시, JSON 안의 두 역슬래시 꼴, 대소문자 무시)를 새 폴더로, 옛 플러그인 폴더 이름을 새 이름으로
 export function pathFixer(oldDir, newDir) {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const o = path.resolve(oldDir), n = path.resolve(newDir);
+  const o = resolvePath(oldDir), n = resolvePath(newDir);
   const forms = [
-    [o.split(path.sep).join('\\\\'), n.split(path.sep).join('\\\\')], // JSON 글 안의 C:\\Users\\…
-    [o.split(path.sep).join('\\'), n.split(path.sep).join('\\')],
-    [o.split(path.sep).join('/'), n.split(path.sep).join('/')],
+    [o.replace(/\//g, '\\\\'), n.replace(/\//g, '\\\\')],
+    [o.replace(/\//g, '\\'), n.replace(/\//g, '\\')],
+    [o, n],
   ];
   const seps = ['\\\\', '\\', '/'];
-  const rules = forms.map(([a, b], i) => [new RegExp(`${esc(a)}(?=[\\\\/"']|$)`, 'gi'), b, seps[i]]);
+  const rules = forms.map(([a, b], i) => [new RegExp(`${esc(a)}(?=[\\\\/"']|$)`, windowsPath(oldDir) ? 'gi' : 'g'), b, seps[i]]);
   return (text) => {
     if (typeof text !== 'string' || !text) return text;
     let s = text;

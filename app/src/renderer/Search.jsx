@@ -21,7 +21,7 @@ export function SearchBox() {
   const [res, setRes] = useState([]);
   const [pick, setPick] = useState(0);
   const inRef = useRef(null);
-  useEffect(() => { if (open) setTimeout(() => inRef.current && inRef.current.select(), 0); }, [open]);
+  useEffect(() => { if (!open) return; const timer = setTimeout(() => inRef.current?.select(), 0); return () => clearTimeout(timer); }, [open]);
   useEffect(() => {
     if (!open) return;
     const query = q.trim();

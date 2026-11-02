@@ -501,7 +501,7 @@ export function Canvas() {
     const st = getState();
     // P21: 잠든 세션은 패널이 없어 터미널을 붙이지 않는다(깨면 starting이 되어 붙는다)
     const list = [...st.nodes].filter(([id]) => st.sessions.has(id) && st.sessions.get(id).state !== 'sleeping').map(([id, r]) => ({ id, x: r.x, y: r.y, w: r.w, h: r.h }));
-    const want = pickAttached(list, vp, { width: el.clientWidth, height: el.clientHeight }, { max: MAX_CONTROLLERS, prev: new Set(st.attached) });
+    const want = pickAttached(list, vp, { width: el.clientWidth, height: el.clientHeight }, { max: MAX_CONTROLLERS, prev: new Set(st.attached), focusId: st.focusId });
     // P24: 가까이 얼굴로 보이는 노드 모두(잠든 노드, 제어기 상한 밖 포함)는 그 리포를 보고 있는 것이다(저절로 잠재우지 않는다)
     const all = [...st.nodes].filter(([id]) => st.sessions.has(id)).map(([id, r]) => ({ id, x: r.x, y: r.y, w: r.w, h: r.h }));
     setCloseIds(pickAttached(all, vp, { width: el.clientWidth, height: el.clientHeight }, { max: Infinity }).sort());
@@ -521,7 +521,11 @@ export function Canvas() {
   const timer = useRef(null);
   const schedule = useCallback((ms = 200) => { clearTimeout(timer.current); timer.current = setTimeout(recompute, ms); }, [recompute]);
   useEffect(() => { schedule(50); }, [storeNodes, sessions, schedule]);
-  useEffect(() => { const t = setInterval(() => recompute(), HOLD_MS + 100); window.addEventListener('resize', () => schedule()); return () => clearInterval(t); }, [recompute, schedule]);
+  useEffect(() => {
+    const t = setInterval(() => recompute(), HOLD_MS + 100);
+    const resize = () => schedule(); window.addEventListener('resize', resize);
+    return () => { clearInterval(t); clearTimeout(timer.current); window.removeEventListener('resize', resize); };
+  }, [recompute, schedule]);
 
   const sizeOf = () => { const el = wrapRef.current; return el ? { width: el.clientWidth, height: el.clientHeight } : null; };
   const saveVp = useRef(null);
@@ -613,6 +617,7 @@ export function Canvas() {
       }
       enterSession(id);
       setFocus(id, { terminal: focusTerminal && !viewOnly });
+      if (seen) schedule(0);
       markSeen(id);
       if (focusTerminal && !viewOnly) setTimeout(() => setFocus(id, { terminal: true }), 700); // 터미널이 붙은 뒤 한 번 더
     };

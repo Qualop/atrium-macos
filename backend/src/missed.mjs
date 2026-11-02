@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { pathKey } from './workspaces.mjs';
 
 export const TEST_PREFIX = 'mtask-'; // 이 이름으로 시작하는 폴더(경로의 어느 마디든)는 이 앱의 시험 폴더다(C:\Workspace\mtask-p10-cli 등)
@@ -79,6 +80,16 @@ export const REFUSE_LABEL = { trash_failed: '휴지통으로 보내지 못했다
 // → { trashed: [path], failed: [{ path, error }] }. 지운 뒤 그 경로가 남아 있으면 실패로 본다
 export function trashPaths(paths, { tmpDir }) {
   if (!paths.length) return Promise.resolve({ trashed: [], failed: [] });
+  if (process.platform === 'darwin') {
+    const script = fileURLToPath(new URL('../scripts/trash-macos.js', import.meta.url));
+    return new Promise((resolve) => {
+      execFile('/usr/bin/osascript', ['-l', 'JavaScript', script, JSON.stringify(paths)], { encoding: 'utf8', timeout: 120000 }, (err, out) => {
+        try { if (!err) return resolve(JSON.parse(out)); } catch {}
+        resolve({ trashed: [], failed: paths.map((p) => ({ path: p, error: err?.message || 'Invalid Trash response' })) });
+      });
+    });
+  }
+  if (process.platform !== 'win32') return Promise.resolve({ trashed: [], failed: paths.map((p) => ({ path: p, error: 'Trash is not supported on this platform' })) });
   fs.mkdirSync(tmpDir, { recursive: true });
   const list = path.join(tmpDir, `trash-${process.pid}-${Date.now()}.json`);
   fs.writeFileSync(list, JSON.stringify(paths), 'utf8');

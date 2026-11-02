@@ -30,6 +30,7 @@ symvibe 해부 내용은 `docs/research/symvibe.md`에 있다.
 
 | 항목 | 결정 | 이유 |
 |---|---|---|
+| 플랫폼 | Windows 구현을 유지하며 macOS 포팅을 추가한다(2026-11-02). macOS는 Unix 소켓, Application Support 데이터 폴더, POSIX 프로세스 조회를 쓴다. Apple Silicon에서 검증하며 Intel은 미검증이다. | 사용자의 Mac 실행 요청. 기존 herdr 0.9.5 프로토콜과 판 데이터 모델을 유지한다. |
 | 이름 | `Atrium`. 명령어, 환경 변수 접두어, 데이터 폴더, herdr 세션 이름은 `atrium`(`ATRIUM_*`)이다. 옛 이름 `multitask`·`mtask`·`MTASK_*`도 당분간 받고, 옛 이름의 판 기록과 세션은 처음 켤 때 옮긴다. 저장소 폴더는 그대로다(2026-11-01 사용자 요청, P18). | `mt`는 Windows SDK의 `mt.exe`와 겹칠 수 있다. |
 | 엔진 | Claude Code CLI 세션은 herdr 패널에서 돈다. 판은 herdr API로 세션을 띄우고, 상태를 받고, 글을 보낸다(2026-10-29 결정). | 데스크톱 앱은 앱 밖에서 세션에 입력을 넣는 통로를 열어 주지 않는다. herdr는 터미널 소유, 화면과 무관한 세션 유지, 재시작 때 `claude --resume`을 이미 한다. E0에서 세션 시작, 상태, 화면, 글 보내기를 모두 확인했다(`docs/experiments/E0.md`). |
 | 방향 | 판은 세션을 띄우고, 세션끼리 연결해 주고, 그 연결을 보여준다. 일을 나누고 시키는 것은 에이전트가 herdr 스킬로 직접 하고, 워크트리 같은 작업 방식은 각 하네스의 규칙을 따른다(2026-10-30 결정). | 사용자는 장기적으로 CLI로 옮긴다. 하네스(Claude Code, Codex, Hermes 등)가 이미 작업 규칙을 가지고 있으므로, 판이 같은 일을 다시 만들지 않는다. |

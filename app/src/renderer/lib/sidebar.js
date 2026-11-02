@@ -23,8 +23,8 @@ export function bindingText(b) {
   if (b.where === 'terminal' && b.pid) return t('binding.terminal', { pid: b.pid });
   if (b.where === 'desktop') return b.open ? t('binding.desktopOpen') : b.archived ? t('binding.desktopArchived') : t('binding.desktop');
   const tail = String(b.label || '').split(' · ').slice(1).join(' · ');
-  if (tail === translate('ko', 'binding.srcUnknown')) return t('binding.maybe', { why: t('binding.srcUnknown') });
-  if (tail === translate('ko', 'binding.justWritten')) return t('binding.maybe', { why: t('binding.justWritten') });
+  if (tail === '출처 모름' || tail === translate('ko', 'binding.srcUnknown')) return t('binding.maybe', { why: t('binding.srcUnknown') });
+  if (tail === '방금 기록됨' || tail === translate('ko', 'binding.justWritten')) return t('binding.maybe', { why: t('binding.justWritten') });
   return tail ? t('binding.maybe', { why: tail }) : b.label || '';
 }
 

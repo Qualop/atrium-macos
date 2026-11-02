@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import { electronExecutable } from '../scripts/platform.mjs';
 import { assertTestBoard, assertLegacyTestBoard, atriumEnv } from './e2e/p9-guard.mjs';
 import { migrateAppProfile, PROFILE_MARKER } from '../src/main/profile.mjs';
 
@@ -39,7 +40,7 @@ test('P9: real.mjs는 --dev 없이 실제 판 프로필로 띄우고, ATRIUM_* �
   assert.equal(real.profile, 'real'); assert.equal(real.herdrSession, 'atrium'); assert.equal(real.port, 47800);
   assert.equal(path.basename(real.dataDir), 'atrium');
   assert.deepEqual(real.args, ['.']);
-  assert.ok(real.exe.endsWith(path.join('electron', 'dist', 'electron.exe')));
+  assert.equal(real.exe, electronExecutable(APP));
   assert.equal(path.resolve(real.cwd), APP);
   const t = dry(OK, '--dev');
   assert.equal(t.profile, 'real'); assert.equal(t.herdrSession, 'atrium-dev-p9'); assert.equal(t.port, 47821);

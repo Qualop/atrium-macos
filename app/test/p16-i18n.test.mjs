@@ -79,8 +79,8 @@ test('고르기: 기본은 영어, 바꾸면 알린다, 한국어에 없으면 �
   const seen = [];
   const off = onLanguage((l) => seen.push(l));
   setLanguage('ko');
-  assert.equal(t('chips.arrange'), '정리');
-  assert.equal(STATE_LABEL.waiting, '내 차례');
+  assert.equal(t('chips.arrange'), '자동 정렬');
+  assert.equal(STATE_LABEL.waiting, '응답 필요');
   setLanguage('xx'); // 모르는 언어는 영어
   assert.equal(getLanguage(), 'en');
   off();
@@ -94,7 +94,7 @@ test('고르기: 기본은 영어, 바꾸면 알린다, 한국어에 없으면 �
 test('복수와 시간: 1 session / 2 sessions, 3m 4s ago / 3분 4초 전', () => {
   assert.equal(t('top.connSessions', { n: 1 }), '1 session on the board');
   assert.equal(t('top.connSessions', { n: 2 }), '2 sessions on the board');
-  assert.equal(translate('ko', 'top.connSessions', { n: 2 }), '판의 세션 2개');
+  assert.equal(translate('ko', 'top.connSessions', { n: 2 }), '보드의 세션 2개');
   const now = 1_000_000_000;
   assert.equal(ago(now - 184_000, now), '3m 4s');
   assert.equal(agoText(now - 184_000, now), '3m 4s ago');
@@ -112,5 +112,5 @@ test('백엔드 글: 열쇠가 있으면 번역(값 안의 열쇠와 목록도),
   assert.equal(errText(Object.assign(new Error('연결 끊김'), { code: 'disconnected' })), 'Not connected to the backend');
   assert.equal(errText(Object.assign(new Error('모르는 오류'), { code: 'weird' })), '모르는 오류');
   setLanguage('ko');
-  try { assert.equal(tMsg(r), '빈 워크스페이스 a(C:/a)를 닫는다. 폴더와 저장소는 그대로다.'); } finally { setLanguage('en'); }
+  try { assert.equal(tMsg(r), '빈 프로젝트 a (C:/a)을 닫습니다. 폴더와 Git 저장소는 그대로 유지합니다.'); } finally { setLanguage('en'); }
 });

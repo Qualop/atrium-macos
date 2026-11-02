@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import { useStore, toast } from './store.js';
 import { BranchSettings } from './Branch.jsx'; // P8(K3): 가지 펼치기 상한
-import { useT, errText, setLanguage, getLanguage, LANGUAGES } from './lib/i18n.js';
+import { useT, tOr, errText, setLanguage, getLanguage, LANGUAGES } from './lib/i18n.js';
 
 // 한 줄: 이름, 값, 풀이(짧은 글). 이름을 누르면 값 칸의 입력에 초점이 간다(label)
 export function SetRow({ name, hint, children, role }) {
@@ -109,12 +109,12 @@ function SpawnSettings({ settings, schema, part }) {
       <SetRow name={t('settings.claudeModel')} hint={t('settings.claudeModelHint')}>{text('claudeModel', t('settings.claudeModelPh'))}</SetRow>
       <SetRow name={t('settings.effort')} hint={t('settings.effortHint')}>
         <select value={settings.claudeEffort || ''} data-field="setting-claudeEffort" onChange={(e) => save('claudeEffort', e.target.value)}>
-          {opts('claudeEffort', ['', 'low', 'medium', 'high', 'xhigh', 'max']).map((o) => <option key={o} value={o}>{o === '' ? t('settings.effortDefault') : o}</option>)}
+          {opts('claudeEffort', ['', 'low', 'medium', 'high', 'xhigh', 'max']).map((o) => <option key={o} value={o}>{o === '' ? t('settings.effortDefault') : tOr(`effortLevels.${o}`, o)}</option>)}
         </select>
       </SetRow>
       <SetRow name={t('settings.permissionMode')} hint={t('settings.permissionModeHint')}>
         <select value={settings.claudePermissionMode || 'manual'} data-field="setting-claudePermissionMode" onChange={(e) => save('claudePermissionMode', e.target.value)}>
-          {opts('claudePermissionMode', ['manual', 'acceptEdits', 'plan', 'auto']).map((o) => <option key={o}>{o}</option>)}
+          {opts('claudePermissionMode', ['manual', 'acceptEdits', 'plan', 'auto']).map((o) => <option key={o} value={o}>{tOr(`permissionModes.${o}`, o)}</option>)}
         </select>
       </SetRow>
       <SetRow name={t('settings.allowHerdrName')} hint={t('settings.allowHerdr')}><Toggle checked={!!settings.claudeAllowHerdr} onChange={(v) => save('claudeAllowHerdr', v)} field="setting-claudeAllowHerdr" /></SetRow>

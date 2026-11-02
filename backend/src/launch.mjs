@@ -2,11 +2,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { resolvePath, canonicalPath, windowsPath } from './platform.mjs';
 
 // http hook으로 받을 이벤트. SessionStart는 http hook을 부르지 않으므로 넣지 않는다(E2 2.5).
 export const HOOK_EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied', 'Notification', 'Stop', 'StopFailure', 'SubagentStop', 'SessionEnd'];
 
-export const slash = (p) => path.resolve(p).split(path.sep).join('/');
+export const slash = resolvePath;
 
 // P4: 세션 설정 파일에 넣는 "herdr 명령만 자동 승인" 규칙(새 세션 대화상자에서 고를 때만). herdr 스킬이 먼저 부르는 test·printf도 넣는다.
 // Claude Code는 ${…}나 $PWD 같은 셸 확장이 든 명령은 규칙과 상관없이 묻는다(P4 시험). 그때는 판의 승인 카드로 답한다.
@@ -73,7 +74,9 @@ export function buildResumeArgs({ sessionId, ...o }) { return ['--resume', sessi
 export function argvHasSettings(argv, settingsPath) {
   if (!Array.isArray(argv)) return false;
   const i = argv.indexOf('--settings');
-  return i >= 0 && slash(argv[i + 1] || '').toLowerCase() === slash(settingsPath).toLowerCase();
+  if (i < 0) return false;
+  const a = canonicalPath(argv[i + 1] || ''), b = canonicalPath(settingsPath);
+  return windowsPath(settingsPath) ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 // C3 대책(P3): herdr가 다시 뜬 뒤 판 세션 하나를 어떻게 되살릴지.
@@ -104,24 +107,22 @@ export function predictTrust(cwd, claudeJsonPath) {
   return predictTrustFrom(cwd, projects, gitRoot);
 }
 export function predictTrustFrom(cwd, projects, gitRoot = null) {
-  const parts = slash(cwd).split('/').filter(Boolean); // ['C:', 'Workspace', ...]
-  const stop = gitRoot ? slash(gitRoot).split('/').filter(Boolean).length : 1;
-  for (let i = parts.length; i >= stop; i--) {
-    const key = parts.slice(0, i).join('/');
-    for (const k of i === 1 ? [key, key + '/'] : [key]) {
-      const e = projects[k] || findCaseInsensitive(projects, k);
-      if (e && e.hasTrustDialogAccepted) return { needsTrust: false, trustedBy: k };
-    }
+  const win = windowsPath(cwd);
+  const keyOf = (p) => { const c = canonicalPath(p).replace(/\/$/, ''); return win ? c.toLowerCase() : c; };
+  const trusted = new Map(Object.entries(projects).map(([name, value]) => [keyOf(name), { name, value }]));
+  const stop = gitRoot ? keyOf(gitRoot) : null;
+  let current = canonicalPath(cwd);
+  while (true) {
+    const found = trusted.get(keyOf(current));
+    if (found?.value?.hasTrustDialogAccepted) return { needsTrust: false, trustedBy: found.name };
+    if (stop && keyOf(current) === stop) break;
+    const parent = win ? path.win32.dirname(current).replace(/\\/g, '/') : path.dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
   return { needsTrust: true, trustedBy: null };
 }
-function findCaseInsensitive(projects, key) {
-  const k = key.toLowerCase();
-  for (const [name, v] of Object.entries(projects)) if (name.toLowerCase() === k) return v;
-  return null;
-}
-
 // 대화 기록 경로: ~/.claude/projects/<cwd의 영숫자 밖 글자를 '-'로>/<세션 ID>.jsonl(E1 2절). hook의 transcript_path가 있으면 그것을 쓴다.
 export function transcriptPathFor(projectsDir, cwd, sessionId) {
-  return path.join(projectsDir, path.resolve(cwd).replace(/[^A-Za-z0-9]/g, '-'), `${sessionId}.jsonl`);
+  return path.join(projectsDir, resolvePath(cwd).replace(/[^A-Za-z0-9]/g, '-'), `${sessionId}.jsonl`);
 }

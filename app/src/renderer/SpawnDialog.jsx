@@ -8,8 +8,9 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
 import { toast, getState, wsName, openDialog, goWhenOpen } from './store.js';
-import { useT, t, errText } from './lib/i18n.js';
+import { useT, t, tOr, errText } from './lib/i18n.js';
 import { kindOf } from './lib/kinds.js';
+import { modelFromArgs } from '../../../backend/src/codex-args.mjs';
 
 // P25: DeepSeek는 herdr 종류가 아니다. 백엔드가 설정의 deepseek*로 판의 Claude Code(모델만 DeepSeek)나 직접 명령(새 셸 패널)으로 띄운다
 const DEEPSEEK = 'deepseek';
@@ -43,7 +44,7 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = 'claude' })
   const [name, setName] = useState('');
   const [kind, setKind] = useState(agentKind || 'claude');
   const [kinds, setKinds] = useState([{ kind: 'claude', installed: true }]);
-  const modelFor = (k) => (k === DEEPSEEK ? def.deepseekModel || '' : def.claudeModel || info.defaultModel || '');
+  const modelFor = (k) => k === 'codex' ? modelFromArgs(def.codexArgs) : k === DEEPSEEK ? def.deepseekModel || '' : def.claudeModel || info.defaultModel || '';
   const [model, setModel] = useState(modelFor(agentKind));
   const [mode, setMode] = useState(def.claudePermissionMode || 'manual');
   const [args, setArgs] = useState(agentKind === 'codex' ? def.codexArgs || '' : '');
@@ -52,11 +53,24 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = 'claude' })
   const [prompt, setPrompt] = useState('');
   const [trust, setTrust] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [catalog, setCatalog] = useState({ status: 'loading', models: [] });
+  const [refreshModels, setRefreshModels] = useState(0);
+  const [customModel, setCustomModel] = useState(false);
   const deepseek = kind === DEEPSEEK;
   const direct = deepseek && !!command.trim(); // 직접 명령: 새 셸 패널에 그대로 친다(hook 없음)
   const claude = kind === 'claude' || (deepseek && !direct);
   const shell = kind === 'shell';
-  const pickKind = (k) => { setKind(k); setArgs(k === 'codex' ? def.codexArgs || '' : ''); if ((k === DEEPSEEK) !== deepseek) setModel(modelFor(k)); };
+  const pickKind = (k) => { setKind(k); setArgs(k === 'codex' ? def.codexArgs || '' : ''); setModel(modelFor(k)); setCustomModel(false); };
+  const manualModel = customModel || (!!model && catalog.status !== 'loading' && !catalog.models.some((m) => m.id === model));
+
+  useEffect(() => {
+    if (kind !== 'codex') return;
+    let alive = true;
+    setCatalog({ status: 'loading', models: [] });
+    api.call('agent.models', { kind: 'codex' }).then((r) => { if (alive) setCatalog({ status: r.models.length ? 'ready' : 'empty', models: r.models }); })
+      .catch(() => { if (alive) setCatalog({ status: 'error', models: [] }); });
+    return () => { alive = false; };
+  }, [kind, refreshModels]);
 
   useEffect(() => { api.call('agent.kinds').then((ks) => setKinds([...ks].sort((a, b) => (b.installed - a.installed) || (a.kind === 'claude' ? -1 : b.kind === 'claude' ? 1 : 0)))).catch(() => {}); }, []);
   useEffect(() => {
@@ -72,7 +86,7 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = 'claude' })
       const p = { cwd, name: name.trim() || undefined, kind, prompt: shell || direct ? undefined : prompt.trim() || undefined };
       if (deepseek) p.command = command.trim(); // 빈 글이면 기본 실행(설정의 직접 명령보다 이 값이 먼저다)
       if (claude) Object.assign(p, { model: model.trim() || undefined, permissionMode: mode, allowHerdr });
-      else if (!shell && !deepseek) p.args = args.trim();
+      else if (!shell && !deepseek) { p.args = args.trim(); if (kind === 'codex') p.model = model.trim(); }
       const r = await api.call('session.spawn', p);
       toast(startedText(r));
       onClose();
@@ -97,6 +111,7 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = 'claude' })
             </select>
           </label>
         </div>
+        <div className="mt-card-sub">{t('spawn.nameHelp')}</div>
         {deepseek && <>
           <label>{t('spawn.deepseekCommand')}<input value={command} onChange={(e) => setCommand(e.target.value)} placeholder={t('spawn.deepseekCommandPh')} data-field="deepseek-command" /></label>
           <div className="mt-card-sub" data-role="deepseek-note">{direct ? t('spawn.deepseekDirectNote') : t('spawn.deepseekNote')}</div>
@@ -105,14 +120,35 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = 'claude' })
           <div className="mt-row">
             <label>{t('spawn.model')}<input value={model} onChange={(e) => setModel(e.target.value)} placeholder={t('spawn.modelPh')} data-field="model" /></label>
             <label>{t('spawn.mode')}
-              <select value={mode} onChange={(e) => setMode(e.target.value)}>
-                {['manual', 'acceptEdits', 'plan', 'auto', ...(['manual', 'acceptEdits', 'plan', 'auto'].includes(mode) ? [] : [mode])].map((m) => <option key={m}>{m}</option>)}
+              <select data-field="permission-mode" value={mode} onChange={(e) => setMode(e.target.value)}>
+                {['manual', 'acceptEdits', 'plan', 'auto', ...(['manual', 'acceptEdits', 'plan', 'auto'].includes(mode) ? [] : [mode])].map((m) => <option key={m} value={m}>{tOr(`permissionModes.${m}`, m)}</option>)}
               </select>
             </label>
           </div>
-          <label className="mt-check"><input type="checkbox" checked={allowHerdr} onChange={(e) => setAllowHerdr(e.target.checked)} data-field="allow-herdr" />{t('spawn.allowHerdr')}</label>
+          <label className="mt-check"><input type="checkbox" checked={allowHerdr} onChange={(e) => setAllowHerdr(e.target.checked)} data-field="allow-herdr" /><span>{t('settings.allowHerdrName')}</span></label>
+          <div className="mt-card-sub">{t('spawn.allowHerdr')}</div>
         </> : <>
-          <label>{t('spawn.args')}<input value={args} onChange={(e) => setArgs(e.target.value)} placeholder={kind === 'codex' ? t('spawn.codexArgsPh') : ''} data-field="args" /></label>
+          {kind === 'codex' ? <>
+            <label>{t('spawn.model')}
+              <select data-field="model-select" value={manualModel ? '__custom__' : model} onChange={(e) => {
+                const v = e.target.value; setCustomModel(v === '__custom__'); if (v !== '__custom__') setModel(v);
+              }}>
+                <option value="">{t('spawn.modelDefault')}</option>
+                {catalog.status === 'loading' && model && <option value={model}>{model}</option>}
+                {catalog.models.map((m) => <option key={m.id} value={m.id}>{m.name === m.id ? m.id : `${m.name} (${m.id})`}</option>)}
+                <option value="__custom__">{t('spawn.modelCustom')}</option>
+              </select>
+            </label>
+            <div className="mt-card-sub" role="status" data-role="model-status" data-status={catalog.status}>
+              {t(`spawn.modelList_${catalog.status}`)}{' '}
+              <button type="button" className="mt-btn small ghost" disabled={catalog.status === 'loading'} onClick={() => setRefreshModels((n) => n + 1)} data-action="models-refresh">{t('spawn.modelRefresh')}</button>
+            </div>
+            {manualModel && <label>{t('spawn.modelId')}<input data-field="model" value={model} onChange={(e) => setModel(e.target.value)} placeholder={t('spawn.modelIdPh')} /></label>}
+            <details data-role="advanced-args"><summary>{t('spawn.advanced')}</summary>
+              <label>{t('spawn.extraArgs')}<input value={args} onChange={(e) => setArgs(e.target.value)} placeholder="-c model_reasoning_effort=high" data-field="args" /></label>
+              <div className="mt-card-sub">{t('spawn.modelOverridesArgs')}</div>
+            </details>
+          </> : <label>{t('spawn.args')}<input value={args} onChange={(e) => setArgs(e.target.value)} data-field="args" /></label>}
           <div className="mt-card-sub">{t('spawn.otherNote', { kind })}</div>
         </>}
         {!shell && !direct && <label>{t('spawn.prompt')}<textarea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} data-field="prompt" /></label>}

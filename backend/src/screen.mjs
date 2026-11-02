@@ -40,7 +40,7 @@ export function shellPromptState(text) {
   if (!lines.length) return { atPrompt: false, command: null };
   const cmdOf = (l) => { for (const re of PROMPTS) { const m = l.match(re); if (m) return m[1].trim(); } return null; };
   const last = lines[lines.length - 1];
-  const atPrompt = cmdOf(last) === '' || /[$#]$/.test(last); // 끝 줄이 빈 프롬프트(bash류는 $, #로 끝남)
+  const atPrompt = cmdOf(last) === '' || /[$#%❯]$/.test(last); // bash, zsh 기본 프롬프트
   let command = null;
   for (let i = lines.length - (atPrompt ? 2 : 1); i >= 0; i--) { const c = cmdOf(lines[i]); if (c) { command = c; break; } }
   return { atPrompt, command };

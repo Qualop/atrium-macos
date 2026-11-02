@@ -8,6 +8,7 @@
 import { useSyncExternalStore } from 'react';
 import en from '../locales/en.js';
 import ko from '../locales/ko.js';
+import { shortcutText } from './shortcuts.js';
 
 export const LANGUAGES = ['en', 'ko'];
 export const DEFAULT_LANGUAGE = 'en';
@@ -59,7 +60,7 @@ export function translate(l, key, vars) {
     if (!warned.has(key)) { warned.add(key); console.warn(`[i18n] missing key: ${key}`); }
     return key;
   }
-  return fill(v, vars);
+  return fill(shortcutText(v), vars);
 }
 export const t = (key, vars) => translate(lang, key, vars);
 // 열쇠가 있을 때만(백엔드가 준 코드처럼 없을 수도 있는 것)

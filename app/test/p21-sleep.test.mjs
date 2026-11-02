@@ -26,9 +26,9 @@ test('D4: 잠듦 상태 글(영어·한국어), 전달 기다림 이유, 상태 
   assert.equal(stateColor('sleeping'), 'var(--st-sleeping)');
   assert.equal(errText({ key: 'sleepRefused', vars: { name: 'a1', reason: { key: 'sleepWhy_working' } } }), '@a1 is not put to sleep now: working');
   setLanguage('ko');
-  assert.equal(STATE_LABEL.sleeping, '잠듦');
-  assert.equal(t('sleep.memAsleep', { n: 2, mb: '900MB' }), '잠든 세션 2개, 900MB 아낌');
-  assert.equal(errText({ key: 'sleepRefused', vars: { name: 'a1', reason: { key: 'sleepWhy_needs_you' } } }), '@a1은 지금 잠재우지 않는다: 내 차례다');
+  assert.equal(STATE_LABEL.sleeping, '절전 중');
+  assert.equal(t('sleep.memAsleep', { n: 2, mb: '900MB' }), '세션 2개 절전 중 · 메모리 900MB 절약');
+  assert.equal(errText({ key: 'sleepRefused', vars: { name: 'a1', reason: { key: 'sleepWhy_needs_you' } } }), '@a1 세션을 지금 절전 모드로 전환할 수 없습니다: 사용자의 응답이 필요합니다.');
   setLanguage('en');
 });
 
@@ -51,8 +51,8 @@ test('P24: 영역 이름표의 잠듦과 메모리 목록의 리포별 묶음', 
     ['repo-a', 90, ['sh'], ['a1', 'a2'], 950],
   ]);
   setLanguage('ko');
-  assert.equal(errText({ key: 'repoSleepRefused', vars: { repo: 'repo-b', name: '@b2', reason: { key: 'sleepWhy_working' } } }), '리포 repo-b는 지금 잠재우지 않는다: @b2 일하는 중이다');
-  assert.equal(t('sleep.trayItem'), '쉬는 리포 모두 잠재우기');
+  assert.equal(errText({ key: 'repoSleepRefused', vars: { repo: 'repo-b', name: '@b2', reason: { key: 'sleepWhy_working' } } }), 'repo-b 프로젝트를 지금 절전 모드로 전환할 수 없습니다: @b2 작업을 진행하고 있습니다.');
+  assert.equal(t('sleep.trayItem'), '대기 중인 프로젝트 모두 절전 모드로');
   setLanguage('en');
   assert.equal(errText({ key: 'repoSleepRefused', vars: { repo: 'repo-b', name: '@b2', reason: { key: 'sleepWhy_working' } } }), 'repo-b is not put to sleep now: @b2 working');
   assert.equal(t('sleep.sleepIdleDone', { repos: 2, n: 3, mb: '1.4GB' }), 'Put 2 repo(s) to sleep: 3 sessions (1.4GB saved)');

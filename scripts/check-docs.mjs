@@ -22,7 +22,7 @@ const DEFAULTS = {
     "docs/README.md": 12000,
   },
   total: 70000,
-  rootAllow: ["README.md", "CLAUDE.md", "AGENTS.md", "LICENSE.md"],
+  rootAllow: ["README.md", "README.ko.md", "CLAUDE.md", "AGENTS.md", "LICENSE.md"],
   docsAllow: ["README.md", "BRIEF.md", "ARCH.md", "PLAN.md", "testing.md", "decisions.md"],
   docsDirs: ["log", "experiments", "research"],
   briefRowMax: 500,

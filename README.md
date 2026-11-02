@@ -1,3 +1,5 @@
+This repository contains macOS support, Korean UI revisions, a Codex model picker, and reliability fixes for [Gudals0320/atrium](https://github.com/Gudals0320/atrium). The original project's MIT license and copyright notice are preserved.
+
 <p align="center">
   <img src="docs/images/banner.png" alt="Atrium" width="640">
 </p>
@@ -55,7 +57,7 @@ Atrium does not replace your agents or tell them how to work. It starts the sess
 
 ## Requirements
 
-Atrium is **Windows only** for now (Windows 10 or 11, x64).
+Atrium supports Windows 10/11 (x64) and an experimental macOS port. The port has been exercised on Apple Silicon; Intel installation is provided but has not been tested on hardware.
 
 | | |
 |---|---|
@@ -67,9 +69,25 @@ Atrium is **Windows only** for now (Windows 10 or 11, x64).
 
 ## Quick start
 
+### macOS
+
+Install Node.js 24, Git and your agent CLI, then run from this checkout:
+
+```sh
+cd app
+npm run setup:mac
+npm run mac
+```
+
+Setup downloads the official herdr 0.9.5 binary for your architecture into `.tools/`, verifies its SHA-256 and installs npm dependencies. It does not install anything globally. Subsequent launches only need `npm run mac`; add `-- --dev` for the development profile. `ATRIUM_HERDR` overrides the executable.
+
+Board data lives in `~/Library/Application Support/atrium`. Herdr uses a Unix socket under `~/.config/herdr/sessions/atrium` (or `XDG_CONFIG_HOME`). Closing the window keeps sessions running. Command shortcuts, Dock reopening and macOS Trash are supported. IME composition, notification clicks and reboot recovery still need manual testing. No signed/notarized DMG is included.
+
+### Windows
+
 ```powershell
-git clone https://github.com/Gudals0320/atrium.git
-cd atrium\backend
+git clone https://github.com/Qualop/atrium-macos.git
+cd atrium-macos\backend
 npm install
 cd ..\app
 npm install

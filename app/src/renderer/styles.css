@@ -545,6 +545,11 @@ img.mt-kind-icon { object-fit: contain; }
 .mt-modal { background: var(--panel); border: 1px solid var(--panel-line); border-radius: var(--panel-radius); padding: 18px 20px; width: 560px; max-height: 90vh; overflow: auto; display: grid; gap: 12px; box-shadow: var(--panel-shadow); }
 .mt-modal h3 { margin: 0; font-size: 16px; font-weight: 700; }
 .mt-modal label { display: grid; gap: 5px; color: var(--dim); font-size: 12px; font-weight: 600; }
+.mt-modal > *, .mt-modal label, .mt-modal .mt-row > * { min-width: 0; }
+.mt-modal input:not([type="checkbox"]), .mt-modal select, .mt-modal textarea { min-width: 0; max-width: 100%; box-sizing: border-box; }
+.mt-modal label.mt-check { display: flex; align-items: flex-start; gap: 8px; }
+.mt-modal label.mt-check input { flex: 0 0 16px; width: 16px; height: 16px; margin: 2px 0 0; }
+.mt-modal .mt-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .mt-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .mt-row-wide { display: flex; gap: 8px; }
 .mt-row-wide input { flex: 1; }

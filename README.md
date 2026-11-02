@@ -1,4 +1,4 @@
-This repository contains macOS support, Korean UI revisions, a Codex model picker, and reliability fixes for [Gudals0320/atrium](https://github.com/Gudals0320/atrium). The original project's MIT license and copyright notice are preserved.
+Atrium for macOS, with a Korean interface, automatic Codex model discovery, and session recovery improvements.
 
 <p align="center">
   <img src="docs/images/banner.png" alt="Atrium" width="640">

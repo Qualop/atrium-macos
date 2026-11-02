@@ -1,4 +1,4 @@
-이 저장소는 [Gudals0320/atrium](https://github.com/Gudals0320/atrium)에 macOS 지원, 한국어 UI 개선, Codex 모델 선택과 안정성 수정을 추가한 버전입니다. 원본 프로젝트의 MIT 라이선스와 저작권 표시는 유지합니다.
+macOS용 Atrium입니다. 한국어 인터페이스, Codex 모델 자동 감지, 세션 복구 및 안정성 개선을 포함합니다.
 
 <p align="center">
   <img src="docs/images/banner.png" alt="Atrium" width="640">

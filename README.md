@@ -1,170 +1,153 @@
-Atrium for macOS, with a Korean interface, automatic Codex model discovery, and session recovery improvements.
-
 <p align="center">
-  <img src="docs/images/banner.png" alt="Atrium" width="640">
+  <img src="docs/images/banner.png" alt="Atrium" width="560">
 </p>
 
 <p align="center">
-  <b>One infinite canvas for all your CLI coding agents.</b><br>
-  See every Claude Code, Codex and shell session at once, know whose turn it is, and talk to them without switching windows.
+  <b>Your AI coding sessions, together on one canvas.</b><br>
+  A macOS desktop workspace for Claude Code, Codex and terminals.
 </p>
 
 <p align="center">
-  <img alt="Windows 10 | 11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4?logo=windows&logoColor=white">
-  <img alt="Electron 45" src="https://img.shields.io/badge/Electron-45-47848F?logo=electron&logoColor=white">
-  <img alt="Node.js 24" src="https://img.shields.io/badge/Node.js-24-5FA04E?logo=nodedotjs&logoColor=white">
-  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1CB66D">
+  <b>English</b> · <a href="README.ko.md">한국어</a> · <a href="LICENSE">MIT</a>
 </p>
 
-<p align="center">
-  <b>English</b> · <a href="README.ko.md">한국어</a>
-</p>
+Atrium lets you run several coding sessions, see which ones need your attention, and send instructions without switching between terminal windows. It manages the workspace; Claude Code, Codex and your shell do the actual work.
 
-![Atrium board: a web-app folder with two shells, and an atrium folder with a lead agent docked with two workers and a reviewer waiting for an answer](docs/images/board.png)
+![Atrium on macOS: Korean UI with a session name and automatically discovered Codex model selector](docs/images/model-picker-macos.png)
 
-## Why
+*Actual macOS UI in an isolated test project. The displayed model catalog depends on your installed Codex and provider configuration.*
 
-Running five agent CLIs in five terminal tabs works until one of them asks you a question and waits for twenty minutes. Atrium puts every session on one board. Each folder gets its own area, every session shows its live terminal and its state, and the ones that need you glow orange.
+## Start on macOS
 
-Atrium does not replace your agents or tell them how to work. It starts the sessions, connects them, and shows the connections. The agents still do the work, and they delegate to each other through [herdr](https://herdr.dev).
-
-## Features
-
-- **One board for every session.** Claude Code, Codex, DeepSeek (Claude Code through a local gateway) and plain shells live side by side. Each repository gets an area, and live git worktrees appear as satellite areas with branch arrows.
-- **Know whose turn it is.** Every session is *working*, *ready*, *your turn* or *error*, computed from herdr events and Claude Code hooks. The **Your turn** and **Review** queues, OS notifications and a tray badge tell you where to look. Answer an `AskUserQuestion` prompt from a card on the node.
-- **Talk from the board.** Type `@name` (or `@all`) in the command bar. Each session has its own delivery queue, and every message is confirmed when the agent actually submits it.
-- **Live terminals that zoom.** Every node is a real xterm.js terminal. Zoom out and nodes turn into summary cards: name, state, pending question, last request, last answer. Click any node to fly to it.
-- **Docks.** Snap sessions together into tmux-style split layouts, with layout presets for 2 to 7+ sessions.
-- **Links between agents.** Draw a link from one session to another and give it a role, such as `worker` or `reviewer`. The agent learns how to hand work to that role through herdr, and the link lights up while work moves along it. Agents can also start child sessions (`atrium child`), which appear as a tree with spawn limits.
-- **Pick up old conversations.** Past Claude Code CLI conversations in an open folder show up as chat nodes that you can resume. Leftovers from test folders go to a *missed* list that you can clear in bulk.
-- **Overviews.** A mission map of who directs whom, a list of changes since you last looked, and `Ctrl+F` search across sessions.
-- **Notes on the canvas.** Markdown memos and kanban boards sit next to the sessions. Loops resend an instruction on a schedule or whenever a session goes idle.
-- **Easy on memory.** A repository that has been idle for 30 minutes (configurable) goes to sleep and wakes up as a whole. Each node shows its memory use.
-- **Keeps running.** Sessions live in herdr, so closing the window does not stop them. The board picks them back up when the window or the backend restarts.
-- **Scriptable.** The `atrium` CLI and a local WebSocket API cover spawn, send, link, dock, kill and more.
-- English and Korean UI.
-
-<table>
-  <tr>
-    <td width="50%"><img src="docs/images/dock.png" alt="A dock: the lead session on the left with ui and tests workers on the right, joined by links"></td>
-    <td width="50%"><img src="docs/images/your-turn.png" alt="A session in 'Your turn' state with an answer card for its question"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>A dock with links: the lead hands work to two workers.</sub></td>
-    <td align="center"><sub>Your turn: answer the question right on the node.</sub></td>
-  </tr>
-</table>
-
-## Requirements
-
-Atrium supports Windows 10/11 (x64) and an experimental macOS port. The port has been exercised on Apple Silicon; Intel installation is provided but has not been tested on hardware.
-
-| | |
-|---|---|
-| [Node.js](https://nodejs.org/) | 24.x |
-| [herdr](https://herdr.dev) | 0.9.5. Atrium looks for `%USERPROFILE%\.herdr\packages\standalone\releases\0.9.5-x86_64-pc-windows-msvc\herdr.exe`. Set `ATRIUM_HERDR` to use another path. |
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | A recent `claude` CLI on `PATH`. |
-| Git | For repository and worktree detection. |
-| Optional | Codex CLI for Codex sessions. An Anthropic-compatible gateway on `127.0.0.1:10100` (for example opencodex) for DeepSeek sessions. |
-
-## Quick start
-
-### macOS
-
-Install Node.js 24, Git and your agent CLI, then run from this checkout:
+You need **Node.js 24**, **Git**, and whichever agent CLI you want to use. Install and sign in to Claude Code or Codex separately. Plain terminals do not require an AI account.
 
 ```sh
-cd app
+git clone https://github.com/Qualop/atrium-macos.git
+cd atrium-macos/app
 npm run setup:mac
 npm run mac
 ```
 
-Setup downloads the official herdr 0.9.5 binary for your architecture into `.tools/`, verifies its SHA-256 and installs npm dependencies. It does not install anything globally. Subsequent launches only need `npm run mac`; add `-- --dev` for the development profile. `ATRIUM_HERDR` overrides the executable.
+`setup:mac` downloads **herdr TUI 0.9.5** for Apple Silicon or Intel, verifies its SHA-256, and installs the app and backend dependencies. Herdr stays inside the checkout under `.tools/`; the setup script does not install it globally or edit your shell configuration.
 
-Board data lives in `~/Library/Application Support/atrium`. Herdr uses a Unix socket under `~/.config/herdr/sessions/atrium` (or `XDG_CONFIG_HOME`). Closing the window keeps sessions running. Command shortcuts, Dock reopening and macOS Trash are supported. IME composition, notification clicks and reboot recovery still need manual testing. No signed/notarized DMG is included.
+After setup, launch again with `npm run mac` from `app/`. To use another compatible herdr executable, set `ATRIUM_HERDR` to its path. This integration expects herdr **0.9.5 / protocol 22**.
 
-### Windows
+## Your first session
 
-```powershell
-git clone https://github.com/Qualop/atrium-macos.git
-cd atrium-macos\backend
-npm install
-cd ..\app
-npm install
-npm run real
+1. Click **+** at the top left and choose a project folder.
+2. Click **New session…** at the bottom, or **Shift-click** an agent icon on the left.
+3. Enter an optional **session name**, such as `reviewer`. This is a nickname for the window, not a model name. Names accept ASCII letters, digits, `-` and `_`.
+4. Choose **Codex**, then select a model from the dropdown. Use **Refresh**, **Use Codex default settings**, or **Enter a model ID…** as needed. Extra CLI arguments are under **Advanced settings**.
+5. Start the session and complete any sign-in, folder trust or approval prompts in its terminal.
+6. Send an instruction from the bottom input:
+
+   ```text
+   @reviewer Explain this project's structure. Do not change any files.
+   ```
+
+The model picker reads the installed Codex catalog using `model/list`; it does not start an inference turn. Being listed does **not** guarantee access to a model. The selected model takes precedence over model options in the additional arguments.
+
+`Enter` sends and `Shift+Enter` adds a line. `⌘K` focuses the input and `⌘F` searches. `@all` targets agent sessions across the **entire board**, not just the current project. Shell commands must be entered directly in a terminal.
+
+For the Korean interface, choose **Settings → Language → 한국어**.
+
+## What is included
+
+| Feature | What it does |
+|---|---|
+| Infinite canvas | Keeps projects, sessions and worktree areas together. Zoom in for a live terminal or out for a summary. |
+| Agent sessions | Runs Claude Code, Codex and shells. DeepSeek uses Claude Code through a separately configured opencodex gateway. |
+| Codex model picker | Discovers models, supports refresh and manual entry, and distinguishes the model from the session name. |
+| Attention and results | Shows requests waiting for your response and results you have not reviewed. Claude Code has richer status and approval integration. |
+| Split layouts | Arranges several session windows in one group with adjustable dividers. |
+| Agent relationships | Assigns roles between sessions and displays delegation in a relationship map. |
+| Notes and task boards | Places Markdown notes and kanban cards beside your work. |
+| Repeat tasks | Resends an instruction on an interval, when idle, or when a configured text condition matches. These requests can consume model tokens. |
+| History and recovery | Lists past Claude conversations and reconnects to sessions after window or backend restarts. |
+| Memory controls | Puts eligible idle Claude Code sessions into sleep mode and resumes their conversations when needed. |
+| Korean interface | Reworked labels, settings, errors and confirmations, including localized permission choices and Mac shortcut hints. |
+
+Recent reliability fixes cover interrupted message delivery, partial conversation files, concurrent session creation and kanban updates, connection timeouts, and terminal selection when the connection budget is full.
+
+## Build an application for Finder
+
+After setup, run from the **repository root**:
+
+```sh
+node app/scripts/package-macos.mjs
 ```
 
-`npm run real` builds the window and opens the board. The window starts the backend if it is not running (port 47800), and the backend starts its own herdr session named `atrium`. Your other herdr sessions are not touched. Board data lives in `%LOCALAPPDATA%\atrium`.
+This creates `out/Atrium.app`. Move it into **Applications** with Finder, then open Atrium normally. The bundle includes Electron, Node 24, herdr and the required runtime dependencies. Agent CLIs and their accounts remain separate.
 
-To add a desktop shortcut:
+- Build on the Mac where you intend to use it: the package records detected local CLI paths for Finder launches.
+- The package uses a **local ad-hoc signature**. It is not an Apple-notarized distribution or a downloadable DMG release.
+- Before rebuilding, move existing `out/Atrium.app` and `out/Atrium.iconset` aside; the packaging script does not overwrite them.
+- An installed app is a separate copy. Source edits require another build and installation to appear in that copy.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File app\scripts\make-shortcut.ps1
-```
+## Closing the window does not stop the work
 
-Then open a folder from the board and start a session from the left rail.
+Herdr owns the terminal processes, so sessions can continue after the window or app exits. The menu-bar icon provides separate controls for the app, backend and execution engine.
 
-### Good to know
+To stop the sessions too, choose the menu item that stops **herdr and all sessions**. In Korean, this is **모든 작업과 실행 엔진 종료…**. The app-only and backend-only exit options leave sessions running.
 
-- Atrium never edits your `~/.claude/settings.json`. Each Claude Code session it starts gets its own settings file through `--settings`, which holds the hooks that report state back to the board.
-- Atrium reads Claude Code conversation files under `%USERPROFILE%\.claude\projects` for the folders you open, so it can list and resume past conversations.
-- Everything runs on your machine. The window talks to the backend on `127.0.0.1`, and the backend talks to herdr.
-- Trust prompts ("Do you trust the files in this folder?") are left for you to answer.
+## Data and permissions
 
-## How it works
+- The app's control API binds to `127.0.0.1` and requires a token. This does not make the AI agents offline: their prompts and code may be sent to the configured model provider or gateway.
+- Atrium reads Claude conversation metadata and history under `~/.claude/projects`. It can automatically discover projects from previous CLI conversations. This behavior is configurable.
+- Session settings are generated separately; Atrium does not modify `~/.claude/settings.json`.
+- The default Claude permission mode is `manual`, but some session-control commands are allowlisted. Review permission and automatic-approval settings before running unattended work.
+- Archiving keeps conversation files. Supported conversation-deletion actions move the relevant files to Trash after confirmation.
 
-```mermaid
-flowchart LR
-  UI["Atrium window<br/>Electron, React Flow, xterm.js"]
-  CLI["atrium CLI"]
-  B["Backend<br/>Node 24"]
-  DB[("SQLite")]
-  H["herdr session: atrium"]
-  A["claude, codex, shells"]
-  UI <-->|WebSocket API| B
-  CLI -->|WebSocket| B
-  B <-->|socket API| H
-  H --> A
-  A -->|hooks over HTTP| B
-  B --- DB
-```
+| macOS data | Default location |
+|---|---|
+| Board database, logs and session settings | `~/Library/Application Support/atrium` |
+| Window preferences | `~/Library/Application Support/atrium-app-real` |
+| Herdr session | `~/.config/herdr/sessions/atrium` |
+| Development data | `backend/.dev/data` |
 
-- **herdr** owns the terminals and processes. Sessions keep running when the window or the backend stops.
-- **The backend** (`backend/`) computes session state from herdr events and Claude Code hooks, runs one delivery queue per session, records links and events, and stores the board in SQLite (`node:sqlite`). Its only dependency is `ws`.
-- **The window** (`app/`) draws the board with React Flow and attaches xterm.js to the visible terminals.
+`ATRIUM_DATA_DIR`, `ATRIUM_APP_USERDATA`, `ATRIUM_HERDR_SESSION` and `ATRIUM_PORT` override the corresponding defaults. Herdr also follows `XDG_CONFIG_HOME`.
+
+## Verification and platform status
+
+As of **2026-11-02**, local verification passed **281 backend tests and 73 UI tests**, plus the renderer build. The macOS integration checks include nine concurrent sessions, model selection, Korean copy at 900×600, multiline paste, synthetic Korean IME events, WebGL context loss, backend crash recovery, and engine stop/start. Test groups were run separately; these are not a claim that every combination or platform has been tested.
+
+| Environment | Status |
+|---|---|
+| Apple Silicon macOS | Source and installed-app workflows exercised locally. |
+| Intel herdr through Rosetta | Integration checks passed with ARM64 Node/Electron. This is not an Intel Mac hardware test. |
+| Intel Mac hardware | Not verified. |
+| Windows | Existing implementation retained and CI configured; native regression testing has not been performed locally. |
+
+Physical reboot recovery, real IME candidate windows and language switching, OS notification clicks, and authenticated model work across every provider still require manual validation. A passing test suite is not a security certification.
 
 ## Development
 
-```powershell
-cd app
-npm start            # dev profile: herdr session atrium-dev, port 47811, data in backend\.dev\
-cd ..\backend
-npm test             # backend unit tests
-cd ..\app
-npm test             # window unit tests
+Run these commands from the repository root:
+
+```sh
+npm --prefix backend test
+npm --prefix app test
+npm --prefix app run build
+npm --prefix app run test:mac
+npm --prefix app run test:mac:stress
 ```
 
-The development board never touches the real board (`atrium`, port 47800). End-to-end scripts in `app/test/e2e/` drive the window with Playwright on a separate dev board. See [docs/testing.md](docs/testing.md).
+To include the real Codex catalog picker and Korean UI checks:
 
-Design documents are in Korean:
+```sh
+ATRIUM_TEST_MODELS=1 ATRIUM_TEST_COPY=1 npm --prefix app run test:mac
+```
 
-- [docs/BRIEF.md](docs/BRIEF.md): why, what, decisions, usability principles, risks
-- [docs/ARCH.md](docs/ARCH.md): processes, state model, features, modules, API, screens
-- [docs/PLAN.md](docs/PLAN.md): current work and open decisions
-- [docs/decisions.md](docs/decisions.md): how past decisions changed
+Start the development profile with `cd app && npm run mac -- --dev`. Integration tests create separate temporary profiles, folders and herdr sessions; they do not use the normal board's data.
 
-## Status
+Architecture: **Electron / React / React Flow / xterm.js → local Node 24 backend → herdr → agent CLIs**, with board state stored in SQLite.
 
-Atrium is an early project. It was built in stages with Claude Code, and the interface is still being polished from daily use. Expect rough edges, and please open an issue when you hit one.
+- [Testing guide](docs/testing.md)
+- [Architecture](docs/ARCH.md)
+- [Reliability validation](docs/log/resilience-validation.md)
+- [Model picker](docs/log/codex-model-picker.md)
+- [Korean UI revision](docs/log/korean-ui-rewrite.md)
 
-## Acknowledgments
+## License and third-party software
 
-- [herdr](https://herdr.dev), [React Flow](https://reactflow.dev), [xterm.js](https://xtermjs.org) and [Electron](https://www.electronjs.org).
-- Fonts: Geist, JetBrains Mono, Pretendard and Nanum Gothic Coding, under the SIL Open Font License.
-- Claude, Codex, DeepSeek, Grok and Pi names and logos are trademarks of their owners. Atrium uses them only to label session kinds and is not affiliated with or endorsed by them.
-
-See [app/THIRD_PARTY_NOTICES.txt](app/THIRD_PARTY_NOTICES.txt) for details.
-
-## License
-
-[MIT](LICENSE)
+[MIT](LICENSE). Dependency licenses and font notices are listed in [THIRD_PARTY_NOTICES](app/THIRD_PARTY_NOTICES.txt). Agent names and logos identify the corresponding tools; they do not imply affiliation or endorsement.

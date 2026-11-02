@@ -167,4 +167,4 @@ See [app/THIRD_PARTY_NOTICES.txt](app/THIRD_PARTY_NOTICES.txt) for details.
 
 ## License
 
-[MIT](LICENSE) © 2026 Gudals0320
+[MIT](LICENSE)

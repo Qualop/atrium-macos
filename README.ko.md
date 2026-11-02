@@ -169,4 +169,4 @@ Atrium은 초기 프로젝트입니다. Claude Code와 함께 단계별로 만�
 
 ## 라이선스
 
-[MIT](LICENSE) © 2026 Gudals0320
+[MIT](LICENSE)

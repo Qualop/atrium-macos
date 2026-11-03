@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -106,8 +107,8 @@ test('Per-session config preserves defaults; bridge sends authenticated JSON and
   assert.equal(cfg.env.ATRIUM_SESSION_ID, 'fixture'); assert.equal(cfg.env.HOME, undefined);
   assert.equal(JSON.parse(fs.readFileSync(defaults)).hooks.BeforeAgent.length, 1);
   assert.ok(fs.lstatSync(path.join(cfg.env.GEMINI_CLI_HOME, '.gemini/oauth_creds.json')).isSymbolicLink());
-  assert.equal(fs.statSync(cfg.settingsPath).mode & 0o777, 0o600);
-  const child = spawn(process.execPath, [new URL('../scripts/gemini-hook.mjs', import.meta.url).pathname, path.join(dir, 'fixture.gemini-bridge.json')], { stdio: ['pipe', 'pipe', 'pipe'] });
+  if (process.platform !== 'win32') assert.equal(fs.statSync(cfg.settingsPath).mode & 0o777, 0o600); // Windows uses ACLs, not POSIX mode bits
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../scripts/gemini-hook.mjs', import.meta.url)), path.join(dir, 'fixture.gemini-bridge.json')], { stdio: ['pipe', 'pipe', 'pipe'] });
   let stdout = ''; child.stdout.on('data', (c) => stdout += c);
   child.stdin.end(JSON.stringify({ hook_event_name: 'BeforeAgent', prompt: '검토해' }));
   assert.equal(await new Promise((r) => child.on('exit', r)), 0);

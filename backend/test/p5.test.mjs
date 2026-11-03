@@ -17,7 +17,7 @@ import { Store } from '../src/store.mjs';
 import { Backend } from '../src/backend.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p5-')));
+const tmp = () => fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p5-')));
 const git = (cwd, ...a) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
 function makeRepo(dir) {
   fs.mkdirSync(dir, { recursive: true });

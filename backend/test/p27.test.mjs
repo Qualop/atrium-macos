@@ -312,7 +312,7 @@ test('P27 git: 실제 git 저장소에서 워크트리를 만들고 지우면 �
   let ok = true;
   try { execFileSync('git', ['--version'], { windowsHide: true }); } catch { ok = false; }
   if (!ok) return t.skip('git 없음');
-  const base = fs.realpathSync(tmp());
+  const base = fs.realpathSync.native(tmp());
   const repo = path.join(base, 'repo');
   fs.mkdirSync(repo);
   const g = (...a) => execFileSync('git', ['-C', repo, ...a], { windowsHide: true, encoding: 'utf8' });

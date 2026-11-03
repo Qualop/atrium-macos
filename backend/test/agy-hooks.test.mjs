@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -23,7 +24,7 @@ test('Antigravity hook cannot invent final answer text', () => {
 test('Outside Atrium, the registered hook is inert and leaves default approval policy in charge', () => {
   const env = { ...process.env }; delete env.ATRIUM_AGY_BRIDGE;
   for (const event of ['SessionStart', 'PreToolUse', 'Stop']) {
-    const r = spawnSync(process.execPath, [new URL('../scripts/agy-hook.mjs', import.meta.url).pathname, event], { env, input: '{}', encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/agy-hook.mjs', import.meta.url)), event], { env, input: '{}', encoding: 'utf8' });
     assert.equal(r.status, 0); assert.equal(r.stderr, '');
     assert.deepEqual(JSON.parse(r.stdout), event === 'PreToolUse' ? { decision: 'allow' } : {});
   }

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -7,7 +8,7 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 
 async function runHook(script, args, input, env) {
-  const child = spawn(process.execPath, [new URL(`../scripts/${script}-hook.mjs`, import.meta.url).pathname, ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [fileURLToPath(new URL(`../scripts/${script}-hook.mjs`, import.meta.url)), ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   let stdout = '', stderr = '';
   child.stdout.on('data', (chunk) => stdout += chunk); child.stderr.on('data', (chunk) => stderr += chunk);
   child.stdin.on('error', () => {}); child.stdin.end(input);

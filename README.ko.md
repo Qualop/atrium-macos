@@ -56,7 +56,7 @@ npm run mac
 
 **개인 Google 계정**은 [Antigravity CLI](https://antigravity.google/docs/getting-started)를 설치하고 `agy`에서 로그인한 뒤 **Gemini (Antigravity)**를 선택합니다. 기존 Gemini CLI는 Google 로그인에 성공해도 개인 계정 연결이 거절될 수 있습니다. 이때 같은 로그인을 반복해도 해결되지 않습니다.
 
-**Gemini API 키 또는 지원되는 기업 인증**은 `npm install -g @google/gemini-cli`로 설치한 뒤 **Gemini CLI**를 선택합니다. 아이콘을 Shift+클릭하면 폴더·세션 이름·모델을 고릅니다. Gemini CLI 목록은 설치 파일에서 읽고 Antigravity는 `agy models`로 조회합니다. 조회에 실패해도 기본 모델이나 직접 입력으로 실행할 수 있습니다. 목록 표시는 실제 계정 사용 권한을 보장하지 않습니다.
+**Gemini API 키 또는 지원되는 기업 인증**은 `npm install -g @google/gemini-cli`로 설치한 뒤 **Gemini CLI**를 선택합니다. 왼쪽 Gemini 아이콘은 Google 계정용 하나만 표시합니다. Shift+클릭하면 폴더·세션 이름·모델을 고르며, API·기업 인증은 에이전트 종류에서 Gemini CLI로 바꿉니다. Gemini CLI 목록은 설치 파일에서 읽고 Antigravity는 `agy models`로 조회합니다. 조회에 실패해도 기본 모델이나 직접 입력으로 실행할 수 있습니다. 목록 표시는 실제 계정 사용 권한을 보장하지 않습니다.
 
 예를 들어 Claude 작업 세션에서 Gemini 세션으로 연결선을 만들고 역할을 **리뷰어**로 지정합니다. 작업 세션에 “리뷰어에게 이번 변경을 검토시키고, 지적한 문제를 수정해”라고 요청하면 연결 알림의 명령으로 리뷰를 맡길 수 있습니다. 반대로 Gemini가 Claude/Codex에게 일을 맡기는 것도 가능합니다. 세션 이름만 `reviewer`로 붙이는 것은 역할 지정이 아닙니다.
 

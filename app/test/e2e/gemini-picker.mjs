@@ -35,11 +35,16 @@ export async function checkGeminiPicker({ page, app, client, project, dir }) {
   const select = form.locator('[data-field="model-select"]');
   const waitStatus = (expected) => page.waitForFunction((value) => document.querySelector('[data-role="model-status"]')?.dataset.status === value, expected);
   try {
-    const launcher = page.locator('[data-action="spawn-gemini"]');
+    assert.equal(await page.locator('[data-action="spawn-gemini"]').count(), 0);
+    const launcher = page.locator('[data-action="spawn-agy"]');
     assert.match(await launcher.getAttribute('aria-label'), /Gemini/);
-    assert.equal(await launcher.locator('[data-kind="gemini"]').getAttribute('alt'), 'Gemini CLI');
+    assert.equal(await launcher.locator('[data-kind="agy"]').getAttribute('alt'), 'Gemini (Antigravity)');
     await launcher.click({ modifiers: ['Shift'] });
     await form.getByLabel('세션 이름', { exact: true }).waitFor();
+    await waitStatus('ready');
+    assert.equal(await form.locator('[data-field="kind"]').inputValue(), 'agy');
+    assert.deepEqual(await page.evaluate(() => window.__geminiPicker.queries[0]), { kind: 'agy' });
+    await form.locator('[data-field="kind"]').selectOption('gemini');
     await waitStatus('ready');
     assert.equal(await form.locator('[data-field="kind"]').inputValue(), 'gemini');
     assert.equal(await form.locator('[data-field="kind"] option:checked').innerText(), 'Gemini CLI');
@@ -49,7 +54,7 @@ export async function checkGeminiPicker({ page, app, client, project, dir }) {
     assert.match(await form.locator('[data-role="agent-note"]').innerText(), /Google.*Antigravity.*터미널.*검토자 역할/);
     const options = await select.locator('option').evaluateAll((els) => els.map((el) => el.value));
     for (const model of catalog.models) assert.ok(options.includes(model.id), `Missing installed model ${model.id}`);
-    assert.deepEqual(await page.evaluate(() => window.__geminiPicker.queries[0]), { kind: 'gemini' });
+    assert.deepEqual(await page.evaluate(() => window.__geminiPicker.queries.at(-1)), { kind: 'gemini' });
     const model = catalog.models[0];
     await select.selectOption(model.id);
     await form.locator('[data-field="name"]').fill('gemini-reviewer');

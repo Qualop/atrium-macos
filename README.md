@@ -55,7 +55,7 @@ For the Korean interface, choose **Settings → Language → 한국어**.
 
 For a **personal Google account**, install [Antigravity CLI](https://antigravity.google/docs/getting-started), run `agy`, and sign in. Choose **Gemini (Antigravity)** in Atrium. The older Gemini CLI can reject personal Google sign-in even after OAuth succeeds; retrying the same login does not fix that service rejection.
 
-For a **Gemini API key or supported enterprise authentication**, install `npm install -g @google/gemini-cli` and choose **Gemini CLI**. Shift-click either icon to choose the folder, session name and model. Gemini CLI models are read from installed metadata; Antigravity queries `agy models`. Catalog failures leave default and manual model entry available. A displayed model is not a guarantee of access.
+For a **Gemini API key or supported enterprise authentication**, install `npm install -g @google/gemini-cli` and choose **Gemini CLI**. The sidebar has one Gemini icon for Google accounts. Shift-click it to choose the folder, session name and model; select Gemini CLI in the agent-type dropdown when using API or enterprise authentication. Gemini CLI models are read from installed metadata; Antigravity queries `agy models`. Catalog failures leave default and manual model entry available. A displayed model is not a guarantee of access.
 
 For example, connect a Claude session to a Gemini session with the **reviewer** role. Ask the working session to have its reviewer inspect the change, then address the findings. The role notice provides the delegation commands. Gemini can also delegate to Claude or Codex. Naming a session `reviewer` alone does not assign a role.
 

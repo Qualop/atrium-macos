@@ -265,7 +265,6 @@ export function LeftRail({ linking, setLinking }) {
       <Tool kind="claude" label={t('rail.claude')} action="spawn" onClick={spawnNow('claude')} />
       <Tool kind="codex" label={t('rail.codex')} action="spawn-codex" onClick={spawnNow('codex')} />
       <Tool kind="agy" label={t('rail.agy')} action="spawn-agy" onClick={spawnNow('agy')} />
-      <Tool kind="gemini" label={t('rail.gemini')} action="spawn-gemini" onClick={spawnNow('gemini')} />
       <Tool kind="deepseek" label={t('rail.deepseek')} action="spawn-deepseek" onClick={spawnNow('deepseek')} />
       <Tool icon="terminal" label={t('rail.shell')} action="spawn-shell" onClick={spawnNow('shell')} />
       <Sep />

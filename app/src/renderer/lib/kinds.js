@@ -12,6 +12,8 @@ const LOGO = (name, ext = 'png') => `assets/kinds/${name}.${ext}`;
 export const KINDS = {
   claude: { id: 'claude', label: 'Claude Code', mark: 'C', shape: 'circle', color: 'var(--kind-claude)', ink: 'var(--kind-claude-ink)', logo: LOGO('claude', 'svg'), logoBadge: LOGO('claude-badge', 'svg') },
   codex: { id: 'codex', label: 'Codex', mark: 'Cx', shape: 'hexagon', color: 'var(--kind-codex)', ink: 'var(--kind-codex-ink)', logo: LOGO('codex') },
+  gemini: { id: 'gemini', label: 'Gemini CLI', mark: 'Gm', shape: 'diamond', color: 'var(--kind-gemini)', ink: 'var(--kind-gemini-ink)', logo: LOGO('gemini', 'svg'), logoBadge: LOGO('gemini-badge', 'svg') },
+  agy: { id: 'agy', label: 'Gemini (Antigravity)', mark: 'Gm', shape: 'diamond', color: 'var(--kind-gemini)', ink: 'var(--kind-gemini-ink)', logo: LOGO('gemini', 'svg'), logoBadge: LOGO('gemini-badge', 'svg') },
   // P25: DeepSeek는 herdr 종류가 아니라 띄운 방법(flavor)이다. 판이 띄우는 Claude Code(모델만 DeepSeek)이거나 직접 명령으로 띄운 세션.
   // 로고는 위키미디어 공용 DeepSeek-icon.svg(받은 그대로), 레일 단추는 같은 모양을 로고 파랑 바탕에 흰색으로 얹었다
   deepseek: { id: 'deepseek', label: 'DeepSeek', mark: 'DS', shape: 'circle', color: 'var(--kind-deepseek)', ink: 'var(--kind-deepseek-ink)', logo: LOGO('deepseek', 'svg'), logoBadge: LOGO('deepseek-badge', 'svg') },

@@ -21,7 +21,7 @@ for (const p of ['src', 'bin', 'scripts', 'package.json', 'node_modules/ws']) co
 copy(path.join(root, 'LICENSE'), path.join(resources, 'LICENSE.atrium'));
 copy(process.execPath, path.join(resources, 'runtime/node'));
 copy(path.join(root, '.tools/herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr'), path.join(resources, '.tools/herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr'));
-const dirs = [...new Set([path.dirname(process.execPath), ...['claude', 'codex'].map((name) => findExecutable(name)).filter(Boolean).map((p) => path.dirname(p)), path.join(process.env.HOME || '', '.local/bin'), '/opt/homebrew/bin', '/usr/local/bin'])];
+const dirs = [...new Set([path.dirname(process.execPath), ...['claude', 'codex', 'gemini', 'agy'].map((name) => findExecutable(name)).filter(Boolean).map((p) => path.dirname(p)), path.join(process.env.HOME || '', '.local/bin'), '/opt/homebrew/bin', '/usr/local/bin'])];
 fs.writeFileSync(path.join(resources, 'runtime/cli-paths.json'), JSON.stringify(dirs, null, 2));
 const plist = path.join(output, 'Contents/Info.plist');
 for (const [key, value] of Object.entries({ CFBundleDisplayName: 'Atrium', CFBundleName: 'Atrium', CFBundleIdentifier: 'dev.atrium.desktop.local', CFBundleShortVersionString: '0.1.0', CFBundleVersion: '1' })) {

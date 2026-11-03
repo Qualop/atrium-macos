@@ -22,6 +22,8 @@ export function appDataDir({ platform = process.platform, env = process.env, hom
 export function findExecutable(name, { env = process.env, platform = process.platform } = {}) {
   const suffixes = platform === 'win32' ? ['', ...(env.PATHEXT || '.EXE;.CMD;.BAT').toLowerCase().split(';')] : [''];
   const dirs = (env.PATH || '').split(platform === 'win32' ? ';' : ':').filter(Boolean);
+  if (platform !== 'win32' && env.HOME) dirs.push(path.join(env.HOME, '.local/bin')); // official agy installer / Finder PATH
+
   for (const dir of dirs) for (const ext of suffixes) {
     const file = path.join(dir, name + ext);
     try { if (fs.statSync(file).isFile()) { fs.accessSync(file, platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK); return file; } } catch {}

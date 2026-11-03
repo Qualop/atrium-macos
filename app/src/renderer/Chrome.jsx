@@ -1,7 +1,7 @@
 // P11: 캔버스 위에 떠 있는 크롬(목업 app/design/board-mock/ ?scene=ours). P6a~P10의 위쪽 줄(InboxBar)과 아래쪽 워크스페이스 단추(Regions)가 하던 일을 옮겼다.
 // - 위 왼쪽: 사이드바, 워크스페이스 탭(지금 영역은 주황 갈색, 세션 수), 리포 열기 +, 찾기(Ctrl+F)
 // - 위 오른쪽: 내 차례(누르면 기다리는 세션 목록, N으로 다음), 검토, 문제, 연결과 세션 수, 메모리, 바뀐 것, 설정
-// - 왼쪽 레일: 선택, 새 세션(Claude, Codex, DeepSeek(P25), 셸), 메모, 칸반, 그룹, 손으로 잇기, 전체 보기
+// - 왼쪽 레일: 선택, 새 세션(Claude, Codex, Gemini, DeepSeek(P25), 셸), 메모, 칸반, 그룹, 손으로 잇기, 전체 보기
 // - 오른쪽 레일: 사이드바(리포), 미션 맵, 루프, 보관함, 설정
 // - 아래: 빠른 동작 칩 줄, 줌 알약(− n% +, 누르면 전체 보기). 명령 입력은 CommandBar.jsx
 // 새 기능은 없다. 모든 단추는 이미 있던 동작을 부른다.
@@ -264,6 +264,8 @@ export function LeftRail({ linking, setLinking }) {
       <Sep />
       <Tool kind="claude" label={t('rail.claude')} action="spawn" onClick={spawnNow('claude')} />
       <Tool kind="codex" label={t('rail.codex')} action="spawn-codex" onClick={spawnNow('codex')} />
+      <Tool kind="agy" label={t('rail.agy')} action="spawn-agy" onClick={spawnNow('agy')} />
+      <Tool kind="gemini" label={t('rail.gemini')} action="spawn-gemini" onClick={spawnNow('gemini')} />
       <Tool kind="deepseek" label={t('rail.deepseek')} action="spawn-deepseek" onClick={spawnNow('deepseek')} />
       <Tool icon="terminal" label={t('rail.shell')} action="spawn-shell" onClick={spawnNow('shell')} />
       <Sep />

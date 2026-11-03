@@ -61,7 +61,7 @@
 
 ## 3. 세션 상태 모델
 
-판이 띄운 세션의 상태는 아래 일곱 가지다. 패널 상태는 herdr 상태를 기준으로 하고, hook은 상세와 오류를 더한다. hook이 없는 세션(판에 올린 에이전트, Claude Code가 아닌 종류)은 herdr 상태만으로 정하고, 셸은 따로 `shell_idle`, `shell_running`이다(4절 G2).
+판이 띄운 세션의 상태는 아래 일곱 가지다. 패널 상태는 herdr 상태를 기준으로 하고, hook은 상세와 오류를 더한다. Gemini CLI는 제출·완료 hook을, Antigravity는 도구 hook·화면 답변을 더한다. 그 밖의 세션은 herdr 상태로 정하고, 셸은 따로 `shell_idle`, `shell_running`이다(4절 G2).
 
 | 상태 | 뜻 | 들어오는 신호 |
 |---|---|---|

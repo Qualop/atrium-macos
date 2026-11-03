@@ -4,14 +4,14 @@
 
 <p align="center">
   <b>여러 AI 코딩 작업을 한 화면에서 관리하세요.</b><br>
-  Claude Code, Codex, 터미널을 위한 macOS 작업 공간입니다.
+  Claude Code, Codex, Gemini CLI, 터미널을 위한 macOS 작업 공간입니다.
 </p>
 
 <p align="center">
   <a href="README.md">English</a> · <b>한국어</b> · <a href="LICENSE">MIT</a>
 </p>
 
-Atrium은 여러 코딩 작업창을 넓은 작업 보드에 펼쳐 놓는 앱입니다. 어떤 AI가 작업 중인지, 어디에 응답해야 하는지 확인하고 각 세션에 요청을 보낼 수 있습니다. 실제 코딩은 연결된 Claude Code·Codex가 수행합니다.
+Atrium은 여러 코딩 작업창을 넓은 작업 보드에 펼쳐 놓는 앱입니다. 어떤 AI가 작업 중인지, 어디에 응답해야 하는지 확인하고 각 세션에 요청을 보낼 수 있습니다. 실제 코딩은 연결된 Claude Code·Codex·Gemini가 수행합니다.
 
 ![macOS의 Atrium: 세션 이름과 자동 감지한 Codex 모델을 선택하는 한국어 화면](docs/images/model-picker-macos.png)
 
@@ -19,7 +19,7 @@ Atrium은 여러 코딩 작업창을 넓은 작업 보드에 펼쳐 놓는 앱�
 
 ## macOS에서 시작하기
 
-**Node.js 24**, **Git**, 사용할 에이전트 CLI가 필요합니다. Claude Code나 Codex는 별도로 설치하고 로그인하세요. 일반 터미널만 사용할 때는 AI 계정이 필요하지 않습니다.
+**Node.js 24**, **Git**, 사용할 에이전트 CLI가 필요합니다. Claude Code·Codex·Gemini CLI는 별도로 설치하고 로그인하세요. 일반 터미널만 사용할 때는 AI 계정이 필요하지 않습니다.
 
 ```sh
 git clone https://github.com/Qualop/atrium-macos.git
@@ -51,12 +51,23 @@ npm run mac
 
 앱이 영어로 열리면 **설정 → 언어 → 한국어**를 선택하세요.
 
+
+### Gemini로 협업하기
+
+**개인 Google 계정**은 [Antigravity CLI](https://antigravity.google/docs/getting-started)를 설치하고 `agy`에서 로그인한 뒤 **Gemini (Antigravity)**를 선택합니다. 기존 Gemini CLI는 Google 로그인에 성공해도 개인 계정 연결이 거절될 수 있습니다. 이때 같은 로그인을 반복해도 해결되지 않습니다.
+
+**Gemini API 키 또는 지원되는 기업 인증**은 `npm install -g @google/gemini-cli`로 설치한 뒤 **Gemini CLI**를 선택합니다. 아이콘을 Shift+클릭하면 폴더·세션 이름·모델을 고릅니다. Gemini CLI 목록은 설치 파일에서 읽고 Antigravity는 `agy models`로 조회합니다. 조회에 실패해도 기본 모델이나 직접 입력으로 실행할 수 있습니다. 목록 표시는 실제 계정 사용 권한을 보장하지 않습니다.
+
+예를 들어 Claude 작업 세션에서 Gemini 세션으로 연결선을 만들고 역할을 **리뷰어**로 지정합니다. 작업 세션에 “리뷰어에게 이번 변경을 검토시키고, 지적한 문제를 수정해”라고 요청하면 연결 알림의 명령으로 리뷰를 맡길 수 있습니다. 반대로 Gemini가 Claude/Codex에게 일을 맡기는 것도 가능합니다. 세션 이름만 `reviewer`로 붙이는 것은 역할 지정이 아닙니다.
+
+Gemini의 요청 제출·완료 답변·셸 도구 호출은 보드 기록과 연결됩니다. 하위 세션 생성은 부모 종류를 기본값으로 사용하며 `--kind claude`, `--kind codex`, `--kind gemini` / `--kind agy`로 바꿀 수 있습니다. 승인·로그인·폴더 신뢰 질문에는 해당 터미널에서 직접 답하세요. Gemini CLI는 기존 로그인·기록을 참조하는 별도 설정 프로필을 사용합니다. Antigravity는 `~/.gemini/config/hooks.json`에 `atrium-board` 항목을 추가하며 기존 hook은 유지합니다. 이 항목은 Atrium이 연 세션에서만 기록을 보냅니다. Antigravity의 완료 답변은 hook에 본문이 없어 터미널 화면에서 가져옵니다. 기존 설정에서 hook을 꺼 두면 상세 협업 기록을 사용할 수 없습니다. Claude의 과거 대화 자동 색인·절전 기능은 Gemini에는 적용되지 않습니다.
+
 ## 주요 기능
 
 | 기능 | 설명 |
 |---|---|
 | 무한 작업 보드 | 프로젝트와 세션을 원하는 위치에 배치합니다. 확대하면 실제 터미널, 축소하면 요약 카드로 표시합니다. |
-| 에이전트 실행 | Claude Code, Codex, 일반 터미널을 실행합니다. DeepSeek은 별도로 구성한 opencodex 게이트웨이를 통해 Claude Code에서 사용합니다. |
+| 에이전트 실행 | Claude Code, Codex, Gemini CLI, 일반 터미널을 실행합니다. DeepSeek은 별도로 구성한 opencodex 게이트웨이를 통해 Claude Code에서 사용합니다. |
 | Codex 모델 자동 감지 | 모델 선택, 새로고침, 직접 입력을 지원합니다. 세션 이름과 모델을 별도 항목으로 표시합니다. |
 | 응답 필요·확인할 결과 | 승인이나 답변이 필요한 작업과 아직 확인하지 않은 결과를 모아 보여줍니다. Claude Code는 더 자세한 상태·승인 기능을 제공합니다. |
 | 창 그룹 | 여러 세션을 분할 배치하고 경계선을 움직여 크기를 조절합니다. |
@@ -109,7 +120,7 @@ node app/scripts/package-macos.mjs
 
 ## 검증 범위와 지원 상태
 
-**2026-11-02 로컬 검증 기준**, 백엔드 테스트 **281개**, 화면 테스트 **73개**와 화면 빌드가 통과했습니다. macOS 통합 시험에서는 9개 동시 세션, 모델 선택, 900×600 한국어 UI, 여러 줄 붙여넣기, 합성 한글 IME 이벤트, WebGL 손실, 백엔드 강제 종료 후 복구, 실행 엔진 중단·재시작을 확인했습니다. 시험 묶음을 나누어 실행한 결과이며, 모든 조합과 플랫폼을 검증했다는 뜻은 아닙니다.
+**2026-11-03 로컬 검증 기준**, 백엔드 테스트 **353개**, 화면 테스트 **80개**와 화면 빌드가 통과했습니다. macOS 통합 시험에서는 9개 동시 세션, 모델 선택, 900×600 한국어 UI, 여러 줄 붙여넣기, 합성 한글 IME 이벤트, WebGL 손실, 백엔드 강제 종료 후 복구, 실행 엔진 중단·재시작을 확인했습니다. 시험 묶음을 나누어 실행한 결과이며, 모든 조합과 플랫폼을 검증했다는 뜻은 아닙니다.
 
 | 환경 | 상태 |
 |---|---|
@@ -119,6 +130,8 @@ node app/scripts/package-macos.mjs
 | Windows | 기존 구현과 CI 구성을 유지합니다. 로컬에서 Windows 실기기 회귀 시험은 하지 않았습니다. |
 
 물리 재부팅, 실제 IME 후보 창·한/영 전환, OS 알림 클릭, 각 제공자의 로그인 이후 실제 모델 작업은 별도 검증이 필요합니다. 테스트 통과가 보안 인증을 의미하지는 않습니다.
+
+설치된 앱에서 Google 계정의 모델 목록 6개를 조회했습니다. 실제 Gemini CLI는 로컬 가짜 모델로 응답과 정확한 대화 ID 복구를 확인했습니다. Antigravity의 실제 리뷰 턴은 첫 실행 설정 완료 후 추가 검증이 필요합니다. 서로 다른 종류 간 협업 기록은 백엔드 계약 시험으로 확인했습니다.
 
 ## 개발 및 테스트
 
@@ -135,7 +148,7 @@ npm --prefix app run test:mac:stress
 실제 Codex 모델 목록과 한국어 화면 검증도 포함하려면:
 
 ```sh
-ATRIUM_TEST_MODELS=1 ATRIUM_TEST_COPY=1 npm --prefix app run test:mac
+ATRIUM_TEST_GEMINI=1 ATRIUM_TEST_MODELS=1 ATRIUM_TEST_COPY=1 npm --prefix app run test:mac
 ```
 
 개발용 앱은 `cd app && npm run mac -- --dev`로 실행합니다. 통합 시험은 새 임시 폴더·프로필·herdr 세션을 사용하며 실사용 보드의 데이터를 사용하지 않습니다.

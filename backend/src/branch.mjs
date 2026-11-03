@@ -296,7 +296,7 @@ export class Branch {
     const want = this.token(sid);
     const ok = given.length === want.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(want));
     if (!ok) { this.b.store.addEvent(sid, 'branch_rejected', { op, why: 'bad token' }); return { status: 401, error: { code: 'bad_token', message: '세션 토큰이 맞지 않는다' } }; }
-    if (!this.b.hooked(s)) return { status: 403, error: { code: 'not_board_session', message: '판이 띄운 Claude Code 세션만 하위 세션을 만든다' } };
+    if (!this.b.hooked(s) && !(['gemini', 'agy'].includes(s.kind) && s.origin === 'board' && s.hookToken)) return { status: 403, error: { code: 'not_board_session', message: '판이 협업 설정을 연결한 세션만 하위 세션을 만든다' } };
     return { s };
   }
   dispatch(op, s, body, res) {
@@ -323,7 +323,7 @@ export class Branch {
     if (asleep) return this.wakeAgent(parent, { name: asleep.name, prompt: o.prompt });
     const role = o.role == null || o.role === '' ? DEFAULT_ROLE : String(o.role).trim();
     if (!ROLE_RE.test(role)) throw apiError('bad_request', '역할은 1~40자, 줄바꿈·따옴표·$·\\ 없이');
-    const kind = o.kind ? String(o.kind) : 'claude';
+    const kind = o.kind ? String(o.kind) : parent.kind || 'claude';
     const claude = kind === 'claude';
     if (kind === 'shell') throw apiError('bad_request', '하위 세션은 에이전트만 만든다(셸은 herdr pane split으로)');
     const pcwd = parent.rt.cwd && fs.existsSync(parent.rt.cwd) ? parent.rt.cwd : parent.cwd;
@@ -335,7 +335,7 @@ export class Branch {
     if (worktree && !(await gitProbe(cwd)).isRepo) throw apiError('bad_request', `--worktree는 git 저장소 안에서만 된다: ${cwd}`);
     // Claude Code는 신뢰를 받지 않은 저장소에서 -w를 거부하고 바로 끝난다("Workspace trust not yet accepted", P8 시험). 판은 신뢰를 대신 누르지 않으므로 띄우기 전에 거부한다
     if (worktree && predictTrust(cwd, b.cfg.claudeJson).needsTrust) throw apiError('needs_trust', `이 저장소(${cwd.split(path.sep).join('/')})는 아직 Claude Code의 신뢰를 받지 않아 claude -w가 워크트리를 만들지 않는다. 사람이 그 폴더에서 claude를 한 번 띄워 신뢰한 뒤 다시 한다. 워크트리 없이 띄우려면 --worktree를 뺀다`);
-    const model = claude ? (o.model ? String(o.model) : parent.model || null) : null;
+    const model = o.model ? String(o.model) : kind === (parent.kind || 'claude') ? parent.model || null : null;
     if (model && !MODEL_RE.test(model)) throw apiError('bad_request', `모델: ${model}`);
     const prompt = o.prompt == null ? null : String(o.prompt);
     if (prompt != null && !prompt.trim()) throw apiError('bad_request', '첫 지시가 비었다');
@@ -351,12 +351,12 @@ export class Branch {
     const ws = await workspaceOf(cwd);
     const allowHerdr = !!((b.store.spawnInfo(parent.sessionId) || {}).allowHerdr);
     const depth = parentDepth + 1;
-    const info = { role, depth, by: parent.sessionId, at: Date.now(), worktree, kind, via: 'atrium child', inherited: { cwd: !o.cwd, model: claude && !o.model, effort: !!parent.effort, permissionMode: true } };
+    const info = { role, depth, by: parent.sessionId, at: Date.now(), worktree, kind, via: 'atrium child', inherited: { cwd: !o.cwd, model: kind === (parent.kind || 'claude') && !o.model, effort: !!parent.effort, permissionMode: true } };
 
     this.pending.push(parent.sessionId); this.pendingNames.add(name);
     let out;
     try {
-      out = await b.spawn({ cwd, name, kind, model, effort: claude ? parent.effort || null : null, permissionMode: parent.permissionMode, allowHerdr, worktree, parentSessionId: parent.sessionId, branch: info });
+      out = await b.spawn({ cwd, name, kind, model, effort: claude && parent.kind === 'claude' ? parent.effort || null : null, permissionMode: parent.permissionMode, allowHerdr, worktree, parentSessionId: parent.sessionId, branch: info });
     } finally { this.pending.splice(this.pending.indexOf(parent.sessionId), 1); this.pendingNames.delete(name); }
     const child = b.sessions.get(out.sessionId);
     if (!child) throw apiError('spawn_failed', '하위 세션이 판에 남지 않았다');

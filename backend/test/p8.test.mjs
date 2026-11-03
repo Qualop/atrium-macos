@@ -375,3 +375,17 @@ test('K1: 판이 띄운 세션의 설정 파일을 다시 쓸 때(P8 전 세션)
   assert.ok(j.hooks.UserPromptSubmit);
   assert.equal(b.branch.refreshSettings(), 0); // 이미 있으면 다시 쓰지 않는다
 });
+
+test('Gemini children inherit their provider/model; cross-provider children keep explicit models only', async () => {
+  const { b, dir, lead } = await fakeBoard();
+  try {
+    lead.kind = 'gemini'; lead.model = 'gemini-fixture'; lead.effort = null;
+    await b.branch.spawnChild(lead, { name: 'gemini-reviewer', role: 'reviewer', wait: false });
+    assert.equal(b.spawned[0].kind, 'gemini'); assert.equal(b.spawned[0].model, 'gemini-fixture');
+    await b.branch.spawnChild(lead, { name: 'claude-reviewer', kind: 'claude', wait: false });
+    assert.equal(b.spawned[1].model, null); assert.equal(b.spawned[1].effort, null);
+    await b.branch.spawnChild(lead, { name: 'codex-reviewer', kind: 'codex', model: 'custom-codex', wait: false });
+    assert.equal(b.spawned[2].model, 'custom-codex');
+    assert.deepEqual(b.links.map((l) => l.from), Array(3).fill(lead.sessionId));
+  } finally { b.store.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});

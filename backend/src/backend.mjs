@@ -18,6 +18,12 @@ import { writeSessionSettings, buildStartArgs, buildResumeArgv, buildResumeArgs,
 import { newRuntime, applyHook, applyHerdrStatus, applyAgentDetected, applyAgentReleased, applyHerdrDisconnected, deriveState, flags } from './state.mjs';
 import { summarizeChanges, CHANGE_KINDS } from './changes.mjs';
 import { ResourceMonitor, childProcesses } from './resources.mjs';
+import { listAgyModels, withAgyModel, agyModelFromArgs } from './agy.mjs';
+import { writeAgySession } from './agy-session.mjs';
+import { normalizeAgyHook, agyComposerState } from './agy-hooks.mjs';
+import { writeGeminiSession, normalizeGeminiHook, geminiAuthIssue } from './gemini.mjs';
+import { listGeminiModels } from './gemini-models.mjs';
+import { withGeminiModel, geminiModelFromArgs, validateGeminiNewSessionArgs } from './gemini-args.mjs';
 import { listCodexModels } from './codex-models.mjs';
 import { withCodexModel, modelFromArgs } from './codex-args.mjs';
 import { SHELL_TOOLS, LINK_VERBS, parseHerdrCommands, parseHerdrOutput, readTextOf, tailText, screenAnswerText, roleNotice, unlinkNotice, paneChangedNotice, ROLE_RE } from './links.mjs';
@@ -146,7 +152,7 @@ export class Backend {
     this.spawnIntents = []; // F3: 세션이 herdr로 새 에이전트를 띄우려 한 명령(hook)
     this.adopting = new Set();
 
-    this.queue = new DeliveryQueue({ store: this.store, cfg, view: (sid, d) => this.deliveryView(sid, d), send: (sid, text) => this.adapter.prompt(this.sessions.get(sid).agentName, text) });
+    this.queue = new DeliveryQueue({ store: this.store, cfg, view: (sid, d) => this.deliveryView(sid, d), send: (sid, text) => this.promptManaged(sid, text) });
     this.queue.on('delivery', (d) => {
       this.store.addEvent(d.sessionId, 'delivery', d);
       this.api.broadcast('delivery', { ...d, name: this.nameOf(d.sessionId) });
@@ -262,6 +268,19 @@ export class Backend {
     if (this.sessions.has(key)) return this.sessions.get(key);
     for (const s of this.sessions.values()) if (s.name === key) return s;
     throw keyed(apiError('not_found', `판에 없는 세션: ${ref}`), 'sessionNotFound', { ref });
+  }
+  async checkAgyComposer(s) {
+    const text = await this.adapter.readScreen(s.paneId, { source: 'visible' });
+    s.rt.agyComposer = agyComposerState(text);
+    if (s.rt.agyComposer === 'waiting') s.rt.screenAsk = { tail: tailText(text, 14), at: Date.now() };
+    this.broadcastSession(s, { cause: 'agy:composer' });
+    return s.rt.agyComposer;
+  }
+  async promptManaged(sid, text) {
+    const s = this.sessions.get(sid);
+    if (!s) throw apiError('not_found', '세션이 닫혔습니다');
+    if (s.kind === 'agy' && await this.checkAgyComposer(s) !== 'ready') throw apiError('agent_blocked', 'Antigravity 초기 설정·질문은 터미널에서 완료하세요');
+    return this.adapter.prompt(s.agentName, text);
   }
   deliveryView(sid, d) {
     const s = this.sessions.get(sid);
@@ -402,7 +421,7 @@ export class Backend {
 
   // ---------- hook 수신기 ----------
   onHttp(req, res) {
-    if (req.method === 'POST' && req.url.split('?')[0] === '/hooks/claude') return this.onHook(req, res);
+    if (req.method === 'POST' && ['/hooks/claude', '/hooks/gemini', '/hooks/agy'].includes(req.url.split('?')[0])) return this.onHook(req, res);
     if (this.branch && this.branch.handleHttp(req, res)) return; // P8: POST /branch/*(하위 세션 명령, 세션 토큰)
     if (req.method === 'GET' && req.url === '/health') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true, pid: process.pid })); }
     res.writeHead(404); res.end();
@@ -414,14 +433,21 @@ export class Backend {
       res.writeHead(200); res.end(); // 먼저 200을 돌려준다. Claude Code는 hook 응답을 기다린다(E2 2.3).
       if (tooBig) return this.log('hook body too large', size);
       setImmediate(() => {
-        try { this.processHook(req.headers, Buffer.concat(chunks).toString('utf8')); } catch (e) { this.log('hook error', e.stack); }
+        try { this.processHook(req.headers, Buffer.concat(chunks).toString('utf8'), req.url.split('?')[0].split('/').at(-1)); } catch (e) { this.log('hook error', e.stack); }
       });
     });
   }
-  processHook(headers, raw) {
+  processHook(headers, raw, provider = 'claude') {
     let body; try { body = JSON.parse(raw); } catch { return this.log('hook bad json'); }
     const sid = headers['x-mt-session'] || body.session_id;
     const s = this.sessions.get(sid) || [...this.sessions.values()].find((x) => x.rt.claudeSessionId === body.session_id);
+    const nativeBody = body;
+    if (provider === 'gemini' || provider === 'agy') {
+      if (!s || s.kind !== provider || !s.hookToken) return;
+      const normalized = provider === 'agy' ? normalizeAgyHook(body) : normalizeGeminiHook(body);
+      if (!normalized) return;
+      body = normalized;
+    }
     const ev = body.hook_event_name;
     if (!s) { this.store.addEvent(null, 'hook_unknown_session', { ev, sid }); return; }
     const authOk = headers.authorization === `Bearer ${s.hookToken}`;
@@ -429,6 +455,32 @@ export class Backend {
     if (!authOk) { this.store.addEvent(s.sessionId, 'hook_rejected', { ev }); this.log(`hook rejected ${s.name} ${ev}`); return; }
     s.hookCount = (s.hookCount || 0) + 1;
     applyHook(s.rt, body);
+    if (provider === 'gemini') {
+      s.rt.geminiReady = true;
+      if (typeof nativeBody.session_id === 'string') s.rt.geminiSessionId = nativeBody.session_id;
+      if (typeof nativeBody.transcript_path === 'string' && nativeBody.transcript_path) s.rt.geminiTranscriptPath = nativeBody.transcript_path;
+      if (ev === 'UserPromptSubmit') s.rt.geminiTurnActive = true;
+      if (ev === 'Stop' || ev === 'SessionEnd') s.rt.geminiTurnActive = false;
+      if (ev === 'Stop') this.store.addEvent(s.sessionId, 'answer_gemini', { text: body.last_assistant_message, prompt: s.rt.lastPrompt });
+    }
+    if (provider === 'agy') {
+      if (typeof nativeBody.conversationId === 'string') s.rt.agySessionId = nativeBody.conversationId;
+      if (typeof nativeBody.transcriptPath === 'string') s.rt.agyTranscriptPath = nativeBody.transcriptPath;
+      if (body.notification_type === 'agy_working') {
+        if (!s.rt.agyTurnActive) s.rt.turn = { startedAt: Date.now(), endedAt: null };
+        s.rt.agyTurnActive = true; this.queue.onAgentWorking(s.sessionId);
+      }
+      if (body.notification_type === 'agy_stop' && nativeBody.fullyIdle === true) {
+        const started = s.rt.turn.startedAt;
+        setImmediate(async () => {
+          await this.readScreenAnswer(s);
+          if (s.rt.turn.startedAt !== started) return;
+          s.rt.agyTurnActive = false; s.rt.turn.endedAt = Date.now();
+          if (nativeBody.error) s.rt.lastError = { type: 'agy_error', message: clip(nativeBody.error, 1000), at: Date.now() };
+          this.broadcastSession(s, { cause: 'agy:stop' });
+        });
+      }
+    }
     if (ev === 'Stop') s.rt.answerSource = 'hook';
     // F4: Claude Code는 워크트리로 들어가면 hook의 cwd가 바뀐다
     if (body.cwd && body.cwd !== s.rt.cwd) { s.rt.cwd = body.cwd; this.probeGit(s, body.cwd); }
@@ -495,7 +547,7 @@ export class Backend {
       if (!this.hooked(s)) {
         // hook이 없는 세션: 제출 확인은 herdr working으로, 마지막 답은 턴이 끝난 화면 끝으로 대신한다(F5)
         if (e.status === 'working') this.queue.onAgentWorking(s.sessionId);
-        if ((prev === 'working' || prev === 'blocked') && (e.status === 'idle' || e.status === 'done')) await this.readScreenAnswer(s);
+        if ((prev === 'working' || prev === 'blocked') && (e.status === 'idle' || e.status === 'done') && !(s.kind === 'gemini' && s.rt.answerSource === 'hook' && s.rt.lastAnswerAt >= s.rt.turn.startedAt)) await this.readScreenAnswer(s);
         if (!s.adoptNamed) this.refreshAdoptedName(s);
       }
       this.broadcastSession(s, { cause: `herdr:${e.status}` });
@@ -567,6 +619,7 @@ export class Backend {
     try {
       const busy = [];
       for (const s of [...this.sessions.values()]) {
+        if (s.kind === 'agy' && s.paneId && !s.rt.exit && !s.rt.agyTurnActive) { await this.checkAgyComposer(s).catch(() => {}); continue; }
         if (s.kind !== SHELL || !s.paneId || s.rt.exit) continue;
         // 작은 노드나 나눈 패널처럼 좁으면 긴 프롬프트가 줄바꿈되어 프롬프트로 보이지 않는다. 줄바꿈을 푼 최근 줄로 읽는다(P6a, P6b가 따로 봄)
         const text = await this.adapter.readScreen(s.paneId, { source: 'recent_unwrapped', lines: 40 }).catch(() => null);
@@ -638,10 +691,11 @@ export class Backend {
     try {
       const text = await this.adapter.readScreen(s.paneId, { source: 'visible' });
       if (s.kind === 'claude' && isTrustDialog(text)) { s.rt.trustScreen = { at: Date.now() }; this.store.addEvent(s.sessionId, 'trust_dialog', { tail: tailLines(text, 6) }); }
-      if (!this.hooked(s)) s.rt.screenAsk = { tail: tailText(text, 14), at: Date.now() };
+      if (!this.hooked(s)) s.rt.screenAsk = { tail: s.kind === 'gemini' ? geminiAuthIssue(text) || tailText(text, 14) : tailText(text, 14), at: Date.now() };
     } catch {}
   }
   async readScreenAnswer(s) {
+    if (s.kind === 'gemini' && s.rt.geminiTurnActive) return;
     try {
       const text = await this.adapter.readScreen(s.paneId, { source: 'recent_unwrapped', lines: 60 });
       s.rt.lastAnswer = screenAnswerText(text, 20); s.rt.lastAnswerAt = Date.now(); s.rt.answerSource = 'screen';
@@ -911,7 +965,7 @@ export class Backend {
     const permissionMode = p.permissionMode || (claude && def.claudePermissionMode) || 'manual';
     if (!PERMISSION_MODES.has(permissionMode)) throw apiError('bad_request', `권한 모드: ${permissionMode}`);
     // DeepSeek 모델은 opencodex 프록시가 DeepSeek로 보낸다. Claude Code 노력 수준 기본값은 DeepSeek에 넘기지 않는다(받은 값만)
-    const model = claude ? (flavor ? p.model || def.deepseekModel || DEEPSEEK_MODEL : p.model || def.claudeModel || null) : kind === 'codex' ? (p.model !== undefined ? String(p.model).trim() || null : modelFromArgs(p.args ?? def.codexArgs) || null) : null;
+    const model = claude ? (flavor ? p.model || def.deepseekModel || DEEPSEEK_MODEL : p.model || def.claudeModel || null) : kind === 'codex' ? (p.model !== undefined ? String(p.model).trim() || null : modelFromArgs(p.args ?? def.codexArgs) || null) : kind === 'gemini' ? (p.model !== undefined ? String(p.model).trim() || null : geminiModelFromArgs(p.args) || null) : kind === 'agy' ? (p.model !== undefined ? String(p.model).trim() || null : agyModelFromArgs(p.args) || null) : null;
     const effort = claude ? p.effort || (flavor ? null : def.claudeEffort) || null : null;
     const allowHerdr = claude && !!(p.allowHerdr ?? def.claudeAllowHerdr);
     // F5: herdr가 아는 에이전트 종류. Claude Code만 판의 hook과 이어 가기 등록을 붙인다
@@ -928,7 +982,7 @@ export class Backend {
     const ws = await workspaceOf(cwd);
 
     const sessionId = crypto.randomUUID();
-    let hookToken = '', settingsPath = '', trust = { needsTrust: null, reason: `${kind}: 예상하지 않음` }, args = [], resumeArgv = null;
+    let hookToken = '', settingsPath = '', paneEnv, trust = { needsTrust: null, reason: `${kind}: 예상하지 않음` }, args = [], resumeArgv = null;
     if (claude) {
       hookToken = crypto.randomBytes(24).toString('hex');
       const extra = this.branch.settingsExtra(sessionId);
@@ -941,14 +995,28 @@ export class Backend {
     } else if (!shell) {
       // 다른 종류는 그 하네스의 인자를 그대로 넘긴다(예: codex -m 모델). 판은 규칙을 덧붙이지 않는다
       const a = p.args ?? (kind === 'codex' ? def.codexArgs : '');
-      args = kind === 'codex' ? withCodexModel(a, p.model) : Array.isArray(a) ? a.map(String) : String(a || '').split(/\s+/).filter(Boolean);
+      args = kind === 'codex' ? withCodexModel(a, p.model) : kind === 'gemini' ? withGeminiModel(a, p.model) : kind === 'agy' ? withAgyModel(a, p.model) : Array.isArray(a) ? a.map(String) : String(a || '').split(/\s+/).filter(Boolean);
     }
 
+    if (kind === 'gemini') {
+      hookToken = crypto.randomBytes(24).toString('hex');
+      const integration = this.geminiSettings(sessionId, hookToken);
+      settingsPath = integration.settingsPath; paneEnv = integration.env;
+      validateGeminiNewSessionArgs(args);
+      args.push('--session-id', sessionId);
+    }
+    if (kind === 'agy') {
+      hookToken = crypto.randomBytes(24).toString('hex');
+      const integration = this.agySettings(sessionId, hookToken);
+      settingsPath = integration.settingsPath; paneEnv = integration.env;
+    }
     this.ensureWorkspace(ws, `spawn ${name}`);
     const rt = newRuntime({ trustPredicted: !!trust.needsTrust, kind, hooked: claude });
     if (shell) rt.phase = 'running';
+    if (kind === 'gemini') { rt.geminiIntegration = true; rt.geminiReady = false; }
+    if (kind === 'agy') rt.agyComposer = 'starting';
     let s;
-    const hw = await this.withNewPane(() => this.adapter.createWorkspace({ cwd, label: name }), (r) => {
+    const hw = await this.withNewPane(() => this.adapter.createWorkspace({ cwd, label: name, env: paneEnv }), (r) => {
       s = { sessionId, name, cwd, paneId: r.paneId, herdrWorkspaceId: r.workspaceId, agentName: shell ? r.paneId : name, model, effort, permissionMode, settingsPath, hookToken, resumeArgv, resumeVerified: false, createdAt: Date.now(), closedAt: null, seenAt: null, touchedAt: Date.now(), rt, lastState: null, kind, origin: 'board', parentSessionId: p.parentSessionId || null, workspaceKey: ws.key, flavor };
       this.store.insertSession({ ...s, runtime: rt });
       this.sessions.set(sessionId, s);
@@ -987,6 +1055,12 @@ export class Backend {
     if (p.prompt) this.queue.enqueue(sessionId, p.prompt);
     this.log(`spawned ${name} ${kind} ${sessionId} pane=${hw.paneId} ws=${ws.key} shellReady=${shellReady} trust=${JSON.stringify(trust)}`);
     return { ...out, argv: st.argv };
+  }
+  agySettings(sessionId, token) {
+    return writeAgySession({ dir: this.cfg.sessionsDir, sessionId, token, hookUrl: this.hookUrl.replace('/hooks/claude', '/hooks/agy'), branchEnv: this.branch.envFor(sessionId), pluginDir: this.plugin?.pluginDir, herdrPath: this.cfg.herdrPath });
+  }
+  geminiSettings(sessionId, token) {
+    return writeGeminiSession({ dir: this.cfg.sessionsDir, sessionId, token, hookUrl: this.hookUrl.replace('/hooks/claude', '/hooks/gemini'), branchEnv: this.branch.envFor(sessionId), pluginDir: this.plugin?.pluginDir, herdrPath: this.cfg.herdrPath });
   }
   // 판이 패널을 만드는 동안(작업 공간 만들기 → 세션 등록) 그 패널의 pane_created를 판에 올리지 않게 막는다(G2)
   async withNewPane(create, register) {
@@ -1324,6 +1398,7 @@ export class Backend {
         const status = r && r.agent ? r.agent.agent_status : null;
         this.linkEvent(this.ensureLink(s.sessionId, t.sessionId, { observed: true }), c.verb === 'agent.prompt' ? 'prompt_result' : 'wait_result', failed ? clip(body.error || out.text, 400) : null, { toolUseId: id, ok: !failed, status, type: r ? r.type : null }, { quiet: true });
       } else if (c.verb === 'agent.read') {
+        if (body.noToolOutput) continue; // provider does not supply shell output
         const t = this.resolveAgentTarget(c.target);
         if (!t || t === s) continue;
         const text = reads++ === 0 ? readTextOf(out) : null; // 한 명령에 read가 여럿이면 첫 것만 글로 남긴다
@@ -1600,6 +1675,11 @@ export class Backend {
       'link.log': (p) => { const l = this.store.getLink(p.link); if (!l) throw apiError('not_found', `없는 연결: ${p.link}`); return { link: this.linkView(l), events: this.store.linkEvents(l.linkId, p.limit || 200) }; },
       'agent.kinds': () => this.adapter.agentKinds(),
       'agent.models': (p) => {
+        if (p.kind === 'agy') {
+          this.agyModelRequest ||= listAgyModels().finally(() => { this.agyModelRequest = null; });
+          return this.agyModelRequest;
+        }
+        if (p.kind === 'gemini') return listGeminiModels();
         if (p.kind !== 'codex') return { models: [], source: null };
         this.modelRequest ||= listCodexModels().finally(() => { this.modelRequest = null; });
         return this.modelRequest;

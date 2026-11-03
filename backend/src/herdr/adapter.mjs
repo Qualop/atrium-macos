@@ -278,8 +278,8 @@ export class HerdrAdapter extends EventEmitter {
       panes: (s.panes || []).map((p) => ({ paneId: p.pane_id, workspaceId: p.workspace_id, agent: p.agent, status: p.agent_status })),
     };
   }
-  async createWorkspace({ cwd, label }) {
-    const r = await this.call('workspace.create', { cwd, label, focus: false });
+  async createWorkspace({ cwd, label, env }) {
+    const r = await this.call('workspace.create', { cwd, label, focus: false, ...(env ? { env } : {}) });
     return { workspaceId: r.workspace.workspace_id, paneId: r.root_pane.pane_id };
   }
   async waitShellReady(paneId, timeoutMs = 15000) {
@@ -297,7 +297,6 @@ export class HerdrAdapter extends EventEmitter {
   async workspacePanes(workspaceId) { const r = await this.call('pane.list', { workspace_id: workspaceId }); return (r.panes || []).map((p) => ({ paneId: p.pane_id, tabId: p.tab_id, agent: p.agent || null })); }
   // P4(F5): 에이전트 종류 목록과 이 PC에서 찾은 명령(where.exe). 종류 이름과 명령 이름이 같은 것만 찾는다.
   async agentKinds() {
-    if (this._kinds) return this._kinds;
     const r = await execText(this.herdrPath, ['agent'], { env: cleanEnv() });
     const kinds = parseKinds(r.stdout + '\n' + r.stderr);
     const found = kinds.map((k) => findExecutable(k));

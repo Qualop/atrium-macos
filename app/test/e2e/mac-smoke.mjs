@@ -62,6 +62,14 @@ try {
     const { checkModelPicker } = await import('./model-picker.mjs');
     await checkModelPicker({ page, app, client, project, dir });
   }
+  if (process.env.ATRIUM_TEST_GEMINI === '1') {
+    const { checkGeminiPicker } = await import('./gemini-picker.mjs');
+    await checkGeminiPicker({ page, app, client, project, dir });
+  }
+  if (process.env.ATRIUM_TEST_AGY_LIVE === '1') {
+    const { checkAgyCollaboration } = await import('./agy-collaboration.mjs');
+    await checkAgyCollaboration({ page, client, dir });
+  }
   await client.call('workspace.open', { path: project });
   const shell = await client.call('session.spawn', { kind: 'shell', name: 'mac-smoke', cwd: project });
   await until(() => page.evaluate((sid) => window.__mt.getState().sessions.has(sid), shell.sessionId), 'shell in canvas');

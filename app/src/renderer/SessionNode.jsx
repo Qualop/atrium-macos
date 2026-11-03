@@ -70,7 +70,7 @@ function Origin({ s }) {
     {/* P25: 띄운 방법(DeepSeek). 판이 띄운 Claude Code면 hook이 붙고, 직접 명령이면 hook 없이 셸에서 뜬다 */}
     {s.flavor && <span className="mt-badge kind flavor" data-kind={s.flavor} data-role="flavor-badge" title={t(s.hooked ? 'node.flavorHookedTitle' : 'node.flavorCommandTitle', { kind: kindOf(s.flavor).label })}>{kindOf(s.flavor).label}</span>}
     {s.kind === 'shell' && <span className="mt-badge kind shell" data-kind="shell" title={t('node.shellTitle')}>{t('node.shell')}</span>}
-    {s.kind && s.kind !== 'claude' && s.kind !== 'shell' && <span className="mt-badge kind" data-kind={s.kind} title={t('node.kindTitle')}>{s.kind}</span>}
+    {s.kind && s.kind !== 'claude' && s.kind !== 'shell' && <span className="mt-badge kind" data-kind={s.kind} title={t('node.kindTitle')}>{kindOf(s.kind).label}</span>}
     {s.fromShell && <span className="mt-badge kind" data-role="from-shell" title={t('node.fromShellTitle')}>{t('node.fromShell')}</span>}
     {s.origin === 'adopted' && <span className="mt-badge adopted" data-role="adopted" title={s.kind === 'shell' ? t('node.adoptedShellTitle', { pane: s.paneId }) : t('node.adoptedAgentTitle', { name: s.agentName })}>{parent ? t('node.spawnedBy', { name: parent.name }) : t('node.adopted')}</span>}
     {s.elsewhere && <span className="mt-badge warn" data-role="elsewhere" title={t('node.elsewhereTitle', { cwd: s.cwdNow })}>{t(s.elsewhere.repo ? 'node.elsewhereRepo' : 'node.elsewhereFolder', { name: s.elsewhere.name })}</span>}
@@ -133,7 +133,7 @@ function FarFace({ s, zoom, w, h }) {
   const narrow = w * zoom < 180;
   return (
     <div className="mt-far" style={{ fontSize: px(12, 0.17, 1 / 16) }} data-role="far">
-      <div className="mt-far-name" style={{ fontSize: px(14, 0.2, 1 / 13) }}><span className="mt-far-nm">@{s.name}</span> <StatePill s={s} />{!narrow && <>{s.flavor ? <span className="mt-badge kind">{kindOf(s.flavor).label}</span> : s.kind && s.kind !== 'claude' ?<span className="mt-badge kind">{s.kind === 'shell' ? t('node.shell') : s.kind}</span> : null}{s.unseen && <span className="mt-badge review">{t('node.review')}</span>}<BranchBadge s={s} /></>}</div>
+      <div className="mt-far-name" style={{ fontSize: px(14, 0.2, 1 / 13) }}><span className="mt-far-nm">@{s.name}</span> <StatePill s={s} />{!narrow && <>{s.flavor ? <span className="mt-badge kind">{kindOf(s.flavor).label}</span> : s.kind && s.kind !== 'claude' ?<span className="mt-badge kind">{s.kind === 'shell' ? t('node.shell') : kindOf(s.kind).label}</span> : null}{s.unseen && <span className="mt-badge review">{t('node.review')}</span>}<BranchBadge s={s} /></>}</div>
       {waiting && <div className="mt-far-ask" data-role="far-ask" style={{ fontSize: px(15, 0.21, 1 / 14) }}>{askLine(s) || t('node.waitingForYou')}</div>}
       {s.kind === 'shell' && <div className="mt-far-line" data-role="shell-line">{shellLine(s)}</div>}
       {s.elsewhere && <div className="mt-far-line warn">↪ {t('node.workingIn', { name: s.elsewhere.name })}</div>}

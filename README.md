@@ -4,14 +4,14 @@
 
 <p align="center">
   <b>Your AI coding sessions, together on one canvas.</b><br>
-  A macOS desktop workspace for Claude Code, Codex and terminals.
+  A macOS desktop workspace for Claude Code, Codex, Gemini CLI and terminals.
 </p>
 
 <p align="center">
   <b>English</b> · <a href="README.ko.md">한국어</a> · <a href="LICENSE">MIT</a>
 </p>
 
-Atrium lets you run several coding sessions, see which ones need your attention, and send instructions without switching between terminal windows. It manages the workspace; Claude Code, Codex and your shell do the actual work.
+Atrium lets you run several coding sessions, see which ones need your attention, and send instructions without switching between terminal windows. It manages the workspace; Claude Code, Codex, Gemini CLI and your shell do the actual work.
 
 ![Atrium on macOS: Korean UI with a session name and automatically discovered Codex model selector](docs/images/model-picker-macos.png)
 
@@ -19,7 +19,7 @@ Atrium lets you run several coding sessions, see which ones need your attention,
 
 ## Start on macOS
 
-You need **Node.js 24**, **Git**, and whichever agent CLI you want to use. Install and sign in to Claude Code or Codex separately. Plain terminals do not require an AI account.
+You need **Node.js 24**, **Git**, and whichever agent CLI you want to use. Install and sign in to your chosen CLI separately; Google account users should use Antigravity CLI (see below). Plain terminals do not require an AI account.
 
 ```sh
 git clone https://github.com/Qualop/atrium-macos.git
@@ -51,12 +51,22 @@ The model picker reads the installed Codex catalog using `model/list`; it does n
 
 For the Korean interface, choose **Settings → Language → 한국어**.
 
+### Collaborating with Gemini
+
+For a **personal Google account**, install [Antigravity CLI](https://antigravity.google/docs/getting-started), run `agy`, and sign in. Choose **Gemini (Antigravity)** in Atrium. The older Gemini CLI can reject personal Google sign-in even after OAuth succeeds; retrying the same login does not fix that service rejection.
+
+For a **Gemini API key or supported enterprise authentication**, install `npm install -g @google/gemini-cli` and choose **Gemini CLI**. Shift-click either icon to choose the folder, session name and model. Gemini CLI models are read from installed metadata; Antigravity queries `agy models`. Catalog failures leave default and manual model entry available. A displayed model is not a guarantee of access.
+
+For example, connect a Claude session to a Gemini session with the **reviewer** role. Ask the working session to have its reviewer inspect the change, then address the findings. The role notice provides the delegation commands. Gemini can also delegate to Claude or Codex. Naming a session `reviewer` alone does not assign a role.
+
+Gemini prompt submissions, completed answers and shell tool calls feed the board's collaboration records. Managed children inherit their parent's agent kind; use `--kind claude`, `--kind codex` or `--kind gemini` / `--kind agy` to change it. Answer login, trust and approval prompts in the terminal. Gemini CLI gets a separate settings profile referencing its existing login/history. Antigravity requires a named `atrium-board` entry in `~/.gemini/config/hooks.json`; existing hooks are preserved, and that entry only reports from Atrium-managed sessions. Antigravity hook payloads omit final response text, so its completed answers use terminal snapshots. If your settings disable hooks, detailed collaboration tracking is unavailable. Claude history auto-indexing and sleep controls do not apply to Gemini.
+
 ## What is included
 
 | Feature | What it does |
 |---|---|
 | Infinite canvas | Keeps projects, sessions and worktree areas together. Zoom in for a live terminal or out for a summary. |
-| Agent sessions | Runs Claude Code, Codex and shells. DeepSeek uses Claude Code through a separately configured opencodex gateway. |
+| Agent sessions | Runs Claude Code, Codex, Gemini CLI and shells. DeepSeek uses Claude Code through a separately configured opencodex gateway. |
 | Codex model picker | Discovers models, supports refresh and manual entry, and distinguishes the model from the session name. |
 | Attention and results | Shows requests waiting for your response and results you have not reviewed. Claude Code has richer status and approval integration. |
 | Split layouts | Arranges several session windows in one group with adjustable dividers. |
@@ -109,7 +119,7 @@ To stop the sessions too, choose the menu item that stops **herdr and all sessio
 
 ## Verification and platform status
 
-As of **2026-11-02**, local verification passed **281 backend tests and 73 UI tests**, plus the renderer build. The macOS integration checks include nine concurrent sessions, model selection, Korean copy at 900×600, multiline paste, synthetic Korean IME events, WebGL context loss, backend crash recovery, and engine stop/start. Test groups were run separately; these are not a claim that every combination or platform has been tested.
+As of **2026-11-03**, local verification passed **353 backend tests and 80 UI tests**, plus the renderer build. The macOS integration checks include nine concurrent sessions, model selection, Korean copy at 900×600, multiline paste, synthetic Korean IME events, WebGL context loss, backend crash recovery, and engine stop/start. Test groups were run separately; these are not a claim that every combination or platform has been tested.
 
 | Environment | Status |
 |---|---|
@@ -117,6 +127,8 @@ As of **2026-11-02**, local verification passed **281 backend tests and 73 UI te
 | Intel herdr through Rosetta | Integration checks passed with ARM64 Node/Electron. This is not an Intel Mac hardware test. |
 | Intel Mac hardware | Not verified. |
 | Windows | Existing implementation retained and CI configured; native regression testing has not been performed locally. |
+
+Google model listing was also verified from the installed app. The actual Gemini CLI completed a turn and exact-ID resume against a local fake model server. Full Antigravity reviewer turns remain pending completion of its interactive onboarding; mixed-provider collaboration is covered by backend contract tests.
 
 Physical reboot recovery, real IME candidate windows and language switching, OS notification clicks, and authenticated model work across every provider still require manual validation. A passing test suite is not a security certification.
 
@@ -132,10 +144,10 @@ npm --prefix app run test:mac
 npm --prefix app run test:mac:stress
 ```
 
-To include the real Codex catalog picker and Korean UI checks:
+To include the installed Gemini CLI and Codex catalogs, Google provider UI, and Korean UI checks:
 
 ```sh
-ATRIUM_TEST_MODELS=1 ATRIUM_TEST_COPY=1 npm --prefix app run test:mac
+ATRIUM_TEST_GEMINI=1 ATRIUM_TEST_MODELS=1 ATRIUM_TEST_COPY=1 npm --prefix app run test:mac
 ```
 
 Start the development profile with `cd app && npm run mac -- --dev`. Integration tests create separate temporary profiles, folders and herdr sessions; they do not use the normal board's data.

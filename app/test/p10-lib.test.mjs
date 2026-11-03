@@ -17,9 +17,9 @@ test('얼굴: 화면 140px 아래는 아이콘, 경계에 이력', () => {
 });
 
 test('종류 아이콘: Claude Code, Codex, Pi, 셸, 그 밖. 모르는 종류는 그 밖의 모양에 이름 머리글자. 로고 칸은 비어 있다', () => {
-  for (const k of ['claude', 'codex', 'pi', 'grok', 'shell', 'other']) { assert.ok(KINDS[k].mark); assert.ok(KINDS[k].shape === 'circle' || SHAPES[KINDS[k].shape]); }
+  for (const k of ['claude', 'codex', 'gemini', 'pi', 'grok', 'shell', 'other']) { assert.ok(KINDS[k].mark); assert.ok(KINDS[k].shape === 'circle' || SHAPES[KINDS[k].shape]); }
   // 로고가 있는 종류는 빌드가 옮기는 assets/kinds/ 아래 그림을 가리키고, 그 파일이 저장소에 있다
-  for (const k of ['claude', 'codex', 'pi', 'grok']) { assert.match(KINDS[k].logo, /^assets\/kinds\/[a-z-]+\.(png|svg)$/); assert.ok(fs.existsSync(new URL(`../src/renderer/${KINDS[k].logo}`, import.meta.url))); }
+  for (const k of ['claude', 'codex', 'gemini', 'pi', 'grok']) { assert.match(KINDS[k].logo, /^assets\/kinds\/[a-z-]+\.(png|svg)$/); assert.ok(fs.existsSync(new URL(`../src/renderer/${KINDS[k].logo}`, import.meta.url))); }
   for (const k of ['shell', 'other']) assert.equal(KINDS[k].logo ?? null, null);
   // Claude Code는 상태와 상관없이 같은 심볼(내 차례는 테두리와 점으로 보인다). 레일 단추 그림(logoBadge)도 저장소에 있다. 로고가 없으면 null
   assert.equal(logoFor(KINDS.claude, 'waiting'), KINDS.claude.logo);
@@ -29,8 +29,8 @@ test('종류 아이콘: Claude Code, Codex, Pi, 셸, 그 밖. 모르는 종류�
   assert.equal(logoFor(KINDS.shell, 'ready'), null);
   assert.equal(kindOf(null).id, 'claude');
   assert.equal(kindOf('Codex').id, 'codex');
-  const g = kindOf('gemini');
-  assert.equal(g.shape, KINDS.other.shape); assert.equal(g.mark, 'Ge'); assert.equal(g.label, 'gemini');
+  const g = kindOf('custom-agent');
+  assert.equal(g.shape, KINDS.other.shape); assert.equal(g.mark, 'Cu'); assert.equal(g.label, 'custom-agent');
   assert.notEqual(stateColor('waiting'), stateColor('ready'));
   assert.ok(stateColor('nope'));
 });

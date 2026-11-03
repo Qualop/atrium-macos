@@ -6,6 +6,7 @@
 //       atrium child-kill <이름> [--only] [--json]
 //       atrium wake <이름> [--json]   (P21: 잠든 세션 깨우기, P24: 그 리포째)
 import http from 'node:http';
+import fs from 'node:fs';
 import path from 'node:path';
 import { envVar } from '../src/config.mjs';
 
@@ -27,7 +28,13 @@ for (let i = 0; i < argv.length; i++) {
   else pos.push(a);
 }
 const [cmd, ...rest] = pos;
-const E = (name) => envVar(name);
+// Gemini may redact token-shaped environment variables from shell tools. Read only
+// this managed session's private branch credentials, never the board API token.
+let branchEnv = {};
+if (process.env.ATRIUM_BRANCH_FILE) {
+  try { branchEnv = JSON.parse(fs.readFileSync(process.env.ATRIUM_BRANCH_FILE, 'utf8')); } catch {}
+}
+const E = (name) => envVar(name) || (['PORT', 'SESSION_ID', 'SESSION_TOKEN', 'HERDR_SESSION'].includes(name) ? branchEnv[`ATRIUM_${name}`] : undefined);
 const say = (s) => process.stdout.write(s + '\n');
 const fail = (msg, code = 1) => { process.stderr.write(`atrium: ${msg}\n`); process.exit(code); };
 

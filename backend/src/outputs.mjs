@@ -79,7 +79,10 @@ export class Outputs {
       const r = file ? c.readMessages(file, { limit: 100000 }) : { exists: false, messages: [] };
       if (r.exists) return { source: 'transcript', file, turns: turnsFromMessages(r.messages) };
     }
-    const ev = c.store.events({ sessionId: s.sessionId, limit: 2000 }).filter((e) => e.kind === 'answer_screen');
+    const all = c.store.events({ sessionId: s.sessionId, limit: 2000 });
+    const gemini = all.filter((e) => e.kind === 'answer_gemini');
+    if (gemini.length) return { source: 'hook', file: null, turns: turnsFromScreenEvents(gemini) };
+    const ev = all.filter((e) => e.kind === 'answer_screen');
     if (ev.length) return { source: 'screen', file: null, turns: turnsFromScreenEvents(ev) };
     // 대화 기록도 화면 기록도 없으면 지금 들고 있는 마지막 답 하나
     if (s.rt.lastAnswer) return { source: s.rt.answerSource || 'hook', file: null, turns: [{ turn: 1, prompt: s.rt.lastPrompt || null, promptAt: s.rt.lastPromptAt || null, answer: s.rt.lastAnswer, answerAt: s.rt.lastAnswerAt, tools: null, long: isLongAnswer(s.rt.lastAnswer) }] };

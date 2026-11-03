@@ -170,6 +170,12 @@ export function deriveState(rt) {
   // G2(P5): 에이전트 없는 일반 셸. 프롬프트에서 쉬는가(shell_idle), 명령을 돌리는가(shell_running). hook도 승인 카드도 없다
   if (rt.kind === 'shell') return { state: rt.shell && rt.shell.atPrompt === false ? 'shell_running' : 'shell_idle' };
   const s = h.status;
+  if (rt.kind === 'agy' && !rt.agyTurnActive && rt.agyComposer && rt.agyComposer !== 'ready') return { state: rt.agyComposer, ...(rt.agyComposer === 'waiting' ? { ask: { kind: 'screen', tail: rt.screenAsk?.tail || null } } : {}) };
+  if (rt.kind === 'agy' && rt.agyTurnActive && s !== 'blocked') return { state: 'working' };
+  if (rt.kind === 'gemini' && rt.geminiIntegration && s !== 'blocked') {
+    if (!rt.geminiReady) return { state: 'starting' };
+    if (rt.geminiTurnActive) return { state: 'working' };
+  }
   if (rt.hooked === false) {
     if (s === 'blocked') {
       if (rt.kind === 'claude' && rt.trustScreen) return { state: 'trust_wait', confirmedByScreen: true };

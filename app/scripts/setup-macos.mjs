@@ -24,7 +24,13 @@ if (!valid()) {
   const bytes = Buffer.from(await response.arrayBuffer());
   if (crypto.createHash('sha256').update(bytes).digest('hex') !== digest) throw new Error('herdr 체크섬 불일치');
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.writeFileSync(dest + '.tmp', bytes, { mode: 0o755 }); fs.renameSync(dest + '.tmp', dest);
+  const temporary = `${dest}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, bytes, { mode: 0o755, flag: 'wx' });
+    fs.renameSync(temporary, dest);
+  } finally {
+    try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
 }
 fs.chmodSync(dest, 0o755);
 for (const folder of ['backend', 'app']) execFileSync('npm', ['ci', '--no-audit', '--no-fund'], { cwd: path.join(root, folder), stdio: 'inherit' });

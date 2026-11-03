@@ -17,6 +17,102 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p7-'));
 const ID = (n) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
 const apiError = (code, message) => Object.assign(new Error(message), { code });
 
+test('audit: simultaneous reopen of an archived session creates only one pane', async () => {
+  const cwd = tmp(), W = folderWs(cwd), b = fakeBackend({ convoRoots: [tmp()], workspaces: [W] });
+  addClosed(b, { id: ID(40), name: 'same', cwd, kind: 'shell', ws: W });
+  b.store.setArchive('session', ID(40), { archivedAt: Date.now() });
+  const r = new Recall(b, { readProcs: async () => [] }); r.changed = async () => {};
+  const results = await Promise.allSettled([r.reopen({ session: ID(40) }), r.reopen({ session: ID(40) })]);
+  assert.equal(results.filter((x) => x.status === 'fulfilled').length, 1);
+  assert.equal(b.calls.filter(([op]) => op === 'createWorkspace').length, 1);
+  assert.equal(b.store.getSession(ID(40)).closedAt, null);
+  assert.equal(b.store.archiveMarks().get(`session:${ID(40)}`).archivedAt, null);
+});
+
+test('audit: simultaneous reopen reserves distinct names across different closed sessions', async () => {
+  const cwd = tmp(), W = folderWs(cwd), b = fakeBackend({ convoRoots: [tmp()], workspaces: [W] });
+  for (const n of [41, 42]) addClosed(b, { id: ID(n), name: 'worker', cwd, kind: 'shell', ws: W });
+  const r = new Recall(b, { readProcs: async () => [] }); r.changed = async () => {};
+  const out = await Promise.all([41, 42].map((n) => r.reopen({ session: ID(n) })));
+  assert.equal(new Set(out.map((x) => x.name)).size, 2);
+});
+
+test('audit: failed reopen launch returns an archived session to a retryable closed record', async () => {
+  const cwd = tmp(), W = folderWs(cwd), b = fakeBackend({ convoRoots: [tmp()], workspaces: [W] });
+  addClosed(b, { id: ID(47), name: 'retry-open', cwd, kind: 'codex', ws: W });
+  b.store.setArchive('session', ID(47), { archivedAt: 123 });
+  const r = new Recall(b, { readProcs: async () => [] }); r.changed = async () => {};
+  const start = b.adapter.startAgent;
+  b.adapter.startAgent = async () => { throw apiError('launch_failed', 'fixture launch failure'); };
+  await assert.rejects(r.reopen({ session: ID(47) }), { code: 'launch_failed' });
+  assert.equal(b.sessions.has(ID(47)), false);
+  assert.ok(b.store.closedSession(ID(47)));
+  assert.equal(b.store.archiveMarks().get(`session:${ID(47)}`).archivedAt, 123);
+  assert.deepEqual(b.calls.filter(([op]) => op === 'closePane'), [['closePane', 'w1:p1']]);
+  b.adapter.startAgent = start;
+  assert.equal((await r.reopen({ session: ID(47) })).name, 'retry-open');
+});
+
+test('audit: failed reopen cleanup retains the tracked pane when its close is not confirmed', async () => {
+  const cwd = tmp(), W = folderWs(cwd), b = fakeBackend({ convoRoots: [tmp()], workspaces: [W] });
+  addClosed(b, { id: ID(48), name: 'tracked', cwd, kind: 'codex', ws: W });
+  const r = new Recall(b, { readProcs: async () => [] }); r.changed = async () => {};
+  b.adapter.startAgent = async () => { throw apiError('launch_failed', 'fixture launch failure'); };
+  b.adapter.closePane = async () => { throw apiError('unreachable', 'fixture cleanup failure'); };
+  await assert.rejects(r.reopen({ session: ID(48) }), { code: 'launch_failed' });
+  const s = b.sessions.get(ID(48));
+  assert.ok(s?.paneId);
+  assert.equal(s.rt.exit?.kind, 'launch_failed');
+  assert.equal(b.store.getSession(ID(48)).closedAt, null);
+  assert.ok(b.store.events({ sessionId: ID(48) }).some((e) => e.kind === 'reopen_failed' && e.data.cleanup));
+});
+
+test('audit: Codex reopen honors the requested model and persists it for another reopen', async () => {
+  const cwd = tmp(), W = folderWs(cwd), b = fakeBackend({ convoRoots: [tmp()], workspaces: [W] });
+  addClosed(b, { id: ID(43), name: 'codex', cwd, kind: 'codex', ws: W });
+  b.store.addEvent(ID(43), 'spawn', { args: ['--model=old-model', '--sandbox', 'workspace-write'] });
+  const r = new Recall(b, { readProcs: async () => [] }); r.changed = async () => {};
+  await r.reopen({ session: ID(43), model: 'new-model' });
+  assert.deepEqual(b.calls.filter(([op]) => op === 'startAgent').at(-1)[1].args, ['--sandbox', 'workspace-write', '--model', 'new-model']);
+  assert.equal(b.sessions.get(ID(43)).model, 'new-model');
+  b.closeSession(b.sessions.get(ID(43)), 'killed');
+  await r.reopen({ session: ID(43) });
+  assert.ok(b.calls.filter(([op]) => op === 'startAgent').at(-1)[1].args.includes('new-model'));
+});
+
+test('audit: Claude reopen after /clear resumes the latest conversation without replacing the board identity', async () => {
+  const root = tmp(), cwd = tmp(), W = folderWs(cwd), b = fakeBackend({ convoRoots: [root], workspaces: [W] });
+  writeConvo(root, cwd, ID(45), [L.user('new context', { cwd })]);
+  const rt = newRuntime(); rt.claudeSessionId = ID(45); rt.lastAnswer = 'retained answer';
+  addClosed(b, { id: ID(44), name: 'cleared', cwd, rt, ws: W });
+  const r = new Recall(b, { readProcs: async () => [] }); r.changed = async () => {};
+  const out = await r.reopen({ session: ID(44) });
+  assert.equal(out.sessionId, ID(44));
+  assert.deepEqual(b.calls.find(([op]) => op === 'startAgent')[1].args.slice(0, 2), ['--resume', ID(45)]);
+  assert.equal(b.sessions.get(ID(44)).rt.claudeSessionId, ID(45));
+  assert.equal(b.sessions.get(ID(44)).rt.lastAnswer, 'retained answer');
+});
+
+for (const closeFails of [false, true]) {
+  test(`audit: recovery closes only its target without enumeration and retains it when close fails=${closeFails}`, async () => {
+    const cwd = tmp(), W = folderWs(cwd), b = fakeBackend({ convoRoots: [tmp()], workspaces: [W] });
+    addClosed(b, { id: ID(46), name: 'stopped', cwd, kind: 'codex', ws: W });
+    const row = b.store.getSession(ID(46)), s = { ...row, rt: row.runtime, paneId: 'shared:p1', herdrWorkspaceId: 'shared' };
+    b.store.reopenRow(s.sessionId, {}); b.sessions.set(s.sessionId, s);
+    b.adapter.workspacePanes = async () => { throw apiError('unreachable', 'fixture enumeration unavailable'); };
+    b.adapter.closePane = async (pane) => {
+      b.calls.push(['closePane', pane]);
+      if (closeFails) throw apiError('unreachable', 'fixture close unavailable');
+    };
+    const r = new Recall(b, { readProcs: async () => [] }); r.changed = async () => {};
+    if (closeFails) await assert.rejects(r.closeUnresumed(s), { code: 'unreachable' });
+    else await r.closeUnresumed(s);
+    assert.deepEqual(b.calls.filter(([op]) => op === 'closePane'), [['closePane', 'shared:p1']]);
+    assert.equal(b.sessions.has(s.sessionId), closeFails);
+    assert.equal(b.store.getSession(s.sessionId).closedAt === null, closeFails);
+  });
+}
+
 // 가짜 대화 기록 한 줄씩
 const L = {
   meta: (o) => JSON.stringify(o),
@@ -179,7 +275,9 @@ function fakeBackend({ convoRoots, sessionsDir = tmp(), desktop = null, workspac
     waitShellReady: async () => true,
     startAgent: async (a) => { calls.push(['startAgent', a]); return { agent: { name: a.name, launchPending: true }, argv: [a.kind, ...a.args] }; },
     refreshSubscription: async () => {},
-    workspacePanes: async () => [], closePane: async (p) => calls.push(['closePane', p]), closeWorkspace: async (w) => calls.push(['closeWorkspace', w]),
+    workspacePanes: async () => assert.fail('single-pane recovery must not depend on a workspace snapshot'),
+    closePane: async (p) => calls.push(['closePane', p]),
+    closeWorkspace: async () => assert.fail('single-pane recovery must preserve sibling panes'),
     ...herdr,
   };
   const b = {
@@ -408,7 +506,7 @@ test('J1: herdr를 다시 띄운 뒤 패널은 남았는데 돌아오지 않은 
   await r.recoverHookless([helper, cx, back, ag]);
   const starts = b.calls.filter((c) => c[0] === 'startAgent').map((c) => c[1]);
   assert.deepEqual(starts, [{ name: 'helper', paneId: 'helper:p1', args: ['--resume', ID(9)], kind: 'claude' }]);
-  assert.deepEqual(b.calls.filter((c) => c[0] === 'closeWorkspace'), [['closeWorkspace', 'cx']]);
+  assert.deepEqual(b.calls.filter((c) => c[0] === 'closePane'), [['closePane', 'cx:p1']]);
   assert.ok(b.calls.some((c) => c[0] === 'close' && c[1] === 'cx' && c[2] === 'not resumed after herdr restart'));
   assert.ok(b.calls.some((c) => c[0] === 'demote' && c[1] === 'ag'));
 });

@@ -3,7 +3,7 @@
 //   터미널(xterm)은 노드 크기로 그린 그림을 화면 배율로 늘리므로, 1보다 크게 하면 글이 흐려진다.
 // - 덩어리(붙여 묶기) 안의 노드: 덩어리 전체가 화면을 같은 몫으로 채운다(상한 같음).
 //   그렇게 맞춘 배율에서 누른 노드가 가까이 얼굴(360px)이 못 되면, 누른 노드를 가까이 얼굴로 두고(터미널에 바로 칠 수 있게)
-//   그 배율에서 덩어리가 최대한 많이 보이도록 가운데를 덩어리 쪽으로 옮긴다. 누른 노드는 늘 화면 안에 다 들어온다(P10).
+//   그 배율에서 덩어리가 최대한 많이 보이도록 가운데를 덩어리 쪽으로 옮긴다. 좁거나 긴 노드는 전체가 보이는 범위와 배율 상한을 먼저 지킨다.
 // - P26: 이미 그 노드(덩어리)를 보고 있으면 화면을 옮기지 않는다(isViewing). 터미널을 누를 때마다 화면이 흔들리지 않게.
 import { FACE_CLOSE_PX } from './faces.js';
 
@@ -19,11 +19,12 @@ const fit = (t, W, H) => Math.min((W * FILL) / t.w, (H * FILL) / t.h, ZOOM_MAX);
 // → { cx, cy, zoom, mode: 'node' | 'dock' | 'node-close' }(cx, cy는 화면 가운데에 둘 판 좌표)
 export function enterView({ node: r, dock = null, screen }) {
   const W = screen.width, H = screen.height;
-  const zNode = Math.max(fit(r, W, H), Math.min(NAV_CLOSE_PX / r.w, ZOOM_MAX));
+  const zNode = fit(r, W, H);
   if (!dock) return { cx: r.x + r.w / 2, cy: r.y + r.h / 2, zoom: zNode, mode: 'node' };
   const zFit = fit(dock, W, H);
   if (r.w * zFit >= FACE_CLOSE_PX) return { cx: dock.x + dock.w / 2, cy: dock.y + dock.h / 2, zoom: zFit, mode: 'dock' };
-  const zoom = Math.max(zFit, NAV_CLOSE_PX / r.w);
+  // 좁고 긴 칸은 가까이 얼굴을 강제하면 화면 밖으로 잘린다. 전체 노드와 배율 상한을 먼저 지킨다.
+  const zoom = Math.min(ZOOM_MAX, (W - 2 * MARGIN) / r.w, (H - 2 * MARGIN) / r.h, Math.max(zFit, NAV_CLOSE_PX / r.w));
   const vw = W / zoom, vh = H / zoom, m = MARGIN / zoom;
   // 누른 노드가 화면 안에 들어오는 가운데 범위 안에서 덩어리 가운데에 가장 가까운 곳
   const cx = clamp(dock.x + dock.w / 2, r.x + r.w - vw / 2 + m, r.x + vw / 2 - m);

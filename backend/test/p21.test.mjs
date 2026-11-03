@@ -150,8 +150,8 @@ function fakeBoard({ withTranscript = true, wakeFails = null } = {}) {
       processInfo: async () => ({ shell_pid: 9001, foreground_processes: [{ pid: 9002, name: 'claude.exe' }] }),
       sendText: async (pane, t) => { calls.push(['sendText', pane, t]); },
       paneKeys: async (pane, k) => { calls.push(['paneKeys', pane, k.join('+')]); const s = [...sessions.values()].find((x) => x.paneId === pane); if (s) setTimeout(() => { applyAgentReleased(s.rt); alive.clear(); }, 30); },
-      workspacePanes: async () => [],
-      closeWorkspace: async (id) => { calls.push(['closeWorkspace', id]); },
+      workspacePanes: async () => assert.fail('single-pane lifecycle must not depend on a workspace snapshot'),
+      closeWorkspace: async () => assert.fail('single-pane lifecycle must preserve sibling panes'),
       closePane: async (id) => { calls.push(['closePane', id]); },
       refreshSubscription: async () => {},
       createWorkspace: async ({ cwd: c, label }) => { calls.push(['createWorkspace', c, label]); return { paneId: 'w9:p1', workspaceId: 'w9' }; },
@@ -184,7 +184,7 @@ test('D4 잠재우기: /exit 뒤 작업 공간을 닫고 패널 없이 sleeping�
   assert.equal(out.memMB, 482);
   assert.deepEqual(out.procs.sort(), ['aside.exe', 'claude.exe', 'powershell.exe']);
   assert.ok(calls.some((c) => c[0] === 'sendText' && c[2] === '/exit'));
-  assert.ok(calls.some((c) => c[0] === 'closeWorkspace' && c[1] === 'w1'));
+  assert.ok(calls.some((c) => c[0] === 'closePane' && c[1] === 'w1:p1'));
   assert.equal(s.paneId, null); assert.equal(s.herdrWorkspaceId, null);
   assert.equal(deriveState(s.rt).state, 'sleeping');
   assert.equal(s.rt.exit, null, '닫힘(exited)이 아니다');
@@ -196,6 +196,51 @@ test('D4 잠재우기: /exit 뒤 작업 공간을 닫고 패널 없이 sleeping�
   assert.deepEqual({ ...st, repos: undefined }, { afterMin: 30, sleeping: 1, savedMB: 482, sessions: [{ name: 'a1', workspace: '', at: s.rt.sleep.at, memMB: 482 }], repos: undefined });
   assert.equal(st.repos[0].why, 'asleep'); assert.equal(st.repos[0].asleep, 1); assert.equal(st.repos[0].savedMB, 482);
   assert.equal(sl.summaryExtra(s).sleep.memMB, 482);
+});
+
+test('audit: sleep closes only its target when workspace enumeration is unavailable', async () => {
+  const { b, s, sl, calls } = fakeBoard();
+  sl.measure = async () => ({ memMB: 0, procs: [] });
+  b.adapter.workspacePanes = async () => { throw Object.assign(new Error('fixture unavailable'), { code: 'unreachable' }); };
+  assert.equal((await sl.sleep(s, { by: 'hand' })).slept, true);
+  assert.deepEqual(calls.filter(([op]) => op === 'closePane'), [['closePane', 'w1:p1']]);
+  assert.equal(s.paneId, null);
+});
+
+test('audit: sleep closePane failure retains its pane and reports failure', async () => {
+  const { b, s, sl, events } = fakeBoard();
+  sl.measure = async () => ({ memMB: 0, procs: [] });
+  b.adapter.closePane = async () => { throw Object.assign(new Error('fixture unavailable'), { code: 'unreachable' }); };
+  await assert.rejects(sl.sleep(s, { by: 'hand' }), { code: 'unreachable' });
+  assert.equal(s.paneId, 'w1:p1');
+  assert.equal(s.herdrWorkspaceId, 'w1');
+  assert.equal(s.rt.sleep, null);
+  assert.equal(s.rt.exitRequested, false);
+  assert.equal(events.some((e) => e.kind === 'slept'), false);
+});
+
+test('audit: failed wake cleanup keeps its new pane tracked when close fails', async () => {
+  const { b, s, sl, events } = fakeBoard({ wakeFails: 'exit' });
+  sl.measure = async () => ({ memMB: 0, procs: [] });
+  await sl.sleep(s, { by: 'hand' });
+  b.adapter.closePane = async () => { throw Object.assign(new Error('cleanup unreachable'), { code: 'unreachable' }); };
+  await assert.rejects(sl.wake(s, 'hand'), { code: 'wake_failed' });
+  assert.equal(s.paneId, 'w9:p1');
+  assert.equal(s.herdrWorkspaceId, 'w9');
+  assert.equal(s.rt.sleep, null, 'must not create another pane on the next wake');
+  assert.ok(events.some((e) => e.kind === 'wake_failed' && e.data.error.cleanup));
+});
+
+test('audit: failed wake cleanup preserves sibling panes added during startup', async () => {
+  const { b, s, sl, calls } = fakeBoard({ wakeFails: 'exit' });
+  sl.measure = async () => ({ memMB: 0, procs: [] });
+  await sl.sleep(s, { by: 'hand' });
+  const panes = new Set(['w9:p1', 'w9:sibling']);
+  b.adapter.closePane = async (pane) => { calls.push(['closePane', pane]); panes.delete(pane); };
+  await assert.rejects(sl.wake(s, 'hand'), { code: 'wake_failed' });
+  assert.ok(calls.some(([op, pane]) => op === 'closePane' && pane === 'w9:p1'));
+  assert.deepEqual([...panes], ['w9:sibling']);
+  assert.equal(s.paneId, null);
 });
 
 test('D4 깨우기: 같은 대화 ID로 새 작업 공간에서 판의 인자로 이어 가고 준비되면 끝난다', async () => {
@@ -224,7 +269,7 @@ test('D4 깨우기 실패: 이어 가자마자 끝나면 패널을 닫고 까닭
   assert.equal(deriveState(s.rt).state, 'sleeping');
   assert.equal(s.rt.sleep.error.code, 'resume_failed');
   assert.equal(s.paneId, null);
-  assert.ok(calls.filter((c) => c[0] === 'closeWorkspace').some((c) => c[1] === 'w9'), '깨우며 만든 작업 공간을 닫는다');
+  assert.ok(calls.filter((c) => c[0] === 'closePane').some((c) => c[1] === 'w9:p1'), '깨우며 만든 패널만 닫는다');
   assert.equal(queue.items.length, 0);
   assert.ok(events.some((e) => e.kind === 'wake_failed'));
 });
@@ -306,6 +351,7 @@ test('D4 끄기: 잠든 세션은 herdr 없이 닫는다(보관·삭제는 그 �
   const s = { sessionId: ID(9), name: 'z2', kind: 'claude', paneId: null, herdrWorkspaceId: null, rt };
   const closed = [], archived = [];
   const fake = {
+    sessions: new Map([[s.sessionId, s]]), currentSession: Backend.prototype.currentSession, killSession: Backend.prototype.killSession,
     resolve: () => s, adapter: { workspacePanes: async () => { throw new Error('no ws'); } },
     sleeper: { wakes: new Map(), going: new Map() },
     requireHerdr: () => { throw new Error('herdr를 부르면 안 된다'); },

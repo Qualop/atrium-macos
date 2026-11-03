@@ -345,9 +345,8 @@ export class Sleeper {
         if (rt.herdr.present) { rt.sleep = null; rt.exitRequested = false; b.broadcastSession(s, { cause: 'sleep:failed' }); throw apiError('still_running', `@${s.name}의 claude가 /exit 뒤에도 끝나지 않았다`); }
         steps.push(`/exit ${Date.now() - t}ms`);
       }
-      const shared = await b.adapter.workspacePanes(s.herdrWorkspaceId).then((ps) => ps.filter((x) => x.paneId !== s.paneId)).catch(() => []);
-      if (shared.length) await b.adapter.closePane(s.paneId).then(() => steps.push(`pane ${s.paneId} closed`)).catch((e) => steps.push(`pane.close failed ${e.code}`));
-      else await b.adapter.closeWorkspace(s.herdrWorkspaceId).then(() => steps.push(`workspace ${s.herdrWorkspaceId} closed`)).catch((e) => steps.push(`workspace.close failed ${e.code}`));
+      // 마지막 패널이면 herdr가 작업 공간도 닫는다. 조회 뒤 생긴 형제 패널까지 닫지 않게 대상 패널만 닫는다.
+      await b.adapter.closePane(s.paneId).then(() => steps.push(`pane ${s.paneId} closed`));
       try { b.relay.detach(s.sessionId); } catch {}
       const pane = s.paneId;
       // 잠든 세션은 패널이 없다. resync·자원 감시·셸 확인은 paneId가 없는 세션을 건너뛴다
@@ -367,7 +366,7 @@ export class Sleeper {
       if (b.resources && b.resources.sample) b.resources.sample().catch(() => {}); // 메모리 알약을 바로 줄인다(다음 30초 표본을 기다리지 않게)
       return out;
     } catch (e) {
-      if (rt.sleep && rt.sleep.going && s.paneId) { rt.sleep = null; b.broadcastSession(s, { cause: 'sleep:failed' }); }
+      if (rt.sleep && rt.sleep.going && s.paneId) { rt.sleep = null; rt.exitRequested = false; b.broadcastSession(s, { cause: 'sleep:failed' }); }
       b.store.addEvent(s.sessionId, 'sleep_failed', { by, error: e.code || e.message });
       throw e;
     } finally { b.killing.delete(s.sessionId); }
@@ -433,20 +432,29 @@ export class Sleeper {
     } catch (e) {
       s.waking = null;
       const error = { code: e.code || 'error', message: e.message, at: Date.now() };
+      let cleanupFailed = false;
       if (created && b.sessions.has(s.sessionId)) {
         // 만든 패널을 닫고 잠듦으로 되돌린다
         b.killing.add(s.sessionId);
         try {
           if (s.rt.herdr.present) { await b.adapter.sendText(s.paneId, '/exit').catch(() => {}); await sleep(150); await b.adapter.paneKeys(s.paneId, ['enter']).catch(() => {}); for (const t = Date.now(); s.rt.herdr.present && Date.now() - t < 5000; ) await sleep(200); }
-          await b.adapter.closeWorkspace(created.workspaceId).catch(() => {});
+          await b.adapter.closePane(created.paneId);
+        } catch (cleanup) {
+          cleanupFailed = true;
+          error.cleanup = { code: cleanup.code || 'error', message: cleanup.message };
         } finally { b.killing.delete(s.sessionId); }
       }
       if (b.sessions.has(s.sessionId)) {
         const rt = s.rt;
-        s.paneId = null; s.herdrWorkspaceId = null;
-        rt.exit = null; rt.sessionEnd = null; rt.pendingAsk = null; rt.herdr = { status: null, launchPending: false, agentSessionId: null, present: false, at: Date.now() };
-        rt.sleep = { ...z, error };
-        b.store.updateSession(s.sessionId, { paneId: null, herdrWorkspaceId: null, runtime: rt });
+        if (cleanupFailed) {
+          // 닫힘을 확인하지 못한 패널은 계속 추적한다. 잠듦으로 두면 다음 깨우기가 같은 대화를 중복 실행한다.
+          rt.sleep = null;
+        } else {
+          s.paneId = null; s.herdrWorkspaceId = null;
+          rt.exit = null; rt.sessionEnd = null; rt.pendingAsk = null; rt.herdr = { status: null, launchPending: false, agentSessionId: null, present: false, at: Date.now() };
+          rt.sleep = { ...z, error };
+        }
+        b.store.updateSession(s.sessionId, { paneId: s.paneId, herdrWorkspaceId: s.herdrWorkspaceId, runtime: rt });
         b.queue.cancelSession(s.sessionId, `wake failed: ${error.code}`); // 깨지 못한 세션에 보낼 글은 취소한다(Thread에 남는다)
         b.adapter.refreshSubscription().catch(() => {});
         b.broadcastSession(s, { cause: 'wake:failed' });

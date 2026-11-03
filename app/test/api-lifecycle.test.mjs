@@ -35,3 +35,16 @@ test('WebSocket 연결이 열리지 않으면 시간 초과 후 재시도한다'
   assert.notEqual(api.status, 'connecting');
   api.close?.();
 });
+
+test('a failed event subscription closes the socket so the board can reconnect', async (t) => {
+  window.mt.backend = async () => ({ port: 4, token: 'fixture' });
+  const api = new Api(); let retries = 0;
+  api.retry = () => { retries++; };
+  t.mock.method(api, 'call', async () => { throw new Error('subscribe failed'); });
+  t.mock.method(console, 'error', () => {});
+  await api.connect(); api.ws.readyState = Socket.OPEN;
+  await api.ws.onopen();
+  assert.equal(retries, 1);
+  assert.equal(api.status, 'closed');
+  api.close();
+});

@@ -32,11 +32,13 @@ export class DeliveryQueue extends EventEmitter {
     super();
     this.store = store; this.cfg = cfg; this.view = view; this.send = send;
     this.items = new Map();
+    this.sending = new Set(); // 제출 hook이 먼저 와도 같은 터미널의 RPC는 하나씩 끝낸다.
     for (const d of store.activeDeliveries()) {
       // 백엔드가 보내는 중에 꺼졌다면 들어갔는지 모른다 → sent로 보고 확인을 기다린다(C2에서 대화 기록으로 맞춘다)
       if (d.status === 'sending' || (d.status === 'sent' && !d.sentAt)) {
         d.status = 'sent';
-        d.sentAt ||= Date.now();
+        // 복구 시각부터 읽으면 꺼진 동안 제출된 지시를 놓친다. 마지막 전송 시도부터 맞춘다.
+        d.sentAt ||= d.updatedAt || d.createdAt || Date.now();
         this.store.updateDelivery(d.deliveryId, { status: d.status, sentAt: d.sentAt });
       }
       this.items.set(d.deliveryId, d);
@@ -98,6 +100,7 @@ export class DeliveryQueue extends EventEmitter {
     const now = Date.now();
     const sessions = new Set([...this.items.values()].map((d) => d.sessionId));
     for (const sid of sessions) {
+      if (this.sending.has(sid)) continue;
       const d = this._head(sid);
       if (!d || d.status === 'sending') continue;
       if (d.status === 'sent') {
@@ -113,6 +116,7 @@ export class DeliveryQueue extends EventEmitter {
   }
 
   async _deliver(d) {
+    this.sending.add(d.sessionId);
     d.workingSeen = false;
     this._set(d, 'sending', null, { attempt: true });
     try {
@@ -121,10 +125,18 @@ export class DeliveryQueue extends EventEmitter {
       if (d.workingSeen && d.status === 'sent') this._set(d, 'confirmed', 'herdr working', { confirmedAt: Date.now() });
     } catch (e) {
       if (FINAL.has(d.status)) return; // 제출 hook은 뒤늦게 실패한 RPC 응답보다 강한 증거다.
+      // 연결이 끊겼어도 working을 이미 봤다면 제출된 글을 다시 넣지 않는다.
+      if (d.workingSeen && !['agent_blocked', 'agent_not_found', 'agent_not_ready'].includes(e.code)) {
+        this._set(d, 'confirmed', 'herdr working', { confirmedAt: Date.now() });
+        return;
+      }
       if (e.code === 'agent_blocked') this._set(d, 'queued', 'waiting'); // 막힌 패널은 herdr가 거부한다(E0 3.2)
       else if (e.code === 'agent_not_found' || e.code === 'agent_not_ready') this._set(d, 'queued', 'no_agent');
       else if (e.code === 'unreachable') this._set(d, 'queued', 'herdr_down');
       else this._set(d, 'failed', `${e.code || 'error'}: ${e.herdrMessage || e.message}`);
+    } finally {
+      this.sending.delete(d.sessionId);
+      if (FINAL.has(d.status)) setImmediate(() => this.pump());
     }
   }
 

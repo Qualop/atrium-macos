@@ -72,7 +72,7 @@ test('재시작 중 전송 상태도 확인 기한이 지나면 끝나고 다음
   ];
   const sent = [];
   const q = new DeliveryQueue({ store: { activeDeliveries: () => rows, updateDelivery: (id, p) => saved.push({ id, ...p }) }, cfg: { submitConfirmMs: 30000, deliveryMaxWaitMs: 900000 }, view: () => ({ state: 'ready', agentPresent: true, herdrConnected: true }), send: async (_, text) => sent.push(text) });
-  assert.equal(saved[0].sentAt, now);
+  assert.equal(saved[0].sentAt, rows[0].createdAt);
   t.mock.timers.tick(30001); q.pump(); q.pump();
   await Promise.resolve();
   assert.ok(saved.some((p) => p.id === 'a' && p.status === 'unconfirmed'));

@@ -79,6 +79,7 @@ export function stopReason(loop, now) {
 export function goalReached(loop, t) {
   const u = loop.stop && loop.stop.untilText;
   if (!u || !t || !t.lastAnswer || !loop.lastRunAt) return false;
+  if (t.delivery && t.delivery.status !== 'confirmed' && t.delivery.status !== 'unconfirmed') return false;
   return (t.lastAnswerAt || 0) > loop.lastRunAt && t.lastAnswer.includes(u);
 }
 
@@ -140,6 +141,7 @@ export class LoopEngine {
 
   // 백엔드가 뜰 때: 켜져 있던 루프의 다음 차례를 꺼져 있던 시간만큼 민다(남은 시간으로 이어 가기)
   start({ timers = true } = {}) {
+    this.stopped = false;
     const now = this.now();
     const aliveAt = this.ctx.store.getMeta('loopsAliveAt');
     const down = aliveAt ? Math.max(0, now - aliveAt) : 0;
@@ -157,6 +159,8 @@ export class LoopEngine {
     }
   }
   stop() {
+    if (this.stopped) return;
+    this.stopped = true;
     clearInterval(this.timer); clearInterval(this.screenTimer);
     this.tickTime(this.now());
     for (const l of this.loops.values()) this.ctx.store.saveLoop(l);
@@ -176,6 +180,7 @@ export class LoopEngine {
   // loop.create. 대상 확인(셸 거부)은 부르는 쪽(features.mjs)이 하고 target: { kind: 'session', id, name }를 넘긴다(P22에서 그룹 대상을 뺐다)
   create({ target, prompt, trigger, stop }) {
     const now = this.now();
+    this.tickTime(now); // 새 루프가 생기기 전 시간은 기존 루프에만 센다
     const text = String(prompt ?? '').replace(/\r\n?/g, '\n');
     if (!text.trim() || text.length > LOOP.maxPrompt) throw bad(`지시는 1~${LOOP.maxPrompt}자`);
     const l = {
@@ -185,7 +190,7 @@ export class LoopEngine {
     };
     if (l.trigger.type === 'interval') l.nextAt = l.trigger.immediate ? now : now + l.trigger.everyMs;
     // 글 조건은 만든 뒤에 새로 나온 답과 화면만 본다(immediate면 지금 것도 본다)
-    if (l.trigger.type === 'text' && !l.trigger.immediate) for (const t of this.ctx.targetsOf(l) || []) l.per[t.sessionId] = { answerAtSeen: t.lastAnswerAt || 0, screenSeen: !!t.screenHas };
+    if (l.trigger.type === 'text' && !l.trigger.immediate) for (const t of this.ctx.targetsOf(l) || []) l.per[t.sessionId] = { answerAtSeen: t.lastAnswerAt || 0, ...(t.screenHas == null ? {} : { screenSeen: !!t.screenHas }) };
     this.record(l, 'created');
     this.ctx.store.insertLoop(l);
     this.ctx.store.saveLoop(l);
@@ -208,6 +213,7 @@ export class LoopEngine {
   resume(ref) {
     const l = this.find(ref);
     if (l.status !== 'paused') throw Object.assign(new Error(`멈춘 루프만 이어 간다: ${l.status}`), { code: 'not_paused' });
+    this.tickTime(this.now()); // 아직 paused인 동안의 시간을 먼저 정산한다
     l.status = 'active';
     const paused = [...(l.history || [])].reverse().find((h) => h.kind === 'paused');
     if (l.trigger.type === 'interval') l.nextAt = this.now() + ((paused && paused.nextInMs) ?? 0);
@@ -243,19 +249,26 @@ export class LoopEngine {
     for (const per of Object.values(l.per || {})) {
       if (!per.deliveryId) continue;
       const d = this.ctx.deliveryOf(per.deliveryId);
-      if (d && d.status === 'queued') { try { this.ctx.cancel(per.deliveryId); } catch {} }
+      if (d && d.status === 'queued') {
+        try {
+          this.ctx.cancel(per.deliveryId);
+          // 취소된 지시는 턴을 시작하지 않았다. 재개 시 같은 ready 상태도 다시 보낼 수 있다.
+          if (l.trigger.type === 'idle') delete per.firedTurnEnd;
+        } catch {}
+      }
     }
   }
   tickTime(now) {
-    const dt = Math.max(0, now - (this.lastTick || now));
+    const dt = Math.max(0, now - (this.lastTick ?? now));
     this.lastTick = now;
     for (const l of this.loops.values()) if (l.status === 'active') l.elapsedMs += dt;
   }
 
   // 1초마다(또는 세션이 바뀔 때). 멈춤 조건 → 내 차례에 막힌 전달 정리 → 차례 판정 → 보내기
   tick(now = this.now()) {
+    if (this.stopped) return;
     this.tickTime(now);
-    if (this.ctx.canRun && !this.ctx.canRun()) return; // herdr에 붙어 있지 않으면 보내지 않는다(시간은 센다)
+    const canRun = !this.ctx.canRun || this.ctx.canRun();
     for (const l of [...this.loops.values()]) {
       if (l.status !== 'active') continue;
       const targets = this.ctx.targetsOf(l);
@@ -273,6 +286,7 @@ export class LoopEngine {
       if (targets.some((t) => goalReached(l, t))) { this.finish(l, 'done', 'goal_text'); continue; }
       const sr = stopReason(l, now);
       if (sr) { this.finish(l, 'done', sr); continue; }
+      if (!canRun) { if (changed) this.save(l); continue; } // 연결 없이도 멈춤·취소·시간 저장은 한다
       const due = l.trigger.type === 'interval' && l.nextAt != null && now >= l.nextAt;
       const fire = [];
       const skipped = [];
@@ -324,12 +338,16 @@ export class LoopEngine {
 
   // 화면 글 조건: 대상 화면에 글이 있는지 읽어 둔다(decideTarget의 screenHas)
   async pollScreens() {
+    if (this.stopped) return;
     for (const l of [...this.loops.values()]) {
       if (l.status !== 'active' || l.trigger.type !== 'text' || l.trigger.source === 'answer') continue;
       for (const t of this.ctx.targetsOf(l) || []) {
         if (t.kind === 'shell') continue;
         const text = await this.ctx.readScreen(t.sessionId).catch(() => null);
         if (text == null) continue;
+        if (this.stopped || !this.loops.has(l.loopId) || l.status !== 'active') continue;
+        const per = (l.per[t.sessionId] ||= {});
+        if (!l.trigger.immediate && per.screenSeen === undefined) per.screenSeen = text.includes(l.trigger.text);
         (this.screen ||= new Map()).set(`${l.loopId}|${t.sessionId}`, text.includes(l.trigger.text));
       }
     }

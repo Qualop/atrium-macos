@@ -12,6 +12,27 @@ import { pathKey } from '../src/workspaces.mjs';
 
 const ID = (n) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
 
+for (const kind of ['gemini', 'agy']) {
+  for (const closeFails of [false, true]) {
+    test(`audit: ${kind} failed recovery cleans up its new pane or retains tracking when close fails=${closeFails}`, async (t) => {
+      const f = fixture(t, kind), s = f.session({ closed: false });
+      f.b.adapter.startAgent = async () => { throw Object.assign(new Error('fixture launch failure'), { code: 'launch_failed' }); };
+      f.b.adapter.closePane = async (pane) => {
+        f.calls.push(['closePane', pane]);
+        if (closeFails) throw Object.assign(new Error('fixture cleanup failure'), { code: 'unreachable' });
+      };
+      await f.r.restoreGone([s]);
+      assert.deepEqual(call(f, 'closePane'), ['new1:p1']);
+      assert.equal(f.b.sessions.has(s.sessionId), closeFails);
+      if (closeFails) {
+        assert.equal(s.paneId, 'new1:p1');
+        assert.equal(s.rt.exit?.kind, 'launch_failed');
+      }
+      assert.equal(f.store.getSession(s.sessionId).runtime[`${kind}SessionId`], s.rt[`${kind}SessionId`]);
+    });
+  }
+}
+
 function fixture(t, kind = 'gemini') {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'atrium-gemini-recovery-')));
   const cwd = path.join(root, 'project'); fs.mkdirSync(cwd);
@@ -52,7 +73,7 @@ function fixture(t, kind = 'gemini') {
       waitShellReady: async () => true,
       startAgent: async (p) => { calls.push(['startAgent', p]); return { agent: { name: p.name, launchPending: true }, argv: [kind, ...p.args] }; },
       getPane: async (paneId) => ({ paneId, agent: null }),
-      workspacePanes: async () => [{ paneId: 'old:p1' }, { paneId: 'old:user', agent: 'claude' }],
+      workspacePanes: async () => assert.fail(`${kind} recovery must not depend on a workspace snapshot`),
       closePane: async (p) => calls.push(['closePane', p]),
       closeWorkspace: async () => assert.fail(`${kind} recovery must preserve sibling/user panes`),
     },

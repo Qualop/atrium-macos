@@ -4,9 +4,9 @@
 // P28: 스크롤 없이 한 화면에 들어가게 탭으로 나눴다(일반, 새 세션 Claude Code, 새 세션 Codex·DeepSeek, 잠재우기, 가지 펼치기, 보관과 리포 찾기).
 //   새 세션 기본값은 한 탭에 넣으면 최소 창(900×600)에서 넘쳐 두 탭으로 나눴다.
 //   줄마다 이름·값·풀이 세 칸(styles.css .mt-set-grid)이고, 체크 상자도 값 칸에 둔다. 긴 풀이는 탭 위 한 단락(.mt-set-note). 아래 텍스트 로고는 뺐다.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
-import { useStore, toast } from './store.js';
+import { useStore, getState, toast } from './store.js';
 import { BranchSettings } from './Branch.jsx'; // P8(K3): 가지 펼치기 상한
 import { useT, tOr, errText, setLanguage, getLanguage, LANGUAGES } from './lib/i18n.js';
 
@@ -30,12 +30,18 @@ function Toggle({ checked, onChange, field }) {
 
 // P16: 화면 언어. 이름은 그 언어 자체로 보인다
 const LANGUAGE_NAME = { en: 'English', ko: '한국어' };
-function LanguageSetting({ settings }) {
+function LanguageSetting() {
   const t = useT();
-  const value = (settings && settings.language) || getLanguage();
+  const value = getLanguage();
+  const request = useRef(0);
   const pick = async (lang) => {
+    const id = ++request.current, previous = getLanguage();
     setLanguage(lang); // 백엔드 확인(settings.updated)을 기다리지 않고 곧바로
-    try { await api.call('settings.set', { key: 'language', value: lang }); } catch (e) { toast(t('settings.saveFailed', { error: errText(e) }), 'error'); }
+    try { await api.call('settings.set', { key: 'language', value: lang }); }
+    catch (e) {
+      if (id === request.current && getLanguage() === lang) setLanguage(getState().settings?.language || previous);
+      toast(t('settings.saveFailed', { error: errText(e) }), 'error');
+    }
   };
   return (
     <div className="mt-set-row" data-role="language-setting">
@@ -61,7 +67,7 @@ function GeneralTab({ settings }) {
   };
   return (
     <div className="mt-set-grid" data-role="general-settings">
-      <LanguageSetting settings={settings} />
+      <LanguageSetting />
       {settings && <>
         <SetRow name={t('settings.trayName')} hint={t('settings.tray')} role="tray-setting"><Toggle checked={pending ?? !!settings.tray} onChange={set} field="setting-tray" /></SetRow>
         <SetNote>{t('settings.trayNote')}</SetNote>
@@ -93,7 +99,7 @@ function SpawnSettings({ settings, schema, part }) {
   const t = useT();
   const [draft, setDraft] = useState({}); // 치는 중인 글(모델, Codex 인자)
   const save = async (key, value) => {
-    try { await api.call('settings.set', { key, value }); setDraft((d) => { const n = { ...d }; delete n[key]; return n; }); toast(t('settings.spawnSaved')); } catch (e) { toast(t('settings.saveFailed', { error: errText(e) }), 'error'); }
+    try { await api.call('settings.set', { key, value }); setDraft((d) => { if (d[key] !== value) return d; const n = { ...d }; delete n[key]; return n; }); toast(t('settings.spawnSaved')); } catch (e) { toast(t('settings.saveFailed', { error: errText(e) }), 'error'); }
   };
   const text = (key, placeholder) => (
     <input className="mt-set-text" data-field={`setting-${key}`} placeholder={placeholder} title={placeholder} value={draft[key] ?? settings[key] ?? ''}

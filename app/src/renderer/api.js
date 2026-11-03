@@ -30,6 +30,7 @@ export class Api {
     const old = this.ws; this.ws = null;
     for (const w of this.wait.values()) w.rej(Object.assign(new Error('reconnecting'), { code: 'disconnected' }));
     old?.close();
+    if (old) this.emit('$close');
     this.setStatus('connecting');
     let info;
     try { info = await window.mt.backend(); } catch (e) { if (generation !== this.generation) return; this.setStatus('error', String(e && e.message || e)); return this.retry(); }
@@ -42,7 +43,8 @@ export class Api {
       if (this.ws !== ws) return;
       clearTimeout(this.connectTimer);
       this.setStatus('open');
-      try { const r = await this.call('events.subscribe'); if (this.ws === ws) this.emit('$open', r); } catch (e) { if (this.ws === ws) console.error(e); }
+      try { const r = await this.call('events.subscribe'); if (this.ws === ws) this.emit('$open', r); }
+      catch (e) { if (this.ws === ws) { console.error(e); ws.close(); } }
     };
     ws.onmessage = (ev) => {
       if (this.ws !== ws) return;
@@ -66,7 +68,7 @@ export class Api {
     this.generation++; clearTimeout(this.retryTimer); clearTimeout(this.connectTimer);
     const ws = this.ws; this.ws = null;
     for (const w of this.wait.values()) w.rej(Object.assign(new Error('disconnected'), { code: 'disconnected' }));
-    ws?.close(); this.setStatus('closed');
+    ws?.close(); this.setStatus('closed'); this.emit('$close');
   }
 
   call(method, params = {}) {

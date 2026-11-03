@@ -1,40 +1,43 @@
-export function splitArgs(value) {
-  if (Array.isArray(value)) return value.map(String);
-  const out = []; let word = '', quote = null, active = false;
-  for (const c of String(value || '')) {
-    if (quote) { if (c === quote) quote = null; else word += c; active = true; }
-    else if (c === '"' || c === "'") { quote = c; active = true; }
-    else if (/\s/.test(c)) { if (active) out.push(word); word = ''; active = false; }
-    else { word += c; active = true; }
-  }
-  if (quote) throw new Error('Unclosed quote in arguments');
-  if (active) out.push(word);
-  return out;
+import { splitArgs } from './gemini-args.mjs';
+export { splitArgs };
+
+const badRequest = (message) => Object.assign(new Error(message), { code: 'bad_request' });
+const hasValue = (args, i) => args[i + 1] !== undefined && !args[i + 1].startsWith('-');
+function modelOption(args, i) {
+  const arg = args[i];
+  if (arg === '-m' || arg === '--model') return { value: hasValue(args, i) ? args[i + 1] : '', count: hasValue(args, i) ? 2 : 1 };
+  if (arg.startsWith('--model=')) return { value: arg.slice(8), count: 1 };
+  if (arg.startsWith('-m') && arg.length > 2) return { value: arg.slice(2).replace(/^=/, ''), count: 1 };
+  const separate = arg === '-c' || arg === '--config';
+  const config = separate ? args[i + 1] : arg.startsWith('--config=') ? arg.slice(9) : arg.startsWith('-c') ? arg.slice(2).replace(/^=/, '') : null;
+  const match = /^\s*model\s*=\s*([\s\S]*)$/.exec(config ?? '');
+  if (!match) return null;
+  let value = match[1].trim();
+  if (value.startsWith('"')) { try { value = JSON.parse(value); } catch { value = ''; } }
+  else if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1);
+  return { value: typeof value === 'string' ? value : '', count: separate ? 2 : 1 };
 }
 export function modelFromArgs(value) {
   let args; try { args = splitArgs(value); } catch { return ''; }
   let model = '';
-  args.forEach((a, i) => {
-    if (a === '-m' || a === '--model') model = args[i + 1] || '';
-    else if (a.startsWith('--model=')) model = a.slice(8);
-    else if (a.startsWith('-m') && a.length > 2) model = a.slice(2).replace(/^=/, '');
-    else if ((args[i - 1] === '-c' || args[i - 1] === '--config') && a.startsWith('model=')) model = a.slice(6);
-  });
+  for (let i = 0; i < args.length && args[i] !== '--'; i++) {
+    const option = modelOption(args, i);
+    if (option) { model = option.value; i += option.count - 1; }
+  }
   return model;
 }
 export function withCodexModel(value, model) {
   const args = splitArgs(value);
+  if (args.some((arg) => arg.includes('\0'))) throw badRequest('Invalid argument');
   if (model === undefined) return args;
-  const id = String(model).trim();
-  if (id && !/^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,199}$/.test(id)) throw Object.assign(new Error('Invalid model ID'), { code: 'bad_request' });
+  const id = String(model ?? '').trim();
+  if (id && !/^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,199}$/.test(id)) throw badRequest('Invalid model ID');
   const kept = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '-m' || a === '--model') { i++; continue; }
-    if (a.startsWith('--model=') || (a.startsWith('-m') && a.length > 2)) continue;
-    if ((a === '-c' || a === '--config') && args[i + 1]?.startsWith('model=')) { i++; continue; }
-    if (/^(?:--config=|-c)model=/.test(a)) continue;
-    kept.push(a);
+  let i = 0;
+  for (; i < args.length && args[i] !== '--'; i++) {
+    const option = modelOption(args, i);
+    if (option) i += option.count - 1;
+    else kept.push(args[i]);
   }
-  return id ? [...kept, '--model', id] : kept;
+  return [...kept, ...(id ? ['--model', id] : []), ...args.slice(i)];
 }

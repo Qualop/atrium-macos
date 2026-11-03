@@ -159,6 +159,7 @@ async function readPackageModels(root, name) {
   const bundle = path.join(root, 'bundle');
   const files = ['gemini.js'];
   const visited = new Set();
+  const sections = [];
   for (let i = 0; i < files.length && i < 128; i++) {
     const file = files[i];
     if (visited.has(file)) continue;
@@ -168,14 +169,17 @@ async function readPackageModels(root, name) {
       if ((await fs.stat(fullPath)).size > 64 * 1024 * 1024) continue;
       const text = await fs.readFile(fullPath, 'utf8');
       if (/^\/\/ packages\/core\/(?:dist\/)?src\/config\/(?:models|defaultModelConfigs)\.(?:js|ts)\r?$/m.test(text)) {
-        Object.assign(metadata, extractGeminiModelExports(text, metadata));
-        if (metadata.DEFAULT_MODEL_CONFIGS && normalizeGeminiModels(metadata).length) return metadata;
+        // Keep only config sections, not entire potentially large bundles.
+        sections.push(['models', 'defaultModelConfigs'].map((name) => moduleSection(text, name)).join('\n'));
       }
       for (const match of text.matchAll(/(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)["']\.\/([\w.-]+\.js)["']/g)) {
         if (!visited.has(match[1]) && !files.includes(match[1])) files.push(match[1]);
       }
     } catch { /* A partially installed CLI still has the default/custom fallback. */ }
   }
+  // Imports can put computed model definitions before the constants they use.
+  // A second pass resolves those keys without executing installed code.
+  for (let pass = 0; pass < 2; pass++) for (const text of sections) Object.assign(metadata, extractGeminiModelExports(text, metadata));
   return metadata;
 }
 

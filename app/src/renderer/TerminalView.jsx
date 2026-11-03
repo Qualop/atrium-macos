@@ -9,7 +9,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { FitAddon } from '@xterm/addon-fit';
 import { api } from './api.js';
-import { useStore, takePendingInput, pendingFor } from './store.js';
+import { useStore, getState, takePendingInput, pendingFor } from './store.js';
 import { wrapPaste, wheelToSgr, keyAction, frameBytes } from './lib/term-input.js';
 import { RendererBudget, DEFAULT_WEBGL_BUDGET } from './lib/faces.js';
 import { onFrame, onWritten, markInput, setTerminal, perfLog } from './perf.js';
@@ -42,7 +42,10 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
 
   useEffect(() => {
     const host = hostRef.current;
-    const st = ref.current = { pid: null, alive: true, acc: 0, lastSize: null };
+    const st = ref.current = { pid: null, alive: true, disconnected: false, acc: 0, lastSize: null };
+    const generation = api.generation;
+    const current = () => st.alive && !st.disconnected && generation === api.generation && api.status === 'open';
+    const early = []; // 응답보다 먼저 온 프레임·종료는 controllerPid를 안 뒤에 가린다
     const term = new Terminal({ allowProposedApi: true, fontFamily: TERM_FONT, fontSize: TERM_FONT_SIZE, lineHeight: TERM_LINE_HEIGHT, fontWeight: 500, fontWeightBold: 700, scrollback: 0, cursorBlink: false, theme: termTheme(), drawBoldTextInBrightColors: false });
     const u11 = new Unicode11Addon();
     term.options.disableStdin = true;
@@ -71,12 +74,13 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
     }
 
     const send = (data) => {
-      if (!data || !st.alive) return;
+      if (!data || !current()) return;
       if (!st.pid || api.status !== 'open' || term.options.disableStdin) { flash(t('terminal.attaching')); return; }
       markInput(sessionId);
       if (onInputRef.current) onInputRef.current();
-      api.call('terminal.input', { session: sessionId, data }).catch((e) => setHint(t('terminal.inputFail', { error: errText(e) })));
+      api.call('terminal.input', { session: sessionId, controllerPid: st.pid, data }).catch((e) => setHint(t('terminal.inputFail', { error: errText(e) })));
     };
+    st.send = send;
     const flash = (t) => { setHint(t); clearTimeout(st.hintTimer); st.hintTimer = setTimeout(() => setHint(null), 2500); };
 
     term.onData(send);
@@ -103,28 +107,36 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
     };
     host.addEventListener('paste', onPaste, true);
 
-    const offFrame = api.on('terminal.frame', (f) => {
-      if (f.sessionId !== sessionId || !st.alive) return;
-      if (st.pid !== null && f.controllerPid !== st.pid) return;
+    const frame = (f) => {
+      if (f.sessionId !== sessionId || !current()) return;
+      if (st.pid === null) { if (early.length < 32) early.push(['frame', f]); return; }
+      if (f.controllerPid !== st.pid || term.options.disableStdin) return;
       const bytes = frameBytes(f.bytes);
       const t0 = onFrame(sessionId, bytes.length, f.width, f.height);
       if (f.width && f.height && (f.width !== term.cols || f.height !== term.rows)) term.resize(f.width, f.height); // 쓰기 전에 크기 맞추기(E4)
       term.write(bytes, () => onWritten(t0));
-    });
+    };
+    const offFrame = api.on('terminal.frame', frame);
     // 백엔드에 다시 붙으면(백엔드 재시작, C2) 옛 연결의 제어기는 이미 놓였다. 다시 붙는다.
     const offClose = api.on('$close', () => {
       if (!st.alive) return;
       restoreFocus.current ||= document.activeElement === term.textarea;
+      st.disconnected = true;
+      early.length = 0;
       term.options.disableStdin = true;
       setStatus({ kind: 'detached', reason: 'disconnected' });
     });
     const offOpen = api.on('$open', () => { if (st.alive) { restoreFocus.current ||= document.activeElement === term.textarea; perfLog('term_reattach_on_reconnect', { sessionId }); setStatus({ kind: 'attaching' }); setRetry((x) => x + 1); } });
-    const offDetached = api.on('terminal.detached', (d) => {
-      if (d.sessionId !== sessionId || !st.alive || (st.pid !== null && d.controllerPid !== st.pid)) return;
+    const detached = (d) => {
+      if (d.sessionId !== sessionId || !current()) return;
+      if (st.pid === null) { if (early.length < 32) early.push(['detached', d]); return; }
+      if (d.controllerPid !== st.pid) return;
       perfLog('term_detached', { sessionId, reason: d.reason });
+      restoreFocus.current ||= document.activeElement === term.textarea;
       term.options.disableStdin = true;
       setStatus({ kind: 'detached', reason: d.reason });
-    });
+    };
+    const offDetached = api.on('terminal.detached', detached);
 
     const dims = fit.proposeDimensions() || { cols: 100, rows: 30 };
     const cols = Math.max(20, dims.cols), rows = Math.max(8, dims.rows);
@@ -133,16 +145,23 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
     setTerminal(sessionId, { renderer, cols, rows });
     api.call('terminal.attach', { session: sessionId, cols, rows })
       .then((r) => {
+        if (!current()) {
+          if (!st.disconnected && generation === api.generation) api.call('terminal.detach', { session: sessionId, controllerPid: r.controllerPid }).catch(() => {});
+          return;
+        }
         st.pid = r.controllerPid;
-        if (!st.alive) return;
         term.options.disableStdin = false;
         setHint(null);
         setStatus({ kind: 'attached', pid: r.controllerPid });
-        if (restoreFocus.current) { restoreFocus.current = false; term.focus(); }
+        for (const [type, event] of early.splice(0)) (type === 'frame' ? frame : detached)(event);
+        if (term.options.disableStdin) return;
+        const state = getState(), active = document.activeElement;
+        const canFocus = !state.dialog && !state.searchOpen && (!state.focusId || state.focusId === sessionId) && (active === document.body || active === term.textarea);
+        if (restoreFocus.current) { restoreFocus.current = false; if (canFocus) term.focus(); }
         // H4: 들어가며 친 글이 있으면 넣고 터미널에 초점을 준다
-        if (pendingFor(sessionId)) { const buf = takePendingInput(sessionId); if (buf) { perfLog('pending_input', { sessionId, chars: buf.length }); send(buf); } term.focus(); }
+        if (canFocus && pendingFor(sessionId)) { const buf = takePendingInput(sessionId); if (buf) { perfLog('pending_input', { sessionId, chars: buf.length }); send(buf); } term.focus(); }
       })
-      .catch((e) => { if (st.alive) setStatus({ kind: 'error', reason: e.message }); });
+      .catch((e) => { if (current()) setStatus({ kind: 'error', reason: e.message }); });
     st.term = term; st.fit = fit;
 
     return () => {
@@ -151,7 +170,7 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
       offFrame(); offDetached(); offOpen(); offClose();
       clearTimeout(st.hintTimer);
       host.removeEventListener('paste', onPaste, true);
-      api.call('terminal.detach', { session: sessionId }).catch(() => {});
+      if (st.pid != null && !st.disconnected && generation === api.generation) api.call('terminal.detach', { session: sessionId, controllerPid: st.pid }).catch(() => {});
       budget.release(sessionId);
       terms.delete(sessionId);
       setTerminal(sessionId, null);
@@ -164,7 +183,7 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
     const st = ref.current;
     if (!st.fit) return;
     const refit = () => {
-      if (!st.fit) return;
+      if (!st.fit || st.pid == null || st.disconnected) return;
       const d = st.fit.proposeDimensions();
       if (!d) return;
       const cols = Math.max(20, d.cols), rows = Math.max(8, d.rows);
@@ -172,7 +191,7 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
       if (key === st.lastSize) return;
       st.lastSize = key;
       setTerminal(sessionId, { cols, rows });
-      api.call('terminal.resize', { session: sessionId, cols, rows }).catch(() => {});
+      api.call('terminal.resize', { session: sessionId, controllerPid: st.pid, cols, rows }).catch(() => {});
     };
     // P17: 덩어리 분할선·바깥 크기로 여러 노드 크기가 한꺼번에 바뀌면 120ms 때 아직 자리가 덜 잡혀 한 줄 모자라게 잴 때가 있다. 한 번 더 잰다
     const t = setTimeout(refit, 120), t2 = setTimeout(refit, 600);
@@ -183,8 +202,8 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
     const st = ref.current;
     if (!focusTick || !st.term) return;
     // 붙기 전에는 초점을 주지 않는다(그동안 친 키는 창이 모은다). 붙은 터미널이면 모아 둔 글을 지금 넣는다
-    if (!st.pid) return;
-    if (pendingFor(sessionId)) { const buf = takePendingInput(sessionId); if (buf) { perfLog('pending_input', { sessionId, chars: buf.length, attached: true }); api.call('terminal.input', { session: sessionId, data: buf }).catch(() => {}); } }
+    if (!st.pid || st.disconnected || st.term.options.disableStdin) return;
+    if (pendingFor(sessionId)) { const buf = takePendingInput(sessionId); if (buf) { perfLog('pending_input', { sessionId, chars: buf.length, attached: true }); st.send(buf); } }
     st.term.focus();
   }, [focusTick, sessionId]);
 

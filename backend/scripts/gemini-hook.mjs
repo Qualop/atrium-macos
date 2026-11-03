@@ -11,11 +11,12 @@ try {
     input += chunk;
   }
   const body = JSON.parse(input);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid hook payload');
   if (body.hook_event_name === 'SessionStart' || body.hook_event_name === 'BeforeAgent') {
     result = { hookSpecificOutput: { hookEventName: body.hook_event_name, additionalContext: cfg.context } };
   }
   const url = new URL(cfg.hookUrl);
   if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1') throw new Error('nonlocal hook endpoint');
-  await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.token}`, 'x-mt-session': cfg.sessionId }, body: JSON.stringify(body), signal: AbortSignal.timeout(2500) });
+  await fetch(url, { method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.token}`, 'x-mt-session': cfg.sessionId }, body: JSON.stringify(body), signal: AbortSignal.timeout(2500) });
 } catch { /* 알림 실패가 도구 실행·응답을 취소하지 않는다. */ }
 process.stdout.write(JSON.stringify(result));

@@ -144,6 +144,7 @@ export class Backend {
     this.branch.refreshSettings();
     // P4: herdr 스킬을 쥐여 줄 플러그인 폴더(판이 띄우는 Claude Code에 --plugin-dir로 넘긴다)
     this.plugin = writeBoardPlugin({ dir: path.join(cfg.dataDir, 'plugin'), skillText: await this.herdrSkillText(), ...this.branch.pluginExtra() });
+    for (const s of this.sessions.values()) if (s.kind === 'claude' && this.hooked(s)) this.refreshClaudeResume(s, { register: false });
     // P18: 데이터 폴더를 옮겼으면 --settings·--plugin-dir 경로가 바뀌었다. 이어 가기 인자를 다시 만든다(되살릴 때 herdr에 다시 등록한다)
     if (this.migration && this.migration.data === 'moved') {
       let n = 0;
@@ -271,8 +272,13 @@ export class Backend {
     for (const s of this.sessions.values()) if (s.name === key) return s;
     throw keyed(apiError('not_found', `판에 없는 세션: ${ref}`), 'sessionNotFound', { ref });
   }
+  currentSession(s, rt = s.rt, paneId = s.paneId) {
+    return !this.stopping && this.sessions.get(s.sessionId) === s && s.rt === rt && s.paneId === paneId;
+  }
   async checkAgyComposer(s) {
-    const text = await this.adapter.readScreen(s.paneId, { source: 'visible' });
+    const rt = s.rt, paneId = s.paneId;
+    const text = await this.adapter.readScreen(paneId, { source: 'visible' });
+    if (!this.currentSession(s, rt, paneId)) return 'starting';
     s.rt.agyComposer = agyComposerState(text);
     if (s.rt.agyComposer === 'waiting') s.rt.screenAsk = { tail: tailText(text, 14), at: Date.now() };
     this.broadcastSession(s, { cause: 'agy:composer' });
@@ -280,8 +286,11 @@ export class Backend {
   }
   async promptManaged(sid, text) {
     const s = this.sessions.get(sid);
-    if (!s) throw apiError('not_found', '세션이 닫혔습니다');
+    if (!s || this.stopping) throw apiError('agent_not_found', '세션이 닫혔습니다');
+    const rt = s.rt, paneId = s.paneId;
     if (s.kind === 'agy' && await this.checkAgyComposer(s) !== 'ready') throw apiError('agent_blocked', 'Antigravity 초기 설정·질문은 터미널에서 완료하세요');
+    if (!this.currentSession(s, rt, paneId) || s.rt.exit || this.killing.has(sid)) throw apiError('agent_not_found', '세션이 바뀌었거나 종료 중입니다');
+    if (['working', 'waiting', 'trust_wait', 'starting'].includes(deriveState(s.rt).state)) throw apiError('agent_blocked', '세션이 아직 입력을 받을 수 없습니다');
     return this.adapter.prompt(s.agentName, text);
   }
   deliveryView(sid, d) {
@@ -401,7 +410,7 @@ export class Backend {
   }
 
   broadcastSession(s, { cause, onlyIfFlagsChanged = false } = {}) {
-    if (!this.sessions.has(s.sessionId)) return;
+    if (!this.currentSession(s)) return;
     const sum = this.summary(s);
     const key = `${sum.state}|${sum.unseen}|${sum.quiet}|${sum.delivering}`;
     if (onlyIfFlagsChanged && key === s.lastKey) return;
@@ -455,8 +464,20 @@ export class Backend {
     const authOk = headers.authorization === `Bearer ${s.hookToken}`;
     s.lastHookAuthOk = authOk;
     if (!authOk) { this.store.addEvent(s.sessionId, 'hook_rejected', { ev }); this.log(`hook rejected ${s.name} ${ev}`); return; }
+    if (provider === 'gemini' || provider === 'agy') {
+      const nativeId = provider === 'agy' ? nativeBody.conversationId : nativeBody.session_id;
+      const previousId = s.rt[`${provider}SessionId`];
+      if (nativeId && previousId && nativeId !== previousId) {
+        if (ev !== 'SessionStart') { this.store.addEvent(s.sessionId, 'hook_stale_conversation', { provider, ev }); return; }
+        s.rt[`${provider}AnswerStep`] = null;
+        s.rt[`${provider}TurnActive`] = false;
+        s.rt[`${provider}StoppedAt`] = null;
+        s.rt.lastAnswer = null; s.rt.lastAnswerAt = null;
+      }
+    }
     s.hookCount = (s.hookCount || 0) + 1;
     applyHook(s.rt, body);
+    if (s.kind === 'claude' && this.hooked(s) && body.session_id) this.refreshClaudeResume(s);
     if (provider === 'gemini') {
       s.rt.geminiReady = true;
       if (typeof nativeBody.session_id === 'string') s.rt.geminiSessionId = nativeBody.session_id;
@@ -469,19 +490,16 @@ export class Backend {
       if (typeof nativeBody.conversationId === 'string') s.rt.agySessionId = nativeBody.conversationId;
       if (typeof nativeBody.transcriptPath === 'string') s.rt.agyTranscriptPath = nativeBody.transcriptPath;
       if (body.notification_type === 'agy_working') {
+        s.rt.agyInvocationSeq = (s.rt.agyInvocationSeq || 0) + 1;
         if (!s.rt.agyTurnActive) s.rt.turn = { startedAt: Date.now(), endedAt: null };
         s.rt.agyTurnActive = true; s.rt.agyStoppedAt = null; s.rt.lastError = null; this.queue.onAgentWorking(s.sessionId);
       }
       if (body.notification_type === 'agy_stop' && nativeBody.fullyIdle === true) {
-        const started = s.rt.turn.startedAt;
-        setImmediate(async () => {
-          if (!this.sessions.has(s.sessionId) || this.stopping) return;
-          await this.readScreenAnswer(s, { completed: true });
-          if (!this.sessions.has(s.sessionId) || this.stopping || s.rt.turn.startedAt !== started) return;
-          s.rt.agyTurnActive = false; s.rt.turn.endedAt = Date.now(); s.rt.agyStoppedAt = Date.now();
-          if (nativeBody.error) s.rt.lastError = { type: 'agy_error', message: clip(nativeBody.error, 1000), at: Date.now() };
-          this.broadcastSession(s, { cause: 'agy:stop' });
-        });
+        const rt = s.rt, paneId = s.paneId, invocation = rt.agyInvocationSeq;
+        const stop = rt.agyStopSeq = (rt.agyStopSeq || 0) + 1;
+        setImmediate(() => this.completeAgyTurn(s, { rt, paneId, invocation, stop, error: nativeBody.error }).catch((e) => {
+          if (!this.stopping) this.log('agy completion failed', e.message);
+        }));
       }
     }
     if (ev === 'Stop') s.rt.answerSource = 'hook';
@@ -504,6 +522,16 @@ export class Backend {
     this.broadcastSession(s, { cause: `hook:${ev}` });
   }
 
+  async completeAgyTurn(s, { rt, paneId, invocation, stop, error }) {
+    const current = () => this.currentSession(s, rt, paneId) && rt.agyInvocationSeq === invocation && rt.agyStopSeq === stop;
+    if (!current()) return;
+    await this.readScreenAnswer(s, { completed: true });
+    if (!current()) return;
+    rt.agyTurnActive = false; rt.turn.endedAt = Date.now(); rt.agyStoppedAt = Date.now();
+    if (error) rt.lastError = { type: 'agy_error', message: clip(error, 1000), at: Date.now() };
+    this.broadcastSession(s, { cause: 'agy:stop' });
+  }
+
   // 권한 요청의 선택지는 도구마다 달라 화면에서 읽는다(E9 2.1). 화면이 그려질 시간을 조금 준다.
   async readChoicesLater(s) {
     const ask = s.rt.pendingAsk;
@@ -512,6 +540,7 @@ export class Backend {
       if (s.rt.pendingAsk !== ask) return;
       try {
         const text = await this.adapter.readScreen(s.paneId, { source: 'detection' });
+        if (!this.currentSession(s) || s.rt.pendingAsk !== ask) return;
         const choices = parseChoices(text);
         if (choices.length) { ask.choices = choices; ask.question = parsePromptLine(text); this.broadcastSession(s, { cause: 'screen:choices' }); return; }
       } catch {}
@@ -546,6 +575,7 @@ export class Backend {
       if (e.status !== 'unknown') s.resumingAfterHerdr = null; // 이어 가기가 됐다
       this.store.addEvent(s.sessionId, 'herdr_status', { from: prev, to: e.status });
       if (e.status === 'blocked' && !s.rt.pendingAsk) await this.checkBlocked(s);
+      if (!this.currentSession(s)) return;
       if ((e.status === 'idle' || e.status === 'done') && !s.rt.herdr.agentSessionId) this.refreshAgent(s);
       if (!this.hooked(s)) {
         // hook이 없는 세션: 제출 확인은 herdr working으로, 마지막 답은 턴이 끝난 화면 끝으로 대신한다(F5)
@@ -658,7 +688,7 @@ export class Backend {
   // herdr 재시작 뒤 이어 가기가 실패한 세션: 한 턴도 돌지 않은 세션은 대화 기록이 없어 `claude --resume`이 "No conversation found"로 끝난다(P1).
   // 잃을 대화가 없으므로 같은 패널에서 같은 세션 ID와 설정 파일로 새로 띄운다. 대화 기록이 있는데 끝났으면 손대지 않고 exited로 둔다.
   async relaunchIfEmpty(s) {
-    const tx = s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, s.sessionId);
+    const tx = s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, this.launchOf(s).sessionId);
     if (fs.existsSync(tx)) { this.store.addEvent(s.sessionId, 'resume_failed', { transcript: true }); return; }
     await sleep(500);
     if (!this.sessions.has(s.sessionId) || s.rt.herdr.present) return;
@@ -677,12 +707,13 @@ export class Backend {
   // 판이 다시 띄울 때의 실행 값. P4 전에 띄운 세션(이어 가기 명령에 --plugin-dir가 없음)은 그대로 둔다
   launchOf(s) {
     const withPlugin = (s.resumeArgv || []).includes('--plugin-dir');
-    return { sessionId: s.sessionId, settingsPath: s.settingsPath, permissionMode: s.permissionMode, model: s.model, effort: s.effort, ...(withPlugin ? this.plugin : {}) };
+    return { sessionId: s.rt.claudeSessionId || s.sessionId, settingsPath: s.settingsPath, permissionMode: s.permissionMode, model: s.model, effort: s.effort, ...(withPlugin ? this.plugin : {}) };
   }
 
   async refreshAgent(s) {
+    const rt = s.rt, paneId = s.paneId;
     const a = await this.adapter.getAgent(s.agentName).catch(() => null);
-    if (!a) return null;
+    if (!a || !this.currentSession(s, rt, paneId)) return null;
     s.rt.herdr.launchPending = a.launchPending;
     s.rt.herdr.agentSessionId = a.agentSessionId;
     return a;
@@ -690,14 +721,19 @@ export class Backend {
   // herdr blocked인데 묻는 hook이 없다 → 신뢰 대화상자인지 화면으로 한 번 더 본다(E10)
   // hook이 없는 세션은 화면 끝을 묻는 내용으로 둔다(F5: 승인 카드는 "터미널에서 답하기")
   async checkBlocked(s) {
+    const rt = s.rt, paneId = s.paneId;
     await this.refreshAgent(s);
+    if (!this.currentSession(s, rt, paneId)) return;
     try {
-      const text = await this.adapter.readScreen(s.paneId, { source: 'visible' });
+      const text = await this.adapter.readScreen(paneId, { source: 'visible' });
+      if (!this.currentSession(s, rt, paneId) || s.rt.herdr.status !== 'blocked') return;
       if (s.kind === 'claude' && isTrustDialog(text)) { s.rt.trustScreen = { at: Date.now() }; this.store.addEvent(s.sessionId, 'trust_dialog', { tail: tailLines(text, 6) }); }
       if (!this.hooked(s)) s.rt.screenAsk = { tail: s.kind === 'gemini' ? geminiAuthIssue(text) || tailText(text, 14) : tailText(text, 14), at: Date.now() };
     } catch {}
   }
   async readScreenAnswer(s, { completed = false } = {}) {
+    const rt = s.rt, paneId = s.paneId, turn = rt.turn, invocation = rt.agyInvocationSeq;
+    if (!this.currentSession(s, rt, paneId)) return;
     if (s.kind === 'agy' && s.rt.agySessionId) {
       if (!completed && s.rt.agyTurnActive) return;
       const answer = readAgyAnswer(s.rt.agyTranscriptPath);
@@ -711,7 +747,8 @@ export class Backend {
     }
     if (s.kind === 'gemini' && s.rt.geminiTurnActive) return;
     try {
-      const text = await this.adapter.readScreen(s.paneId, { source: 'recent_unwrapped', lines: 60 });
+      const text = await this.adapter.readScreen(paneId, { source: 'recent_unwrapped', lines: 60 });
+      if (!this.currentSession(s, rt, paneId) || rt.turn !== turn || rt.agyInvocationSeq !== invocation) return;
       s.rt.lastAnswer = screenAnswerText(text, 20); s.rt.lastAnswerAt = Date.now(); s.rt.answerSource = 'screen';
       this.bus.emit('screenAnswer', s);
     } catch {}
@@ -813,7 +850,7 @@ export class Backend {
       }
       if (!this.hooked(s) && !a && afterRestart && s.rt.exit && s.rt.exit.kind === 'herdr_stopped') hookless.push(s);
       if (!this.hooked(s)) { report.push({ name: s.name, agent: a ? a.status : 'none', hooked: false }); this.broadcastSession(s, { cause: `resync:${why}` }); continue; }
-      const tx = lastExchange(s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, s.sessionId));
+      const tx = lastExchange(s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, this.launchOf(s).sessionId));
       let recovered = null;
       if (tx.exists && tx.lastAnswerAt && tx.lastAnswerAt > (s.rt.lastAnswerAt || 0) + 1000 && (!s.rt.lastPromptAt || tx.lastAnswerAt > s.rt.lastPromptAt)) {
         s.rt.lastAnswer = tx.lastAnswer; s.rt.lastAnswerAt = tx.lastAnswerAt;
@@ -826,7 +863,7 @@ export class Backend {
         recovered.lastPrompt = clip(tx.lastPrompt, 120);
       }
       const sent = this.queue.list(s.sessionId).find((d) => d.status === 'sent');
-      if (sent && tx.exists) this.queue.reconcile(s.sessionId, userPromptsSince(s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, s.sessionId), sent.sentAt || sent.createdAt));
+      if (sent && tx.exists) this.queue.reconcile(s.sessionId, userPromptsSince(s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, this.launchOf(s).sessionId), sent.sentAt || sent.createdAt));
       if (recovered) this.store.addEvent(s.sessionId, 'recovered_from_transcript', recovered);
       report.push({ name: s.name, agent: a ? a.status : 'none', recovered });
       this.broadcastSession(s, { cause: `resync:${why}` });
@@ -859,7 +896,7 @@ export class Backend {
         const s = this.sessions.get(sid);
         if (!s || !this.adapter.connected) { pending.delete(sid); continue; }
         if (s.rt.exit && s.rt.exit.kind !== 'herdr_stopped' && !releasedAt.has(sid)) releasedAt.set(sid, Date.now()); // 이어 가기를 시도했다가 끝남(P1 규칙이 다룬다)
-        const tx = s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, s.sessionId);
+        const tx = s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, this.launchOf(s).sessionId);
         let argv = null;
         if (s.rt.herdr.present) {
           const info = await this.adapter.processInfo(s.paneId).catch(() => null);
@@ -920,6 +957,7 @@ export class Backend {
     this.store.updateSession(s.sessionId, { paneId, herdrWorkspaceId: s.herdrWorkspaceId, agentName: s.agentName });
     this.store.addEvent(s.sessionId, 'pane_changed', { from: old, to: paneId, why });
     await this.adapter.refreshSubscription();
+    if (!this.currentSession(s) || s.paneId !== paneId) return;
     for (const l of this.store.links()) {
       if (l.to !== s.sessionId || !l.role || !this.sessions.has(l.from)) continue;
       const text = paneChangedNotice({ role: l.role, agentName: s.agentName, paneId });
@@ -930,6 +968,7 @@ export class Backend {
   }
 
   closeSession(s, reason) {
+    if (this.sessions.get(s.sessionId) !== s) return;
     this.queue.cancelSession(s.sessionId, 'session closed');
     try { this.relay.detach(s.sessionId); } catch {}
     if (s.settingsPath) try { fs.rmSync(s.settingsPath, { force: true }); } catch {} // 판이 세션을 닫을 때 설정 파일을 지운다(B3)
@@ -942,7 +981,7 @@ export class Backend {
     this.api.broadcast('session.removed', { sessionId: s.sessionId, name: s.name, reason });
     this.bus.emit('closed', s);
     onSessionClosed(this, s); // P6a: 덩어리에서 뺀다
-    this.adapter.refreshSubscription();
+    Promise.resolve(this.adapter.refreshSubscription()).catch((e) => { if (!this.stopping) this.log('subscription refresh after close:', e.message); });
   }
 
   // ---------- 명령 ----------
@@ -979,7 +1018,7 @@ export class Backend {
     const permissionMode = p.permissionMode || (claude && def.claudePermissionMode) || 'manual';
     if (!PERMISSION_MODES.has(permissionMode)) throw apiError('bad_request', `권한 모드: ${permissionMode}`);
     // DeepSeek 모델은 opencodex 프록시가 DeepSeek로 보낸다. Claude Code 노력 수준 기본값은 DeepSeek에 넘기지 않는다(받은 값만)
-    const model = claude ? (flavor ? p.model || def.deepseekModel || DEEPSEEK_MODEL : p.model || def.claudeModel || null) : kind === 'codex' ? (p.model !== undefined ? String(p.model).trim() || null : modelFromArgs(p.args ?? def.codexArgs) || null) : kind === 'gemini' ? (p.model !== undefined ? String(p.model).trim() || null : geminiModelFromArgs(p.args) || null) : kind === 'agy' ? (p.model !== undefined ? String(p.model).trim() || null : agyModelFromArgs(p.args) || null) : null;
+    const model = claude ? (flavor ? p.model || def.deepseekModel || DEEPSEEK_MODEL : p.model || def.claudeModel || null) : kind === 'codex' ? (p.model !== undefined ? String(p.model ?? '').trim() || null : modelFromArgs(p.args ?? def.codexArgs) || null) : kind === 'gemini' ? (p.model !== undefined ? String(p.model ?? '').trim() || null : geminiModelFromArgs(p.args) || null) : kind === 'agy' ? (p.model !== undefined ? String(p.model ?? '').trim() || null : agyModelFromArgs(p.args) || null) : null;
     const effort = claude ? p.effort || (flavor ? null : def.claudeEffort) || null : null;
     const allowHerdr = claude && !!(p.allowHerdr ?? def.claudeAllowHerdr);
     // F5: herdr가 아는 에이전트 종류. Claude Code만 판의 hook과 이어 가기 등록을 붙인다
@@ -1082,36 +1121,54 @@ export class Backend {
     try { const r = await create(); await register(r); return r; } finally { this.creatingPanes--; }
   }
 
+  refreshClaudeResume(s, { register = true } = {}) {
+    if (!s.resumeArgv || !s.rt.claudeSessionId) return;
+    const i = s.resumeArgv.indexOf('--resume');
+    if (i >= 0 && s.resumeArgv[i + 1] === s.rt.claudeSessionId) return;
+    s.resumeArgv = buildResumeArgv({ claudeCommand: this.cfg.claudeCommand, ...this.launchOf(s) });
+    s.resumeVerified = false;
+    this.store.updateSession(s.sessionId, { resumeArgv: s.resumeArgv, resumeVerified: false });
+    if (register) this.registerResume(s).catch((e) => { if (!this.stopping) this.log('resume refresh failed', e.message); });
+  }
+
   async registerResume(s) {
+    const rt = s.rt, paneId = s.paneId, nativeId = this.launchOf(s).sessionId, argv = s.resumeArgv;
+    const current = () => this.currentSession(s, rt, paneId) && s.resumeArgv === argv && this.launchOf(s).sessionId === nativeId;
     const t0 = Date.now(); let tries = 0; let lastErr = null;
-    while (Date.now() - t0 < 180000 && this.sessions.has(s.sessionId) && !s.rt.exit) {
+    while (Date.now() - t0 < 180000 && current() && !s.rt.exit) {
       // starting·trust_wait 중에는 보내지 않는다. 거부된 요청도 agent_session을 남겨 E10의 신뢰 대화상자 신호(agent_session 없음)를 지운다.
       if (['ready', 'working', 'waiting', 'error'].includes(deriveState(s.rt).state)) {
         tries++;
         try {
-          await this.adapter.registerResume({ paneId: s.paneId, sessionId: s.sessionId, argv: s.resumeArgv });
+          await this.adapter.registerResume({ paneId, sessionId: nativeId, argv });
+          if (!current()) return false;
           this.store.addEvent(s.sessionId, 'resume_registered', { argv: s.resumeArgv, tries, ms: Date.now() - t0 });
           return this.verifyResume(s);
         } catch (e) { lastErr = e.code; if (e.code !== 'resume_not_accepted' && e.code !== 'unreachable') break; }
       }
       await sleep(1000);
     }
+    if (!current()) return false;
     this.store.addEvent(s.sessionId, 'resume_register_failed', { tries, lastErr });
     return false;
   }
 
   // herdr가 session.json에 agent_resume을 저장했는지 읽어 본다. 사용자 설정의 herdr hook이 늦게 보고해 덮이면 다시 등록한다.
   async verifyResume(s) {
+    const rt = s.rt, paneId = s.paneId, nativeId = this.launchOf(s).sessionId, argv = s.resumeArgv;
+    const current = () => this.currentSession(s, rt, paneId) && s.resumeArgv === argv && this.launchOf(s).sessionId === nativeId;
     const t0 = Date.now(); let reRegistered = 0;
-    while (Date.now() - t0 < 120000 && this.sessions.has(s.sessionId)) {
+    while (Date.now() - t0 < 120000 && current()) {
       await sleep(2000);
-      const rec = this.adapter.readResumeRecord(s.sessionId);
+      if (!current()) return false;
+      const rec = this.adapter.readResumeRecord(nativeId);
       if (rec && rec.found) {
-        const ok = Array.isArray(rec.argv) && rec.argv.includes('--settings') && rec.argv.includes(s.resumeArgv[s.resumeArgv.indexOf('--settings') + 1]);
+        const ok = Array.isArray(rec.argv) && rec.argv.includes('--settings') && rec.argv.includes(argv[argv.indexOf('--settings') + 1]) && rec.argv[rec.argv.indexOf('--resume') + 1] === nativeId;
         if (ok) { s.resumeVerified = true; this.store.updateSession(s.sessionId, { resumeVerified: true }); this.store.addEvent(s.sessionId, 'resume_verified', { argv: rec.argv, ms: Date.now() - t0 }); this.broadcastSession(s); return true; }
-        if (reRegistered < 2 && s.rt.herdr.agentSessionId) { reRegistered++; await this.adapter.registerResume({ paneId: s.paneId, sessionId: s.sessionId, argv: s.resumeArgv }).catch(() => {}); this.store.addEvent(s.sessionId, 'resume_reregistered', { saw: rec.argv }); }
+        if (reRegistered < 2 && s.rt.herdr.agentSessionId) { reRegistered++; await this.adapter.registerResume({ paneId, sessionId: nativeId, argv }).catch(() => {}); if (!current()) return false; this.store.addEvent(s.sessionId, 'resume_reregistered', { saw: rec.argv }); }
       }
     }
+    if (!current()) return false;
     this.store.addEvent(s.sessionId, 'resume_unverified', {});
     return false;
   }
@@ -1157,7 +1214,21 @@ export class Backend {
   // D2: 판이 띄운 세션만 끈다. /exit로 정상 종료하고 작업 공간을 닫는다.
   async kill(p) {
     const s = this.resolve(p.session);
+    if (!p.confirm) return this.killSession(s, p);
+    this.killRequests ||= new Map();
+    const pending = this.killRequests.get(s.sessionId);
+    if (pending) {
+      if (pending.after !== p.after) throw apiError('busy', '다른 종료 작업이 진행 중입니다');
+      return pending.promise;
+    }
+    const promise = this.killSession(s, p).finally(() => this.killRequests.delete(s.sessionId));
+    this.killRequests.set(s.sessionId, { after: p.after, promise });
+    return promise;
+  }
+  async killSession(s, p) {
+    const rt = s.rt, paneId = s.paneId;
     const shared = await this.adapter.workspacePanes(s.herdrWorkspaceId).then((ps) => ps.filter((x) => x.paneId !== s.paneId)).catch(() => []);
+    if (!this.currentSession(s, rt, paneId)) throw apiError('session_changed', '세션이 바뀌었습니다. 다시 확인하세요');
     const kindName = s.kind || 'claude';
     const closeText = shared.length ? `패널 ${s.paneId}만 닫는다(같은 작업 공간의 다른 패널 ${shared.length}개는 그대로).` : '패널을 닫는다.';
     // G2: 셸은 패널만 닫는다. 돌고 있는 명령도 함께 끝난다
@@ -1202,9 +1273,11 @@ export class Backend {
         }
       }
       const exit = s.rt.exit;
-      // 같은 작업 공간에 다른 패널이 있으면(세션이 herdr로 나눠 띄운 경우) 이 패널만 닫는다
-      if (shared.length) await this.adapter.closePane(s.paneId).then(() => steps.push(`pane ${s.paneId} closed`)).catch((e) => steps.push(`pane.close failed ${e.code}`));
-      else await this.adapter.closeWorkspace(s.herdrWorkspaceId).then(() => steps.push(`workspace ${s.herdrWorkspaceId} closed`)).catch((e) => steps.push(`workspace.close failed ${e.code}`));
+      // Close only this pane. A sibling can appear after enumeration, or the
+      // enumeration itself can fail; neither permits closing its workspace.
+      if (!this.currentSession(s, rt, paneId)) throw apiError('session_changed', '세션이 바뀌어 종료를 중단했습니다');
+      await this.adapter.closePane(paneId);
+      steps.push(`pane ${paneId} closed`);
       this.closeSession(s, 'killed');
       // P15: 닫는 것은 보관이나 삭제다(노드의 X). 아무것도 하지 않으면 닫힌 세션으로 남고 판 밖 대화처럼 다시 보인다
       let after = null;
@@ -1288,7 +1361,7 @@ export class Backend {
   briefing(p) {
     const s = this.resolve(p.session);
     const sum = this.summary(s);
-    const tx = lastExchange(s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, s.sessionId));
+    const tx = lastExchange(s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, this.launchOf(s).sessionId));
     const prompt = tx.exists && tx.lastPrompt ? tx.lastPrompt : s.rt.lastPrompt;
     const answer = tx.exists && tx.lastAnswer && (tx.lastAnswerAt || 0) >= (s.rt.lastAnswerAt || 0) - 1000 ? tx.lastAnswer : s.rt.lastAnswer;
     return {
@@ -1580,7 +1653,7 @@ export class Backend {
     if (!cwd) return;
     const seq = (s._gitSeq = (s._gitSeq || 0) + 1);
     gitProbe(cwd).then((g) => {
-      if (seq !== s._gitSeq || !this.sessions.has(s.sessionId)) return;
+      if (seq !== s._gitSeq || !this.currentSession(s)) return;
       const key = (x) => (x ? [x.isRepo, x.root, x.branch, x.isWorktree, x.commonDir].join('|') : '');
       const changed = key(g) !== key(s.git);
       const filesChanged = !s.git || s.git.changedFiles !== g.changedFiles;
@@ -1606,7 +1679,7 @@ export class Backend {
 
   async get(p) {
     const s = this.resolve(p.session);
-    const out = { ...this.summary(s), ask: s.rt.pendingAsk ? { ...s.rt.pendingAsk } : null, lastPrompt: s.rt.lastPrompt, lastAnswer: s.rt.lastAnswer, lastAskResolved: s.rt.lastAskResolved, settingsPath: s.settingsPath, resumeArgv: s.resumeArgv, transcriptPath: s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, s.sessionId), git: s.git || null };
+    const out = { ...this.summary(s), ask: s.rt.pendingAsk ? { ...s.rt.pendingAsk } : null, lastPrompt: s.rt.lastPrompt, lastAnswer: s.rt.lastAnswer, lastAskResolved: s.rt.lastAskResolved, settingsPath: s.settingsPath, resumeArgv: s.resumeArgv, transcriptPath: s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, this.launchOf(s).sessionId), git: s.git || null };
     if (p.screen !== false && s.rt.herdr.present !== undefined) { try { out.screenTail = tailLines(await this.adapter.readScreen(s.paneId, { source: 'visible' }), p.lines || 12); } catch { out.screenTail = null; } }
     if (!out.git) out.git = s.git = await gitProbe(s.rt.cwd || s.cwd);
     out.deliveries = this.store.deliveries({ sessionId: s.sessionId, limit: 10 }).map((d) => ({ ...d, text: clip(d.text, 80) }));
@@ -1632,13 +1705,13 @@ export class Backend {
       'session.answer': (p) => this.answer(p),
       'session.markSeen': (p) => { const s = this.resolve(p.session); s.seenAt = Date.now(); this.store.updateSession(s.sessionId, { seenAt: s.seenAt }); this.touch(s); this.broadcastSession(s); return { seenAt: s.seenAt }; },
       'inbox.list': () => this.inbox(),
-      'session.messages': (p) => { const s = this.resolve(p.session); return readMessages(s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, s.sessionId), { afterSeq: p.afterSeq ?? -1, limit: p.limit || 200 }); },
+      'session.messages': (p) => { const s = this.resolve(p.session); return readMessages(s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, this.launchOf(s).sessionId), { afterSeq: p.afterSeq ?? -1, limit: p.limit || 200 }); },
       'session.events': (p) => this.store.events({ sessionId: p.session ? this.resolve(p.session).sessionId : undefined, since: p.since || 0, limit: p.limit || 200 }),
       'terminal.snapshot': async (p) => { const s = this.resolve(p.session); return { sessionId: s.sessionId, format: p.format || 'ansi', text: await this.adapter.readScreen(s.paneId, { source: 'visible', format: p.format || 'ansi' }) }; },
       'terminal.attach': (p, c) => { this.requireHerdr(); const s = this.resolve(p.session); if (!s.paneId) throw keyed(apiError('sleeping', `@${s.name}은 잠들어 패널이 없다. 먼저 깨운다`), 'sleepingNoPane', { name: s.name }); return this.relay.attach(s, p.cols || 120, p.rows || 40, c); },
-      'terminal.input': (p, c) => { this.relay.input(this.resolve(p.session).sessionId, String(p.data ?? ''), c); return { ok: true }; },
-      'terminal.resize': (p, c) => { this.relay.resize(this.resolve(p.session).sessionId, p.cols, p.rows, c); return { ok: true }; },
-      'terminal.detach': (p, c) => { this.relay.detach(this.resolve(p.session).sessionId, c); return { ok: true }; },
+      'terminal.input': (p, c) => { this.relay.input(this.resolve(p.session).sessionId, String(p.data ?? ''), c, p.controllerPid); return { ok: true }; },
+      'terminal.resize': (p, c) => { this.relay.resize(this.resolve(p.session).sessionId, p.cols, p.rows, c, p.controllerPid); return { ok: true }; },
+      'terminal.detach': (p, c) => { this.relay.detach(this.resolve(p.session).sessionId, c, p.controllerPid); return { ok: true }; },
       'events.subscribe': (p, c) => { c.subscribed = true; return { subscribed: true, sessions: [...this.sessions.values()].map((s) => this.summary(s)) }; },
       // P5: workspace를 주면 그 판의 노드와 그룹만(연결은 한쪽이라도 그 판에 있는 것). 창은 다른 워크스페이스로 가는 연결과 칩 때문에 모두 받는다
       // P6a: 캔버스 하나. viewport는 캔버스 하나의 것(meta). workspace를 주면 그 워크스페이스의 노드·덩어리만(연결은 한쪽이라도 그 안에 있는 것)

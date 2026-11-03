@@ -18,16 +18,18 @@ export function SearchBox() {
   const t = useT();
   const open = useStore((st) => st.searchOpen);
   const [q, setQ] = useState('');
-  const [res, setRes] = useState([]);
+  const [result, setResult] = useState({ query: '', items: [] });
+  const res = result.query === q.trim() ? result.items : [];
   const [pick, setPick] = useState(0);
   const inRef = useRef(null);
   useEffect(() => { if (!open) return; const timer = setTimeout(() => inRef.current?.select(), 0); return () => clearTimeout(timer); }, [open]);
   useEffect(() => {
     if (!open) return;
     const query = q.trim();
-    if (!query) { setRes([]); return; }
+    setResult({ query, items: [] });
+    if (!query) return;
     let alive = true;
-    const timer = setTimeout(() => api.call('search.query', { q: query, limit: 20 }).then((r) => { if (alive) { setRes(r.results); setPick(0); } }).catch((e) => toast(t('search.fail', { error: errText(e) }), 'error')), 120);
+    const timer = setTimeout(() => api.call('search.query', { q: query, limit: 20 }).then((r) => { if (alive) { setResult({ query, items: r.results }); setPick(0); } }).catch((e) => { if (alive) toast(t('search.fail', { error: errText(e) }), 'error'); }), 120);
     return () => { alive = false; clearTimeout(timer); };
   }, [q, open]);
   if (!open) return null;

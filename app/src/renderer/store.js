@@ -82,18 +82,46 @@ function putSession(sum) {
   changed();
 }
 
+// 요청 중에 받은 이벤트·사용자 이동은 이전 스냅샷보다 새롭다. 삭제도 보존한다.
+function mergeSnapshot(before, current, incoming) {
+  for (const [id, value] of current) if (before.get(id) !== value || !before.has(id)) incoming.set(id, value);
+  for (const id of before.keys()) if (!current.has(id)) incoming.delete(id);
+  return incoming;
+}
+const layoutEdits = new Set();
+export function beginLayoutEdit(nodes, dock) {
+  const edit = { nodes, dock }; layoutEdits.add(edit);
+  return () => layoutEdits.delete(edit);
+}
+let boardRequest = 0;
 export async function loadBoard() {
+  const request = ++boardRequest, generation = api.generation;
+  const before = { ...state };
+  const editing = [...layoutEdits];
   const b = await api.call('board.get');
-  state.nodes = new Map(b.nodes.map((n) => [n.session_id, { x: n.x, y: n.y, w: n.w, h: n.h, z: n.z, size: n.size || null, area: n.area || '' }])); // P27: area(놓인 워크트리 영역)
-  state.links = new Map((b.links || []).map((l) => [l.linkId, l]));
-  state.docks = new Map((b.docks || []).map((d) => [d.dockId, d]));
-  if (b.workspaces) state.workspaces = b.workspaces;
   // P6c: 메모·칸반. board.get에 없으면(P6b 전 백엔드) 따로 읽는다
   const memos = b.memos || await api.call('memo.list').catch(() => []);
   const kanbans = b.kanbans || await api.call('kanban.list').catch(() => []);
-  state.memos = new Map(memos.map((m) => [m.memoId, m]));
-  state.kanbans = new Map(kanbans.map((k) => [k.kanbanId, k]));
-  if (b.convoNodes) { state.convoNodes = new Map(b.convoNodes.map((c) => [c.convId, c])); state.convoEdges = b.convoEdges || []; } // P13
+  if (request !== boardRequest || generation !== api.generation) return;
+  const put = (key, entries) => {
+    const current = state[key], next = mergeSnapshot(before[key], current, new Map(entries));
+    // 분할선을 잡은 동안은 요청 전에 바꾼 자리도 아직 저장 전이다.
+    for (const edit of [...editing, ...layoutEdits]) {
+      const ids = key === 'nodes' ? edit.nodes : key === 'docks' ? [edit.dock] : [];
+      for (const id of ids) { if (current.has(id)) next.set(id, current.get(id)); else next.delete(id); }
+    }
+    state[key] = next;
+  };
+  put('nodes', b.nodes.map((n) => [n.session_id, { x: n.x, y: n.y, w: n.w, h: n.h, z: n.z, size: n.size || null, area: n.area || '' }])); // P27
+  put('links', (b.links || []).map((l) => [l.linkId, l]));
+  put('docks', (b.docks || []).map((d) => [d.dockId, d]));
+  put('memos', memos.map((m) => [m.memoId, m]));
+  put('kanbans', kanbans.map((k) => [k.kanbanId, k]));
+  if (b.workspaces && state.workspaces === before.workspaces) state.workspaces = b.workspaces;
+  if (b.convoNodes) {
+    put('convoNodes', b.convoNodes.map((c) => [c.convId, c]));
+    if (state.convoEdges === before.convoEdges) state.convoEdges = b.convoEdges || [];
+  }
   if (!state.boardLoaded || !state.workspaces.some((w) => w.key === state.currentWs)) state.currentWs = b.current || (state.workspaces[0] || {}).key || null;
   if (!state.boardLoaded) { state.viewport = b.viewport || null; state.boardSeenAt = b.seenAt || null; }
   state.boardLoaded = true;
@@ -232,27 +260,38 @@ export async function loadLoops() { const ls = await api.call('loop.list'); stat
 
 api.on('$status', ({ status, detail }) => { state.conn = status; state.connDetail = detail || null; changed(); });
 api.on('$open', async (r) => {
+  const generation = api.generation;
+  const before = { ...state };
   state.sessions = new Map(r.sessions.map((s) => [s.sessionId, s]));
   changed();
-  try {
-    await loadBoard();
-    const ds = await api.call('delivery.list', { limit: 10 });
-    state.deliveries = new Map(ds.reverse().filter((d) => state.sessions.has(d.sessionId)).map((d) => [d.deliveryId, d])); // 판에 있는 세션 것만
-    const st = await api.call('herdr.status');
-    state.herdr = { connected: st.connected, running: st.running, session: st.session, version: st.compat && st.compat.version };
-    changed();
-    const [res, clients] = await Promise.all([api.call('resources.get'), api.call('herdr.clients')]);
-    state.resources = res; state.clients = clients;
-    changed();
-    // P6c: Thread, 루프, 설정. P6b 전 백엔드면 없다(조용히 넘어간다)
-    await Promise.all([loadThread().catch(() => {}), loadLoops().catch(() => {}), api.call('settings.get').then((r) => { putSettings(r.settings); }).catch(() => {})]);
-  } catch (e) { toast(t('store.loadFailed', { error: errText(e) }), 'error'); }
+  const read = async (method, apply, params) => {
+    const value = await api.call(method, params);
+    if (generation !== api.generation) return;
+    apply(value); changed();
+  };
+  // 한 부가 기능(자원 측정 등)이 실패해도 설정과 나머지 맥락은 읽는다.
+  const results = await Promise.allSettled([
+    loadBoard(),
+    read('delivery.list', (ds) => { state.deliveries = mergeSnapshot(before.deliveries, state.deliveries, new Map(ds.slice().reverse().filter((d) => state.sessions.has(d.sessionId)).map((d) => [d.deliveryId, d]))); }, { limit: 10 }),
+    read('herdr.status', (st) => { if (state.herdr === before.herdr) state.herdr = { connected: st.connected, running: st.running, session: st.session, version: st.compat && st.compat.version }; }),
+    read('resources.get', (v) => { if (state.resources === before.resources) state.resources = v; }),
+    read('herdr.clients', (v) => { if (state.clients === before.clients) state.clients = v; }),
+    loadThread().catch(() => {}), loadLoops().catch(() => {}),
+    read('settings.get', (v) => { if (state.settings === before.settings) putSettings(v.settings); }).catch(() => {}),
+  ]);
+  const failed = results.find((v) => v.status === 'rejected');
+  if (failed && generation === api.generation) toast(t('store.loadFailed', { error: errText(failed.reason) }), 'error');
 });
 api.on('session.updated', (sum) => putSession(sum));
 api.on('session.created', () => { loadBoard().catch(() => {}); });
 api.on('session.removed', (d) => {
   state.sessions = new Map(state.sessions); state.sessions.delete(d.sessionId);
   state.nodes = new Map(state.nodes); state.nodes.delete(d.sessionId);
+  state.selected = state.selected.filter((id) => id !== d.sessionId);
+  state.attached = state.attached.filter((id) => id !== d.sessionId);
+  state.closeIds = state.closeIds.filter((id) => id !== d.sessionId);
+  if (state.focusId === d.sessionId) state.focusId = null;
+  if (state.pendingInput?.id === d.sessionId) state.pendingInput = null;
   changed();
 });
 api.on('delivery', (d) => {

@@ -61,7 +61,7 @@ export function installAgyHooks({ file, nodePath, script }) {
       throw fail('agy_hooks_invalid', 'Antigravity hooks must contain named hook definitions with event arrays');
     }
   }
-  const entry = { enabled: true };
+  const entry = { enabled: hooks['atrium-board']?.enabled ?? true };
   for (const event of AGY_HOOK_EVENTS) {
     const handler = { type: 'command', command: [nodePath, script, event].map(shellQuote).join(' '), timeout: 5 };
     entry[event] = event === 'PreToolUse' || event === 'PostToolUse' ? [{ matcher: '*', hooks: [handler] }] : [handler];
@@ -98,7 +98,7 @@ export function validateAgyNewSessionArgs(value) {
     if (flag === '-m' || /^-m[^-]/.test(flag)) throw badRequest('Antigravity uses --model, not -m');
     if (valueFlags.has(flag)) {
       const next = equal < 0 ? args[++i] : arg.slice(equal + 1);
-      if (next === undefined || next.startsWith('-') || next.includes('\0')) throw badRequest(`Missing or invalid value for ${flag}`);
+      if (!next?.trim() || next.startsWith('-') || next.includes('\0')) throw badRequest(`Missing or invalid value for ${flag}`);
     } else if (booleanFlags.has(flag)) {
       if (equal >= 0 && !/^(?:true|false)$/.test(arg.slice(equal + 1))) throw badRequest(`Invalid value for ${flag}`);
     } else throw badRequest(`Unsupported Antigravity session argument: ${flag}`);
@@ -144,7 +144,13 @@ export function parseAgyModels(output) {
   if (/^\s*No models available[.!]?\s*$/i.test(text)) return [];
   const nativeRows = text.trim().split('\n').filter(Boolean);
   if (nativeRows.length && nativeRows.every((line) => /^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]*\t[^\t]+$/.test(line))) {
-    return [...new Map(nativeRows.map((line) => { const [id, name] = line.split('\t'); return [id, { id, name: name.trim() }]; })).values()];
+    const rows = new Map();
+    for (const line of nativeRows) {
+      const [id, name] = line.split('\t');
+      if (!validModelId(id) || !name.trim()) throw fail('model_list_unrecognized', 'Unrecognized Antigravity model list');
+      if (!rows.has(id)) rows.set(id, { id, name: name.trim() });
+    }
+    return [...rows.values()];
   }
   const lines = text.split('\n');
   const header = lines.findIndex((line) => /^\s*Available models:\s*$/i.test(line));
@@ -204,6 +210,8 @@ export function listAgyModels({ executable = findExecutable('agy'), spawnImpl = 
       }
     };
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+    child.stdout.on('error', () => finish(fail('model_list_failed', 'Unable to read Antigravity model output')));
+    child.stderr.on('error', () => finish(fail('model_list_failed', 'Unable to read Antigravity model output')));
     child.stdout.on('data', (chunk) => receive(chunk, true));
     child.stderr.on('data', (chunk) => receive(chunk, false));
     child.on('close', (code) => {

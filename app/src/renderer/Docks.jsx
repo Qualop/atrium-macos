@@ -10,10 +10,10 @@
 //   누르면 오간 기록. 그 덩어리 안에 연결이 있을 때만 그린다(점은 SessionNode의 가운데 잇기 손잡이, 잇기 모드에서도 보인다).
 //   P26: 어두운 테두리를 두른 색 선. 초점 세션 쪽 끝은 그 세션의 테두리 가운데다.
 // - herdr 레이아웃과 패널 크기는 바꾸지 않는다. 제어기는 지금처럼 노드 크기로 화면을 받는다.
-import { memo } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { useStore as useFlowStore } from '@xyflow/react';
 import { api } from './api.js';
-import { useStore, getState, setNodesLocal, setDockLocal, openDialog, toast, loadBoard } from './store.js';
+import { useStore, getState, setNodesLocal, setDockLocal, openDialog, toast, loadBoard, beginLayoutEdit } from './store.js';
 import { STATE_LABEL } from './lib/labels.js';
 import { dt } from './lib/dock-text.js';
 import { moveDivider, layout as layoutTree, minSize, dragEdge, moveJunction, evenDivider } from '../../../backend/src/dock-tree.mjs';
@@ -31,9 +31,27 @@ function dragWith(e, zoom, onMove, onUp) {
   e.stopPropagation(); e.preventDefault();
   const sx = e.clientX, sy = e.clientY;
   let moved = false;
-  const move = (ev) => { if (ev.clientX !== sx || ev.clientY !== sy) moved = true; onMove((ev.clientX - sx) / zoom, (ev.clientY - sy) / zoom); };
-  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); onUp(moved); };
+  let ended = false;
+  const move = (ev) => { if (ev.pointerId !== e.pointerId) return; if (ev.clientX !== sx || ev.clientY !== sy) moved = true; onMove((ev.clientX - sx) / zoom, (ev.clientY - sy) / zoom); };
+  const up = (ev) => {
+    if (ended || (ev?.pointerId != null && ev.pointerId !== e.pointerId)) return;
+    ended = true;
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', up); window.removeEventListener('blur', up);
+    onUp(moved);
+  };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up); window.addEventListener('blur', up);
+  return up;
+}
+function useDrag(dockId) {
+  const stop = useRef(null);
+  useEffect(() => () => stop.current?.(), []);
+  return (e, zoom, move, up) => {
+    stop.current?.();
+    const end = beginLayoutEdit(getState().docks.get(dockId)?.members || [], dockId);
+    stop.current = dragWith(e, zoom, move, (moved) => { end(); up(moved); });
+  };
 }
 const fail = (key) => (err) => { toast(dt(key, { msg: errText(err) }), 'error'); loadBoard().catch(() => {}); };
 // 나무만 바뀐 것을 저장(분할선, 엇갈리는 점)
@@ -51,6 +69,7 @@ function applyNow(dockId, f, key) {
 const hitStyle = (zoom) => ({ '--hit': `${HIT / Math.max(zoom, 0.02)}px`, '--line': `${1.5 / Math.max(zoom, 0.02)}px` });
 
 function DividerNodeInner({ data }) {
+  const dragWith = useDrag(data.dockId);
   const { dockId, path, index, dir } = data;
   useT();
   const zoom = useFlowStore(zoomSel);
@@ -75,6 +94,7 @@ export const DividerNode = memo(DividerNodeInner);
 
 // P23: 붙은 노드의 바깥 테두리(덩어리 바깥에 닿은 쪽). side 쪽으로 덩어리가 커지거나 줄어든다
 function DockEdgeInner({ data }) {
+  const dragWith = useDrag(data.dockId);
   const { dockId, leaf, side } = data;
   useT();
   const zoom = useFlowStore(zoomSel);
@@ -102,6 +122,7 @@ export const DockEdge = memo(DockEdgeInner);
 
 // P23: 분할선이 엇갈리는 점. 끌면 그 점에 닿은 세로 분할선은 dx, 가로 분할선은 dy만큼
 function JunctionNodeInner({ data }) {
+  const dragWith = useDrag(data.dockId);
   const { dockId, j } = data;
   useT();
   const zoom = useFlowStore(zoomSel);
@@ -127,6 +148,7 @@ export const JunctionNode = memo(JunctionNodeInner);
 
 // 덩어리 바깥 크기 손잡이(오른쪽 아래 모서리). 왼쪽 위는 그대로 두고 너비·높이만 바꾼다
 function DockGripInner({ data }) {
+  const dragWith = useDrag(data.dockId);
   const { dockId } = data;
   useT();
   const zoom = useFlowStore(zoomSel);

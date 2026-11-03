@@ -5,7 +5,7 @@
 // P25: 종류 DeepSeek은 모델(설정 deepseekModel)과 직접 명령(deepseekCommand)을 받는다. 직접 명령을 채우면 hook 없는 세션이라 권한 모드와 첫 지시를 받지 않는다.
 // 왼쪽 레일의 Claude, Codex, Gemini, DeepSeek, 셸은 이 대화상자 없이 quickSpawn으로 바로 띄운다. 값은 설정의 새 세션 기본값이다.
 //     대화상자는 Shift+누르기, 칩 "새 세션…", 영역·그룹의 "+ 세션"으로 연다. 처음 값도 설정의 기본값이다.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { toast, getState, wsName, openDialog, goWhenOpen } from './store.js';
 import { useT, t, tOr, errText } from './lib/i18n.js';
@@ -53,6 +53,9 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = 'claude' })
   const [prompt, setPrompt] = useState('');
   const [trust, setTrust] = useState(null);
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [catalog, setCatalog] = useState({ status: 'loading', models: [], source: null });
   const [refreshModels, setRefreshModels] = useState(0);
   const [customModel, setCustomModel] = useState(false);
@@ -76,13 +79,17 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = 'claude' })
 
   useEffect(() => { api.call('agent.kinds').then((ks) => setKinds([...ks].sort((a, b) => (b.installed - a.installed) || (a.kind === 'claude' ? -1 : b.kind === 'claude' ? 1 : 0)))).catch(() => {}); }, []);
   useEffect(() => {
-    if (!cwd || !claude) return setTrust(null);
-    const tm = setTimeout(() => api.call('trust.predict', { cwd }).then(setTrust).catch(() => setTrust(null)), 250);
-    return () => clearTimeout(tm);
+    setTrust(null);
+    if (!cwd || !claude) return;
+    let current = true;
+    const tm = setTimeout(() => api.call('trust.predict', { cwd }).then((r) => { if (current) setTrust(r); }).catch(() => { if (current) setTrust(null); }), 250);
+    return () => { current = false; clearTimeout(tm); };
   }, [cwd, claude]);
 
   async function submit(e) {
     e.preventDefault();
+    if (submitting.current || !cwd.trim()) return;
+    submitting.current = true;
     setBusy(true);
     try {
       const p = { cwd, name: name.trim() || undefined, kind, prompt: shell || direct ? undefined : prompt.trim() || undefined };
@@ -91,9 +98,10 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = 'claude' })
       else if (!shell && !deepseek) { p.args = args.trim(); if (modelPicker) p.model = model.trim(); }
       const r = await api.call('session.spawn', p);
       toast(startedText(r));
-      onClose();
+      if (alive.current) onClose();
       goWhenOpen(r.sessionId);
-    } catch (err) { toast(t('spawn.failed', { error: errText(err) }), 'error'); setBusy(false); }
+    } catch (err) { toast(t('spawn.failed', { error: errText(err) }), 'error'); if (alive.current) setBusy(false); }
+    finally { submitting.current = false; }
   }
 
   return (

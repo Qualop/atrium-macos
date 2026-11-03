@@ -251,6 +251,8 @@ export function Canvas() {
   const drag = useRef(null); // { id, type, mode, start, pointer, followers: [{ id, x, y }], live, snap }
   const ghostRef = useRef(null);
   const ctrlRef = useRef(null); // P17: Ctrl+끌기로 끄는 노드 ID
+  const focusTimer = useRef(null);
+  useEffect(() => () => clearTimeout(focusTimer.current), []);
 
   // 저장소의 배치 → React Flow 노드(끄는 중에는 React Flow가 위치를 쥔다. 함께 움직이는 노드는 drag.live 자리)
   useEffect(() => {
@@ -452,8 +454,13 @@ export function Canvas() {
     const onUp = () => {
       window.removeEventListener('mousemove', onMove, true); window.removeEventListener('mouseup', onUp, true);
       const c = cd; cd = null;
-      if (!c || !c.started) return; // 누르기: 고르기는 React Flow가 click으로 한다
+      if (!c) return;
       swallow = true; setTimeout(() => { swallow = false; }, 80);
+      // mousedown을 위에서 가로챘으므로 React Flow의 선택도 여기서 끝낸다.
+      if (!c.started) {
+        setNodes((ns) => ns.map((n) => n.id === c.id ? { ...n, selected: !n.selected } : n));
+        return;
+      }
       ctrlRef.current = null; ghostRef.current = null;
       const st = getState();
       const d = dockOf(c.id);
@@ -595,6 +602,8 @@ export function Canvas() {
     // P26: 노드(덩어리 안이면 덩어리 전체)가 화면의 85%를 채우게(배율 상한 1, lib/nav.js). 이미 그 노드를 보고 있으면 화면은 그대로다.
     // viewOnly: 화면만 옮기고 터미널 초점은 건드리지 않는다(머리줄 누르기, 터미널 안 누르기)
     st.navigateTo = (id, { focusTerminal = false, viewOnly = false } = {}) => {
+      clearTimeout(focusTimer.current);
+      getState().pendingInput = null;
       const r = getState().nodes.get(id);
       if (!r) return;
       const el = wrapRef.current;
@@ -619,7 +628,10 @@ export function Canvas() {
       setFocus(id, { terminal: focusTerminal && !viewOnly });
       if (seen) schedule(0);
       markSeen(id);
-      if (focusTerminal && !viewOnly) setTimeout(() => setFocus(id, { terminal: true }), 700); // 터미널이 붙은 뒤 한 번 더
+      if (focusTerminal && !viewOnly) focusTimer.current = setTimeout(() => {
+        const current = getState();
+        if (current.focusId === id && current.sessions.has(id) && !current.dialog && !current.searchOpen && (document.activeElement === document.body || document.activeElement?.closest('.xterm'))) setFocus(id, { terminal: true });
+      }, 700); // 다른 세션·입력칸으로 간 뒤에는 초점을 되찾지 않는다
     };
   }, [rf, schedule, fitAll]);
 

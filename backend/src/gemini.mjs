@@ -9,7 +9,27 @@ import { findExecutable } from './platform.mjs';
 export const GEMINI_EVENTS = ['SessionStart', 'BeforeAgent', 'AfterAgent', 'BeforeTool', 'AfterTool', 'Notification', 'SessionEnd'];
 const here = path.dirname(fileURLToPath(import.meta.url));
 const quote = (s) => process.platform === 'win32' ? `"${String(s).replace(/"/g, '""')}"` : `'${String(s).replace(/'/g, `'"'"'`)}'`;
-const privateJSON = (file, value) => { fs.writeFileSync(file, JSON.stringify(value, null, 2), { mode: 0o600 }); fs.chmodSync(file, 0o600); };
+const privateJSON = (file, value) => {
+  const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(value, null, 2), { mode: 0o600, flag: 'wx' });
+    fs.renameSync(temporary, file);
+  } finally { try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; } }
+};
+const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+function readSettings(file) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  const invalid = () => Object.assign(new Error('Gemini settings must contain an object with valid hook arrays'), { code: 'gemini_settings_invalid' });
+  let settings;
+  try { settings = JSON.parse(text.replace(/^\uFEFF/, '')); } catch { throw invalid(); }
+  if (!object(settings) || ('hooks' in settings && (!object(settings.hooks) || Object.entries(settings.hooks).some(([key, entries]) => {
+    if (key === 'enabled') return typeof entries !== 'boolean';
+    if (key === 'disabled') return !Array.isArray(entries) || entries.some((name) => typeof name !== 'string');
+    return !Array.isArray(entries) || entries.some((entry) => !object(entry) || !Array.isArray(entry.hooks) || entry.hooks.some((hook) => !object(hook)));
+  })))) throw invalid();
+  return settings;
+}
 
 export function geminiContext({ sessionId, childScript = path.resolve(here, '../bin/atrium-child.mjs'), nodePath = process.execPath }) {
   return [
@@ -29,10 +49,15 @@ export function geminiContext({ sessionId, childScript = path.resolve(here, '../
 
 export function writeGeminiSession({ dir, sessionId, hookUrl, token, branchEnv = {}, pluginDir, herdrPath, userHome = process.env.GEMINI_CLI_HOME || os.homedir(), executable = findExecutable('gemini') }) {
   if (!executable) throw Object.assign(new Error('Gemini CLI를 설치한 뒤 다시 시도하세요: npm install -g @google/gemini-cli'), { code: 'not_installed' });
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const profile = path.join(dir, `${sessionId}.gemini-profile`);
   const target = path.join(profile, '.gemini');
   const original = path.join(userHome, '.gemini');
+  const file = path.join(target, 'settings.json');
+  // Native /settings changes belong to this session. Seed defaults once, then
+  // refresh only our bridge; restarting must not reset model/theme choices.
+  // Validate before creating any directories or bridge files.
+  const base = readSettings(file) ?? readSettings(path.join(original, 'settings.json')) ?? {};
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.mkdirSync(target, { recursive: true, mode: 0o700 });
   fs.mkdirSync(original, { recursive: true, mode: 0o700 });
   for (const name of ['tmp', 'history', 'extensions', 'skills', 'policies']) fs.mkdirSync(path.join(original, name), { recursive: true, mode: 0o700 });
@@ -47,15 +72,18 @@ export function writeGeminiSession({ dir, sessionId, hookUrl, token, branchEnv =
       fs.symlinkSync(path.join(original, name), link, ['tmp', 'history', 'extensions', 'skills', 'policies'].includes(name) ? 'dir' : 'file');
     }
   }
-  const file = path.join(target, 'settings.json');
   const bridgeFile = path.join(dir, `${sessionId}.gemini-bridge.json`);
   const branchFile = path.join(dir, `${sessionId}.gemini-branch.json`);
   privateJSON(branchFile, branchEnv);
-  const source = path.join(original, 'settings.json');
-  const base = fs.existsSync(source) ? JSON.parse(fs.readFileSync(source, 'utf8')) : {};
   const command = [process.execPath, path.resolve(here, '../scripts/gemini-hook.mjs'), bridgeFile].map(quote).join(' ');
   const hooks = { ...base.hooks };
-  for (const ev of GEMINI_EVENTS) hooks[ev] = [...(hooks[ev] || []), { matcher: '*', hooks: [{ type: 'command', name: `atrium-${ev}`, command, timeout: 5000 }] }];
+  for (const ev of GEMINI_EVENTS) {
+    const kept = (hooks[ev] || []).flatMap((entry) => {
+      const userHooks = entry.hooks.filter((hook) => hook.name !== `atrium-${ev}`);
+      return userHooks.length || !entry.hooks.length ? [{ ...entry, hooks: userHooks }] : [];
+    });
+    hooks[ev] = [...kept, { matcher: '*', hooks: [{ type: 'command', name: `atrium-${ev}`, command, timeout: 5000 }] }];
+  }
   privateJSON(bridgeFile, { sessionId, hookUrl, token, context: geminiContext({ sessionId }) });
   privateJSON(file, { ...base, hooks });
   const dirs = [pluginDir && path.join(pluginDir, 'bin'), herdrPath && path.dirname(herdrPath), path.dirname(process.execPath), path.dirname(executable)].filter(Boolean);

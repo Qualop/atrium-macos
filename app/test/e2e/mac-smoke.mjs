@@ -70,6 +70,10 @@ try {
     const { checkAgyCollaboration } = await import('./agy-collaboration.mjs');
     await checkAgyCollaboration({ page, client, dir });
   }
+  if (process.env.ATRIUM_TEST_AUDIT === '1') {
+    const { checkWorkspaceAudit } = await import('./audit-workspace.mjs');
+    await checkWorkspaceAudit({ client, page, dir, session });
+  }
   await client.call('workspace.open', { path: project });
   const shell = await client.call('session.spawn', { kind: 'shell', name: 'mac-smoke', cwd: project });
   await until(() => page.evaluate((sid) => window.__mt.getState().sessions.has(sid), shell.sessionId), 'shell in canvas');

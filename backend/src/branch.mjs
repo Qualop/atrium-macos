@@ -25,7 +25,7 @@ import { predictTrust } from './launch.mjs';
 export const DEFAULT_ROLE = '워커';
 export const CHILD_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/; // herdr 에이전트 이름 규칙과 같다(herdr --skill)
 export const WORKTREE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-export const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,79}$/;
+export const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,199}$/;
 export const CHILD_SIZE = 'small'; // H7 정리처럼 받는 쪽은 작게(480×300). 사람이 크기를 바꾸면 그대로 둔다
 const READY_WAIT_MS = 75000; // atrium child가 하위 세션이 준비되기를 기다리는 시간. Claude Code Bash 도구의 기본 시간 제한(2분) 안쪽
 const SUBMIT_WAIT_MS = 20000; // --prompt를 준 경우 첫 지시가 들어가 일을 시작하기까지 더 기다리는 시간
@@ -173,7 +173,7 @@ export class Branch {
     this.b = b; this.readyWaitMs = readyWaitMs; this.submitWaitMs = submitWaitMs;
     this.info = new Map(); // 세션 ID → 하위 세션 기록(sessions.branch)
     this.closed = new Map(); // 닫힌 세션 ID → { parentSessionId, name }(깊이·자손을 셀 때 따라간다)
-    this.pending = []; // 만드는 중인 하위 세션의 부모 ID(상한을 동시에 넘지 않게)
+    this.pending = []; // 만드는 중인 하위 세션의 { parentId, name }(등록된 세션은 두 번 세지 않는다)
     this.pendingNames = new Set(); // 만드는 중인 하위 세션 이름(동시에 같은 이름을 짓지 않게)
     for (const r of b.store.branchRows()) {
       if (r.branch) this.info.set(r.sessionId, r.branch);
@@ -339,25 +339,30 @@ export class Branch {
     if (model && !MODEL_RE.test(model)) throw apiError('bad_request', `모델: ${model}`);
     const prompt = o.prompt == null ? null : String(o.prompt);
     if (prompt != null && !prompt.trim()) throw apiError('bad_request', '첫 지시가 비었다');
-    const taken = new Set([...b.sessions.values()].map((x) => x.name).concat([...this.pendingNames]));
+    const ws = await workspaceOf(cwd);
+    if (b.sessions.get(parent.sessionId) !== parent || b.killing?.has(parent.sessionId)) throw apiError('not_on_board', '부모 세션이 닫혔다');
+    // 비동기 폴더 조회 뒤 이름·상한 확인과 예약을 한 번에 한다.
+    const taken = new Set([...b.sessions.values()].map((x) => x.name).concat([...this.pendingNames], [...(b.spawningNames || [])]));
     const name = childName({ want: o.name ? String(o.name) : null, parentName: parent.name, taken });
 
     // K3: 상한(만드는 중인 것도 센다)
     const limits = this.limits();
     const parentDepth = this.depth(parent.sessionId);
-    const r = checkLimits({ parentDepth, children: this.openChildren(parent.sessionId).length + this.pending.filter((x) => x === parent.sessionId).length, total: this.openTotal() + this.pending.length, limits });
+    const registered = new Set([...b.sessions.values()].filter((s) => this.info.has(s.sessionId)).map((s) => s.name));
+    const pending = this.pending.filter((p) => !registered.has(p.name));
+    const r = checkLimits({ parentDepth, children: this.openChildren(parent.sessionId).length + pending.filter((p) => p.parentId === parent.sessionId).length, total: this.openTotal() + pending.length, limits });
     if (r) this.refuse(parent, r, name);
 
-    const ws = await workspaceOf(cwd);
     const allowHerdr = !!((b.store.spawnInfo(parent.sessionId) || {}).allowHerdr);
     const depth = parentDepth + 1;
     const info = { role, depth, by: parent.sessionId, at: Date.now(), worktree, kind, via: 'atrium child', inherited: { cwd: !o.cwd, model: kind === (parent.kind || 'claude') && !o.model, effort: !!parent.effort, permissionMode: true } };
 
-    this.pending.push(parent.sessionId); this.pendingNames.add(name);
+    const reservation = { parentId: parent.sessionId, name };
+    this.pending.push(reservation); this.pendingNames.add(name);
     let out;
     try {
-      out = await b.spawn({ cwd, name, kind, model, effort: claude && parent.kind === 'claude' ? parent.effort || null : null, permissionMode: parent.permissionMode, allowHerdr, worktree, parentSessionId: parent.sessionId, branch: info });
-    } finally { this.pending.splice(this.pending.indexOf(parent.sessionId), 1); this.pendingNames.delete(name); }
+      out = await b.spawn({ cwd, name, kind, flavor: claude && parent.kind === 'claude' ? parent.flavor || null : null, model, effort: claude && parent.kind === 'claude' ? parent.effort || null : null, permissionMode: parent.permissionMode, allowHerdr, worktree, parentSessionId: parent.sessionId, branch: info });
+    } finally { this.pending.splice(this.pending.indexOf(reservation), 1); this.pendingNames.delete(name); }
     const child = b.sessions.get(out.sessionId);
     if (!child) throw apiError('spawn_failed', '하위 세션이 판에 남지 않았다');
 
@@ -370,7 +375,10 @@ export class Branch {
     b.store.addEvent(child.sessionId, 'branch_parent', { parent: parent.name, parentSessionId: parent.sessionId, role, depth });
     b.log(`branch child ${parent.name} → ${name} (${kind}, ${depth}단계, ws=${ws.key}${worktree ? `, worktree ${worktree}` : ''})`);
     // 명령의 응답이 부모에게 닿지 않았으면(명령이 시간 제한으로 끊김 등) F2처럼 판이 알림을 보낸다
-    if (res) res.once('close', () => { if (!res.writableFinished && b.sessions.has(parent.sessionId)) { const d = b.queue.enqueue(parent.sessionId, `${notice}\n이 알림에는 "알겠다"고만 답해라.`); b.linkEvent(l, 'notice', notice, { deliveryId: d.deliveryId, why: 'command response lost' }, { quiet: true }); } });
+    if (res) {
+      const lost = () => { if (!res.writableFinished && b.sessions.has(parent.sessionId)) { const d = b.queue.enqueue(parent.sessionId, `${notice}\n이 알림에는 "알겠다"고만 답해라.`); b.linkEvent(l, 'notice', notice, { deliveryId: d.deliveryId, why: 'command response lost' }, { quiet: true }); } };
+      if (res.destroyed) lost(); else res.once('close', lost);
+    }
 
     let first = null;
     if (prompt) {
@@ -433,9 +441,18 @@ export class Branch {
   // atrium children: 자기의 하위 세션(all이면 그 아래 모두, 나무 순서)
   listChildren(parent, o = {}) {
     const b = this.b;
-    const open = [...b.sessions.values()];
+    const rows = new Map([...this.closed].map(([sessionId, row]) => [sessionId, { ...row, sessionId }]));
+    for (const x of b.sessions.values()) rows.set(x.sessionId, x);
     const list = [];
-    const walk = (id) => { for (const x of open.filter((y) => y.parentSessionId === id && this.info.has(y.sessionId)).sort((a, c) => a.createdAt - c.createdAt)) { list.push(this.childView(x)); if (o.all) walk(x.sessionId); } };
+    const seen = new Set([parent.sessionId]);
+    const walk = (id) => {
+      for (const x of [...rows.values()].filter((y) => y.parentSessionId === id).sort((a, c) => (a.createdAt || 0) - (c.createdAt || 0))) {
+        if (seen.has(x.sessionId)) continue;
+        seen.add(x.sessionId);
+        if (b.sessions.has(x.sessionId) && this.info.has(x.sessionId)) list.push(this.childView(x));
+        if (o.all) walk(x.sessionId);
+      }
+    };
     walk(parent.sessionId);
     const limits = this.limits();
     return { parent: parent.name, depth: this.depth(parent.sessionId), children: list, counts: { children: this.openChildren(parent.sessionId).length, maxChildren: limits.branchMaxChildren, total: this.openTotal(), maxTotal: limits.branchMaxTotal, maxDepth: limits.branchMaxDepth } };
@@ -453,7 +470,9 @@ export class Branch {
       b.api.broadcast('branch.refused', { sessionId: parent.sessionId, name: parent.name, code: 'not_parent', reason: msg, target: t.name });
       throw apiError('not_parent', msg);
     }
-    const rows = [...b.sessions.values()].map((x) => ({ sessionId: x.sessionId, parentSessionId: x.parentSessionId || null }));
+    const tree = new Map([...this.closed].map(([sessionId, row]) => [sessionId, { sessionId, parentSessionId: row.parentSessionId }]));
+    for (const x of b.sessions.values()) tree.set(x.sessionId, { sessionId: x.sessionId, parentSessionId: x.parentSessionId || null });
+    const rows = [...tree.values()];
     const order = o.only ? [] : descendantsOf(t.sessionId, rows).map((x) => x.sessionId);
     order.push(t.sessionId);
     const killed = [];

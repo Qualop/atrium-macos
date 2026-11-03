@@ -91,7 +91,7 @@ This creates `out/Atrium.app`. Move it into **Applications** with Finder, then o
 
 - Build on the Mac where you intend to use it: the package records detected local CLI paths for Finder launches.
 - The package uses a **local ad-hoc signature**. It is not an Apple-notarized distribution or a downloadable DMG release.
-- Before rebuilding, move existing `out/Atrium.app` and `out/Atrium.iconset` aside; the packaging script does not overwrite them.
+- Before rebuilding, move the existing `out/Atrium.app` aside. Packaging uses a temporary staging directory and publishes the bundle only after signing and verification succeed.
 - An installed app is a separate copy. Source edits require another build and installation to appear in that copy.
 
 ## Closing the window does not stop the work
@@ -119,7 +119,7 @@ To stop the sessions too, choose the menu item that stops **herdr and all sessio
 
 ## Verification and platform status
 
-As of **2026-11-03**, local verification passed **355 backend tests and 80 UI tests**, plus the renderer build. The macOS integration checks include nine concurrent sessions, model selection, Korean copy at 900×600, multiline paste, synthetic Korean IME events, WebGL context loss, backend crash recovery, and engine stop/start. Test groups were run separately; these are not a claim that every combination or platform has been tested.
+As of **2026-11-04**, local verification passed **457 backend tests and 94 UI tests**, plus the renderer build. The macOS integration checks include nine concurrent sessions, model selection, Korean copy at 900×600, multiline paste, synthetic Korean IME events, WebGL context loss, backend crash recovery, and engine stop/start. Test groups were run separately; these are not a claim that every combination or platform has been tested.
 
 | Environment | Status |
 |---|---|
@@ -131,6 +131,8 @@ As of **2026-11-03**, local verification passed **355 backend tests and 80 UI te
 Google model listing was also verified from the installed app. The actual Gemini CLI completed a turn and exact-ID resume against a local fake model server. A live Google worker/reviewer pair completed review → correction → re-review through board deliveries. Mixed-provider collaboration is covered separately by backend contract tests.
 
 Physical reboot recovery, real IME candidate windows and language switching, OS notification clicks, and authenticated model work across every provider still require manual validation. A passing test suite is not a security certification.
+
+The [full functional audit](docs/log/full-functional-audit.md) covers lifecycle, delegation, queues, loops, history, search, memos, kanban, layout, terminals and packaging. Another **19 browser interaction tests** passed, including a board with 100 synthetic sessions.
 
 ## Development
 

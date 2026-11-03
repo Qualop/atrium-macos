@@ -106,7 +106,12 @@ export function LinkPanel({ linkId, onClose }) {
   const [confirm, setConfirm] = useState(null);
   useEffect(() => {
     let alive = true;
-    const load = () => api.call('link.log', { link: linkId }).then((r) => alive && setEvents(r.events)).catch(() => alive && setEvents([]));
+    let request = 0;
+    setEvents(null);
+    const load = () => {
+      const id = ++request;
+      return api.call('link.log', { link: linkId }).then((r) => { if (alive && id === request) setEvents(r.events); }).catch(() => { if (alive && id === request) setEvents([]); });
+    };
     load();
     const off = api.on('link.event', (e) => { if (e.linkId === linkId) load(); });
     return () => { alive = false; off(); };

@@ -23,6 +23,86 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p8-'));
 const LIMITS = { branchMaxChildren: 4, branchMaxDepth: 3, branchMaxTotal: 16 };
 
+test('audit: concurrent children reserve automatic names before workspace lookup', async () => {
+  const { b, lead } = await fakeBoard();
+  const results = await Promise.all([b.branch.spawnChild(lead, { wait: false }), b.branch.spawnChild(lead, { wait: false })]);
+  assert.equal(new Set(results.map((r) => r.name)).size, 2);
+});
+
+for (const [setting, code] of [['branchMaxChildren', 'too_many_children'], ['branchMaxTotal', 'board_full']]) {
+  test(`audit: concurrent children cannot exceed ${setting}`, async () => {
+    const { b, lead } = await fakeBoard({ limits: { [setting]: 1 } });
+    const results = await Promise.allSettled(['one', 'two'].map((name) => b.branch.spawnChild(lead, { name, wait: false })));
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+    assert.equal(results.find((r) => r.status === 'rejected').reason.code, code);
+    assert.equal(b.branch.pending.length, 0);
+    assert.equal(b.branch.pendingNames.size, 0);
+  });
+}
+
+test('audit: descendants remain discoverable and removable through a closed intermediate session', async () => {
+  const { b, lead } = await fakeBoard({ limits: { branchMaxDepth: 5 } });
+  const top = await b.branch.spawnChild(lead, { name: 'top', wait: false });
+  const mid = await b.branch.spawnChild(b.sessions.get(top.sessionId), { name: 'mid', wait: false });
+  await b.branch.spawnChild(b.sessions.get(mid.sessionId), { name: 'leaf', wait: false });
+  await b.branch.killChild(lead, { name: 'mid', only: true });
+  assert.deepEqual(b.branch.listChildren(lead, { all: true }).children.map((s) => s.name), ['top', 'leaf']);
+  const result = await b.branch.killChild(lead, { name: 'top' });
+  assert.deepEqual(result.killed.map((s) => s.name), ['leaf', 'top']);
+});
+
+test('audit: DeepSeek children retain the provider flavor and other providers do not inherit its model', async () => {
+  const { b, lead } = await fakeBoard();
+  lead.flavor = 'deepseek'; lead.model = 'ocx-claude-deepseek--deepseek-flash[1m]';
+  await b.branch.spawnChild(lead, { name: 'deepseek-child', wait: false });
+  assert.equal(b.spawned[0].flavor, 'deepseek');
+  assert.equal(b.spawned[0].model, lead.model);
+  await b.branch.spawnChild(lead, { name: 'codex-child', kind: 'codex', wait: false });
+  assert.equal(b.spawned[1].model, null);
+  assert.ok(!b.spawned[1].flavor);
+});
+
+test('audit: a registered child still finishing startup consumes only one limit slot', async () => {
+  const { b, lead } = await fakeBoard({ limits: { branchMaxChildren: 2, branchMaxTotal: 2 } });
+  let release, entered;
+  const gate = new Promise((r) => { release = r; }), registered = new Promise((r) => { entered = r; });
+  const spawn = b.spawn.bind(b);
+  b.spawn = async (p) => { const out = await spawn(p); if (p.name === 'first') { entered(); await gate; } return out; };
+  const first = b.branch.spawnChild(lead, { name: 'first', wait: false });
+  try {
+    await registered;
+    const second = await b.branch.spawnChild(lead, { name: 'second', wait: false });
+    assert.equal(second.name, 'second');
+  } finally { release(); await first; }
+});
+
+test('audit: failed child startup releases its name and capacity for retry', async () => {
+  const { b, lead } = await fakeBoard({ limits: { branchMaxChildren: 1 } });
+  const spawn = b.spawn.bind(b);
+  b.spawn = async () => { throw new Error('fixture startup failure'); };
+  await assert.rejects(b.branch.spawnChild(lead, { name: 'retry', wait: false }), /fixture/);
+  b.spawn = spawn;
+  assert.equal((await b.branch.spawnChild(lead, { name: 'retry', wait: false })).name, 'retry');
+});
+
+test('audit: provider-qualified Codex model IDs survive child inheritance', async () => {
+  const { b, lead } = await fakeBoard();
+  lead.kind = 'codex'; lead.model = 'provider/model-v1';
+  await b.branch.spawnChild(lead, { name: 'codex-worker', wait: false });
+  assert.equal(b.spawned[0].model, lead.model);
+});
+
+test('audit: a lost child response during startup still sends the parent its delegation details', async () => {
+  const { b, lead } = await fakeBoard();
+  const res = new EventEmitter(); res.writableFinished = false; res.destroyed = false;
+  const spawn = b.spawn.bind(b);
+  b.spawn = async (p) => { res.destroyed = true; res.emit('close'); return spawn(p); };
+  await b.branch.spawnChild(lead, { name: 'lost-response', wait: false }, res);
+  assert.equal(b.queued.length, 1);
+  assert.equal(b.queued[0].sid, lead.sessionId);
+  assert.match(b.queued[0].text, /lost-response/);
+});
+
 // ---------- 나무 계산 ----------
 test('K3: 깊이는 사람이 띄운 세션이 1단계, 닫힌 중간 세션도 따라가고 고리는 끊는다. 자손과 끄는 순서(깊은 것부터)', () => {
   const rows = new Map([['a', { parentSessionId: null }], ['b', { parentSessionId: 'a' }], ['c', { parentSessionId: 'b' }], ['d', { parentSessionId: 'c' }], ['x', { parentSessionId: 'y' }], ['y', { parentSessionId: 'x' }]]);

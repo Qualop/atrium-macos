@@ -22,7 +22,8 @@ export function writeSessionSettings({ file, hookUrl, token, sessionId, timeoutS
   if (rules.length) settings.permissions = { allow: rules };
   if (env && Object.keys(env).length) settings.env = env;
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(settings, null, 2));
+  fs.writeFileSync(file, JSON.stringify(settings, null, 2), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
   return slash(file);
 }
 
@@ -72,10 +73,14 @@ export function buildResumeArgs({ sessionId, ...o }) { return ['--resume', sessi
 
 // 돌고 있는 claude의 명령줄에 판의 설정 파일이 있는가(pane.process_info의 argv)
 export function argvHasSettings(argv, settingsPath) {
-  if (!Array.isArray(argv)) return false;
-  const i = argv.indexOf('--settings');
-  if (i < 0) return false;
-  const a = canonicalPath(argv[i + 1] || ''), b = canonicalPath(settingsPath);
+  if (!Array.isArray(argv) || typeof settingsPath !== 'string' || !settingsPath) return false;
+  let effective;
+  for (let i = 0; i < argv.length && argv[i] !== '--'; i++) {
+    if (argv[i] === '--settings') effective = argv[++i];
+    else if (typeof argv[i] === 'string' && argv[i].startsWith('--settings=')) effective = argv[i].slice(11);
+  }
+  if (typeof effective !== 'string' || !effective || effective.startsWith('-')) return false;
+  const a = canonicalPath(effective), b = canonicalPath(settingsPath);
   return windowsPath(settingsPath) ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
@@ -109,12 +114,12 @@ export function predictTrust(cwd, claudeJsonPath) {
 export function predictTrustFrom(cwd, projects, gitRoot = null) {
   const win = windowsPath(cwd);
   const keyOf = (p) => { const c = canonicalPath(p).replace(/\/$/, ''); return win ? c.toLowerCase() : c; };
-  const trusted = new Map(Object.entries(projects).map(([name, value]) => [keyOf(name), { name, value }]));
+  const trusted = new Map(Object.entries(projects || {}).map(([name, value]) => [keyOf(name), { name, value }]));
   const stop = gitRoot ? keyOf(gitRoot) : null;
   let current = canonicalPath(cwd);
   while (true) {
     const found = trusted.get(keyOf(current));
-    if (found?.value?.hasTrustDialogAccepted) return { needsTrust: false, trustedBy: found.name };
+    if (found?.value?.hasTrustDialogAccepted === true) return { needsTrust: false, trustedBy: found.name };
     if (stop && keyOf(current) === stop) break;
     const parent = win ? path.win32.dirname(current).replace(/\\/g, '/') : path.dirname(current);
     if (parent === current) break;

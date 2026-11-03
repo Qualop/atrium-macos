@@ -27,7 +27,6 @@ export const SETTINGS = {
   codexArgs: { type: 'string', default: '', max: 300, label: 'Codex 실행 인자(빈칸으로 나눈다. 따옴표로 묶지 않는다)' },
   deepseekModel: { type: 'string', default: DEEPSEEK_MODEL, max: 80, pattern: /^[A-Za-z0-9._:/\[\]-]*$/, label: `DeepSeek 모델(판이 띄우는 Claude Code의 --model. opencodex 프록시가 DeepSeek로 보낸다. 비우면 ${DEEPSEEK_MODEL})` },
   deepseekCommand: { type: 'string', default: '', max: COMMAND_MAX, pattern: /^[^\x00-\x1f\x7f]*$/, hint: '한 줄, 줄바꿈·탭 없이', label: 'DeepSeek 직접 명령(PowerShell 한 줄. 비우면 위 모델로 판이 Claude Code를 띄우고, 채우면 새 셸 패널에 그대로 친다. hook 없음)' },
-  sleepAfterMin: { type: 'number', default: 30, min: 0, max: 1440, label: '이 분 동안 쉬는 판의 Claude Code 세션을 잠재운다(0이면 저절로 잠재우지 않음, P21 D4)' },
   sleepAfterMin: { type: 'number', default: 30, min: 0, max: 1440, label: '리포(워크스페이스)에 이 분 동안 아무 일이 없으면 그 리포의 판 Claude Code 세션을 모두 잠재운다(0이면 저절로 잠재우지 않음, P21·P24 D4)' },
 };
 export const DEFAULTS = Object.fromEntries(Object.entries(SETTINGS).map(([k, v]) => [k, v.default]));
@@ -35,17 +34,18 @@ export const DEFAULTS = Object.fromEntries(Object.entries(SETTINGS).map(([k, v])
 const BOOL = { true: true, false: false, on: true, off: false, '1': true, '0': false, yes: true, no: false };
 // 바꿀 값 확인: 모르는 키와 맞지 않는 값은 거부한다. 'on'/'off' 같은 글도 받는다(atrium CLI)
 export function normalizePatch(patch) {
-  if (!patch || typeof patch !== 'object') throw Object.assign(new Error('바꿀 설정이 없다'), { code: 'bad_request' });
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw Object.assign(new Error('바꿀 설정이 없다'), { code: 'bad_request' });
   const out = {};
   for (const [k, v] of Object.entries(patch)) {
-    const d = SETTINGS[k];
+    const d = Object.hasOwn(SETTINGS, k) ? SETTINGS[k] : null;
     if (!d) throw Object.assign(new Error(`모르는 설정: ${k}`), { code: 'bad_request' });
     if (d.type === 'boolean') {
-      const b = typeof v === 'boolean' ? v : BOOL[String(v).toLowerCase()];
+      const key = String(v).toLowerCase();
+      const b = typeof v === 'boolean' ? v : Object.hasOwn(BOOL, key) ? BOOL[key] : undefined;
       if (b === undefined) throw Object.assign(new Error(`${k}는 참/거짓`), { code: 'bad_request' });
       out[k] = b;
     } else if (d.type === 'number') {
-      const n = typeof v === 'number' ? v : Number(String(v).trim());
+      const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v.trim()) : NaN;
       if (!Number.isInteger(n) || n < d.min || n > d.max) throw Object.assign(new Error(`${k}는 ${d.min}~${d.max}의 정수`), { code: 'bad_request' });
       out[k] = n;
     } else if (d.type === 'choice') {

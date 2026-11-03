@@ -189,6 +189,7 @@ test('I3: 메모 만들기·고치기·지우기(글이 있으면 확인)·찾�
   const store = newStore();
   const ev = [];
   const ws = { repo: { key: 'k1' } };
+  store.insertWorkspace({ key: 'k1', kind: 'folder', root: 'C:/repo', createdAt: 1 });
   const m = new Memos({ store, broadcast: (e, d) => ev.push([e, d]), resolveWorkspace: async (r) => { if (!ws[r]) throw apiError('not_found', r); return ws[r]; }, occupied: () => [{ x: 0, y: 10, w: 720, h: 460 }, ...store.memos()], apiError });
   const a = await m.create({ text: '# 할 것\n- 리뷰', workspace: 'repo' });
   assert.deepEqual([a.x, a.y, a.w, a.h, a.workspaceKey], [760, 10, MEMO.w, MEMO.h, 'k1']);
@@ -241,6 +242,7 @@ test('I4: 칸반 열과 카드 바꾸기(순수 함수)', () => {
 
 test('I4: 칸반 노드 — 체크리스트(열 하나), 세션 잇기와 이은 카드의 세션 요약, 카드가 든 열·칸반 지우기는 확인', async () => {
   const store = newStore();
+  store.insertWorkspace({ key: 'k1', kind: 'folder', root: 'C:/repo', createdAt: 1 });
   const sessions = { s1: { sessionId: 'S1', name: 's1' } };
   const k = new Kanbans({
     store, broadcast: () => {}, resolveWorkspace: async () => ({ key: 'k1' }), occupied: () => [], apiError,

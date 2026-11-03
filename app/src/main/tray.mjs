@@ -178,7 +178,7 @@ export function startTray({ cfg, log, hasWindow, showNode, quit, notifications =
 
   // 창이 없는 동안의 OS 알림
   function scan() {
-    if (!st.enabled || hasWindow()) return;
+    if (st.stopped || !st.enabled || hasWindow()) return;
     for (const s of st.sessions.values()) {
       const key = notifyKey(s);
       if (!key || st.notified.has(key) || st.pending.has(key)) continue;
@@ -188,7 +188,7 @@ export function startTray({ cfg, log, hasWindow, showNode, quit, notifications =
   function decide(sessionId, key) {
     st.pending.delete(key);
     const s = st.sessions.get(sessionId);
-    if (!s || notifyKey(s) !== key || !st.enabled || hasWindow()) return; // 그새 풀렸거나 창이 열렸다(창이 정한다)
+    if (st.stopped || !s || notifyKey(s) !== key || !st.enabled || hasWindow()) return; // 그새 풀렸거나 창이 열렸다(창이 정한다)
     st.notified.set(key, Date.now());
     if (!Notification.isSupported()) return log('tray notification unsupported');
     const ask = s.ask ? (s.ask.summary || (s.ask.questions && s.ask.questions[0] && s.ask.questions[0].question) || s.ask.kind) : '';
@@ -216,6 +216,7 @@ export function startTray({ cfg, log, hasWindow, showNode, quit, notifications =
   }
 
   function onEvent(ev, d) {
+    if (st.stopped) return;
     if (ev === 'settings.updated') return apply(d);
     if (ev === 'backend.migration') return noteMigration(d);
     if (ev === 'session.updated') st.sessions.set(d.sessionId, d);
@@ -226,28 +227,42 @@ export function startTray({ cfg, log, hasWindow, showNode, quit, notifications =
     scan();
   }
 
+  let retryTimer = null;
+  const retry = () => { clearTimeout(retryTimer); if (!st.stopped) retryTimer = setTimeout(connect, 2000); };
+  const clearPending = () => { for (const timer of st.pending.values()) clearTimeout(timer); st.pending.clear(); };
   async function connect() {
     if (st.stopped) return;
+    let c;
+    const current = () => !st.stopped && st.client === c;
     try {
       const info = backendInfo(cfg);
       if (!info || !(await health(info.port))) throw new Error('backend not running');
-      const c = new ApiClient(info);
+      if (st.stopped) return;
+      c = new ApiClient(info);
+      st.client = c; // 연결 중인 클라이언트도 stop에서 정리한다
       await c.open();
-      c.on(onEvent);
-      c.ws.on('close', () => { st.connected = false; st.client = null; refreshTray(); if (!st.stopped) setTimeout(connect, 2000); });
+      if (!current()) { c.close(); return; }
+      c.on((ev, d) => { if (current()) onEvent(ev, d); });
+      c.ws.on('close', () => { if (!current()) return; st.connected = false; st.client = null; clearPending(); refreshTray(); retry(); });
       const sub = await c.call('events.subscribe');
+      if (!current()) return;
       st.sessions = new Map(sub.sessions.map((s) => [s.sessionId, s]));
       // 붙기 전에 이미 기다리던 대기는 창이 정했다고 본다(같은 대기에 다시 띄우지 않는다)
       for (const s of st.sessions.values()) { const k = notifyKey(s); if (k) st.notified.set(k, Date.now()); }
       const { settings } = await c.call('settings.get');
-      st.client = c; st.connected = true;
+      if (!current()) return;
+      st.connected = true;
       const bst = await c.call('backend.status').catch(() => null);
+      if (!current()) return;
       if (bst && bst.migration) noteMigration(bst.migration);
       log(`tray connected to backend port=${info.port} tray=${!!settings.tray}`);
       apply(settings);
     } catch (e) {
+      if (c && st.client !== c) return;
+      st.client = null;
+      c?.close();
       st.connected = false;
-      if (!st.stopped) setTimeout(connect, 2000);
+      clearPending(); refreshTray(); retry();
     }
   }
   refreshTray();
@@ -266,6 +281,6 @@ export function startTray({ cfg, log, hasWindow, showNode, quit, notifications =
     iconPng: (kind, scaleFactor = 1) => (st.images ? st.images[kind].toPNG({ scaleFactor }).toString('base64') : null), // 시험이 트레이 그림을 저장한다
     // P18: 창이 백엔드를 띄우지 못한 까닭(옛 판을 옮기지 못함 등)이나 옛 창 프로필 문제를 툴팁에 보인다
     noteError(msg) { st.lastError = String(msg || '').slice(0, 200); refreshTray(); },
-    stop() { st.stopped = true; if (st.client) st.client.close(); if (st.tray) st.tray.destroy(); st.tray = null; },
+    stop() { st.stopped = true; clearTimeout(retryTimer); clearPending(); if (st.client) st.client.close(); st.client = null; st.connected = false; if (st.tray) st.tray.destroy(); st.tray = null; },
   };
 }

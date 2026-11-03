@@ -80,6 +80,16 @@ test('초점 세션: 고름 > 눌러 들어감(보일 때) > 화면 가운데 > 
 });
 
 const screen = { width: 1600, height: 900 };
+test('navigation keeps tall nodes visible and never magnifies a narrow dock leaf above 1', () => {
+  for (const [node, dock, screen] of [
+    [{ x: 0, y: 0, w: 480, h: 2000 }, null, { width: 900, height: 600 }],
+    [{ x: 0, y: 0, w: 240, h: 1000 }, { x: 0, y: 0, w: 2400, h: 1000 }, { width: 900, height: 600 }],
+  ]) {
+    const view = enterView({ node, dock, screen });
+    assert.ok(view.zoom <= 1);
+    assert.ok(fullyVisible(node, { x: screen.width / 2 - view.cx * view.zoom, y: screen.height / 2 - view.cy * view.zoom, zoom: view.zoom }, screen));
+  }
+});
 test('눌러서 보기: 노드나 덩어리가 화면의 85%를 채우고 배율은 1까지', () => {
   assert.equal(FILL, 0.85); assert.equal(ZOOM_MAX, 1);
   const r = { x: 0, y: 0, w: 1040, h: 585 };

@@ -35,8 +35,8 @@ export function reportOf({ state, lastAnswer, error, answerSource }, limit = REP
 // 이 턴이 그 전달로 시작된 턴인가: 턴 시작이 보낸 시각(확인 시각) 뒤이고 끝났다
 export function turnAnswers(result, turn) {
   if (!turn || !turn.startedAt || !turn.endedAt || turn.endedAt < turn.startedAt) return false;
-  const from = result.confirmedAt || result.sentAt;
-  return !!from && turn.startedAt >= from - 2000;
+  const from = result.sentAt || result.confirmedAt;
+  return !!from && turn.startedAt >= from - 2000 && turn.endedAt >= from;
 }
 
 // ctx: { store, broadcast(event, data), runtimeOf(sessionId) → { state, turn, lastAnswer, error, answerSource } | null }
@@ -44,7 +44,11 @@ export class ThreadLog {
   constructor(ctx, { keep = THREAD_KEEP } = {}) {
     this.ctx = ctx; this.keep = keep;
     this.open = new Set(); // 완료 보고를 기다리는 결과가 있는 세션
-    for (const it of ctx.store.threadItems({ limit: keep })) for (const r of ctx.store.threadResults(it.itemId)) if (!r.report && r.status !== 'failed' && r.status !== 'cancelled') this.open.add(r.sessionId);
+    this.answeredAt = new Map(); // 같은 끝난 턴을 두 결과에 쓰지 않는다(재시작 때도 복원)
+    for (const it of ctx.store.threadItems({ limit: keep })) for (const r of ctx.store.threadResults(it.itemId)) {
+      if (!r.report && r.status !== 'failed' && r.status !== 'cancelled') this.open.add(r.sessionId);
+      if (r.report && (r.report.state === 'ready' || r.report.state === 'error')) this.answeredAt.set(r.sessionId, Math.max(this.answeredAt.get(r.sessionId) || 0, r.report.at));
+    }
   }
 
   view(it) {
@@ -88,7 +92,9 @@ export class ThreadLog {
       if (r.status === 'sent') continue; // 아직 제출 확인 전
       if (rt.state === 'exited') { st.setThreadReport(r.deliveryId, { text: '', at: Date.now(), state: 'exited', source: null }); st.touchThreadItem(r.itemId); this.emit(r.itemId); continue; }
       if ((rt.state !== 'ready' && rt.state !== 'error') || !turnAnswers(r, rt.turn)) continue;
+      if (rt.turn.endedAt <= (this.answeredAt.get(sessionId) || 0)) continue;
       st.setThreadReport(r.deliveryId, { ...reportOf(rt), at: rt.turn.endedAt });
+      this.answeredAt.set(sessionId, rt.turn.endedAt);
       st.touchThreadItem(r.itemId);
       this.emit(r.itemId);
       break; // 한 턴은 한 전달에만 붙인다(세션마다 하나씩 보내므로 먼저 보낸 것)
@@ -103,7 +109,7 @@ export class ThreadLog {
 
   // thread.list { before?, limit } → 시간순 items, 더 앞의 것이 있으면 more
   list({ before = null, limit = 50 } = {}) {
-    const n = Math.max(1, Math.min(500, Number(limit) || 50));
+    const n = Math.max(1, Math.min(500, Math.trunc(Number(limit)) || 50));
     const items = this.ctx.store.threadItems({ before: before == null ? null : Number(before), limit: n + 1 });
     const more = items.length > n;
     const page = more ? items.slice(1) : items;

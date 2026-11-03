@@ -24,10 +24,15 @@ export class ApiServer {
     };
     this.clients.add(client);
     ws.on('message', async (raw) => {
+      const sendError = (id, code, message) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ id: id ?? null, error: { code, message } })); };
       let msg;
-      try { msg = JSON.parse(String(raw)); } catch { return ws.send(JSON.stringify({ id: null, error: { code: 'bad_json', message: 'invalid JSON' } })); }
-      const h = this.handlers[msg.method];
-      if (!h) return ws.send(JSON.stringify({ id: msg.id, error: { code: 'unknown_method', message: msg.method } }));
+      try { msg = JSON.parse(String(raw)); } catch { return sendError(null, 'bad_json', 'invalid JSON'); }
+      if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.method !== 'string' || !msg.method
+        || (msg.params != null && (typeof msg.params !== 'object' || Array.isArray(msg.params)))) {
+        return sendError(msg && (typeof msg.id === 'string' || typeof msg.id === 'number') ? msg.id : null, 'bad_request', 'expected an API request object');
+      }
+      const h = Object.hasOwn(this.handlers, msg.method) ? this.handlers[msg.method] : null;
+      if (typeof h !== 'function') return sendError(msg.id, 'unknown_method', msg.method);
       try {
         const result = await h(msg.params || {}, client);
         if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ id: msg.id, result: result ?? null }));

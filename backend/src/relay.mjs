@@ -24,15 +24,16 @@ export class TerminalRelay {
     });
     return { controllerPid: ctl.pid, paneId: session.paneId, cols, rows };
   }
-  _entry(sessionId, client) {
+  _entry(sessionId, client, controllerPid) {
     const e = this.attached.get(sessionId);
     if (!e) throw Object.assign(new Error('not attached'), { code: 'not_attached' });
     if (client && e.client !== client) throw Object.assign(new Error('attached by another client'), { code: 'not_owner' });
+    if (controllerPid != null && e.ctl.pid !== controllerPid) throw Object.assign(new Error('controller was replaced'), { code: 'stale_controller' });
     return e;
   }
-  input(sessionId, data, client) { this._entry(sessionId, client).ctl.input(data); this.onInput(sessionId, data); }
-  resize(sessionId, cols, rows, client) { this._entry(sessionId, client).ctl.resize(cols, rows); }
-  detach(sessionId, client) { this._entry(sessionId, client); this._close(sessionId, 'detach'); }
+  input(sessionId, data, client, controllerPid) { this._entry(sessionId, client, controllerPid).ctl.input(data); this.onInput(sessionId, data); }
+  resize(sessionId, cols, rows, client, controllerPid) { this._entry(sessionId, client, controllerPid).ctl.resize(cols, rows); }
+  detach(sessionId, client, controllerPid) { this._entry(sessionId, client, controllerPid); this._close(sessionId, 'detach'); }
   detachClient(client) { for (const [sid, e] of this.attached) if (e.client === client) this._close(sid, 'client closed'); }
   _close(sessionId, reason) {
     const e = this.attached.get(sessionId);

@@ -56,6 +56,8 @@ export function validateGeminiNewSessionArgs(value) {
 }
 
 function modelOption(arg) {
+  const grouped = /^-([dsy]+)m(.*)$/.exec(arg);
+  if (grouped) return { prefix: `-${grouped[1]}`, ...(grouped[2] ? { value: grouped[2].replace(/^=/, '') } : { separate: true }) };
   if (arg === '-m' || arg === '--model') return { separate: true };
   if (arg.startsWith('--model=')) return { value: arg.slice(8) };
   if (arg.startsWith('-m') && arg.length > 2) return { value: arg.slice(2).replace(/^=/, '') };
@@ -85,7 +87,10 @@ export function withGeminiModel(value, model) {
   for (let i = 0; i < args.length; i++) {
     const option = modelOption(args[i]);
     if (!option) kept.push(args[i]);
-    else if (option.separate && args[i + 1] !== undefined && !args[i + 1].startsWith('-')) i++;
+    else {
+      if (option.prefix) kept.push(option.prefix);
+      if (option.separate && args[i + 1] !== undefined && !args[i + 1].startsWith('-')) i++;
+    }
   }
   return id ? [...kept, '--model', id] : kept;
 }

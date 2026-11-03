@@ -20,6 +20,7 @@ function gitWorktrees(root) {
 export function attachWorktrees(b, { tickMs = TICK_MS, list = gitWorktrees, exists = (p) => fs.existsSync(p) } = {}) {
   const listOf = new Map(); // 워크스페이스 키 → 살아 있는 워크트리 [{ key, path, branch, ... }]
   const log = (m) => (b.log ? b.log(m) : null);
+  let stopped = false;
 
   // 폴더가 든 워크트리의 키(본 저장소면 ''). 그 리포의 목록을 아직 못 읽었으면 저장한 영역 행으로 본다
   function areaOf(wsKey, cwd) {
@@ -36,10 +37,14 @@ export function attachWorktrees(b, { tickMs = TICK_MS, list = gitWorktrees, exis
     let changed = false;
     const wss = b.store.workspaces();
     const keys = new Set(wss.map((w) => w.key));
+    for (const key of listOf.keys()) if (!keys.has(key)) listOf.delete(key);
     for (const a of b.store.worktreeAreas()) if (!keys.has(a.wsKey)) { b.store.deleteWorktreeArea(a.wsKey, a.wt); changed = true; } // 닫힌 워크스페이스
     for (const w of wss) {
       if (w.kind !== 'repo') { if (listOf.delete(w.key)) changed = true; continue; }
       const out = await list(w.root);
+      if (stopped) return false;
+      const current = b.store.getWorkspace(w.key);
+      if (!current || current.root !== w.root || current.kind !== 'repo' || current.createdAt !== w.createdAt) { listOf.delete(w.key); continue; }
       if (out == null) continue; // 읽지 못했으면 그대로 둔다(잠깐의 실패로 영역을 지우지 않는다)
       const live = liveWorktrees(parseWorktreeList(out), exists);
       listOf.set(w.key, live);
@@ -93,7 +98,9 @@ export function attachWorktrees(b, { tickMs = TICK_MS, list = gitWorktrees, exis
   let chain = Promise.resolve();
   function sync(cause = 'tick') {
     chain = chain.catch(() => {}).then(async () => {
+      if (stopped) return { changed: false, moved: 0 };
       const changed = await syncAreas();
+      if (stopped) return { changed: false, moved: 0 };
       const moved = relocateNodes();
       if (!changed && !moved) return { changed: false, moved: 0 };
       settleRegions(b, `worktrees ${cause}`);
@@ -107,7 +114,7 @@ export function attachWorktrees(b, { tickMs = TICK_MS, list = gitWorktrees, exis
     return chain;
   }
   let kickTimer = null;
-  const kick = (cause = 'kick') => { clearTimeout(kickTimer); kickTimer = setTimeout(() => sync(cause).catch((e) => log(`worktree sync error ${e.stack}`)), 300); };
+  const kick = (cause = 'kick') => { if (stopped) return; clearTimeout(kickTimer); kickTimer = setTimeout(() => sync(cause).catch((e) => log(`worktree sync error ${e.stack}`)), 300); };
   const timer = tickMs ? setInterval(() => sync('tick').catch((e) => log(`worktree sync error ${e.stack}`)), tickMs) : null;
 
   // 창에 주는 워크스페이스의 워크트리 영역들
@@ -116,7 +123,7 @@ export function attachWorktrees(b, { tickMs = TICK_MS, list = gitWorktrees, exis
   return {
     areaOf, sync, kick, view,
     live: (wsKey) => listOf.get(wsKey) || null,
-    stop() { if (timer) clearInterval(timer); clearTimeout(kickTimer); },
+    stop() { stopped = true; if (timer) clearInterval(timer); clearTimeout(kickTimer); },
     handlers: {
       'worktree.list': (p) => (p && p.workspace ? view(p.workspace) : b.store.workspaces().map((w) => ({ workspace: w.key, areas: view(w.key) }))),
       'worktree.sync': async () => sync('api'),

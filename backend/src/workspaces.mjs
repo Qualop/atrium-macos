@@ -72,7 +72,7 @@ export function elsewhereOf(ws, git) {
   }
   if (ws.kind === 'folder') {
     const c = pathKey(git.cwd);
-    if (c === ws.key || c.startsWith(ws.key + '/')) return null;
+    if (c === ws.key || c.startsWith(ws.key.endsWith('/') ? ws.key : ws.key + '/')) return null;
   }
   return { root: normPath(git.cwd), repo: false, name: baseName(git.cwd) };
 }

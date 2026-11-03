@@ -24,7 +24,8 @@ export function turnsFromMessages(messages) {
   let cur = null;
   for (const m of messages || []) {
     if (m.role === 'user' && !isSyntheticUserText(m.text)) {
-      cur = { turn: turns.length + 1, prompt: m.text, promptAt: m.at, answer: null, answerAt: null, answerSeq: null, tools: 0 };
+      if (cur && m.seq != null && cur.promptSeq === m.seq) { cur.prompt += '\n\n' + m.text; continue; }
+      cur = { turn: turns.length + 1, prompt: m.text, promptAt: m.at, promptSeq: m.seq, answer: null, answerAt: null, answerSeq: null, tools: 0 };
       turns.push(cur);
       continue;
     }
@@ -36,7 +37,7 @@ export function turnsFromMessages(messages) {
       cur.answerAt = m.at;
     }
   }
-  return turns.map(({ answerSeq, ...t }) => ({ ...t, long: isLongAnswer(t.answer) }));
+  return turns.map(({ answerSeq, promptSeq, ...t }) => ({ ...t, long: isLongAnswer(t.answer) }));
 }
 
 // 화면에서 고른 답(판 이벤트)을 턴으로
@@ -74,18 +75,18 @@ export class Outputs {
 
   turnsOf(s) {
     const c = this.ctx;
-    if (c.hooked(s) || s.kind === 'claude') {
+    if (s.kind === 'claude' || (!s.kind && c.hooked(s))) {
       const file = c.transcriptOf(s);
       const r = file ? c.readMessages(file, { limit: 100000 }) : { exists: false, messages: [] };
       if (r.exists) return { source: 'transcript', file, turns: turnsFromMessages(r.messages) };
     }
     const all = c.store.events({ sessionId: s.sessionId, limit: 2000 });
-    const agy = all.filter((e) => e.kind === 'answer_agy');
-    if (agy.length) return { source: 'transcript', file: s.rt.agyTranscriptPath || null, turns: turnsFromScreenEvents(agy) };
-    const gemini = all.filter((e) => e.kind === 'answer_gemini');
-    if (gemini.length) return { source: 'hook', file: null, turns: turnsFromScreenEvents(gemini) };
-    const ev = all.filter((e) => e.kind === 'answer_screen');
-    if (ev.length) return { source: 'screen', file: null, turns: turnsFromScreenEvents(ev) };
+    const sources = { answer_agy: 'transcript', answer_gemini: 'hook', answer_screen: 'screen' };
+    const ev = all.filter((e) => Object.hasOwn(sources, e.kind));
+    if (ev.length) {
+      const turns = turnsFromScreenEvents(ev).map((turn, i) => ({ ...turn, source: sources[ev[i].kind] }));
+      return { source: turns.at(-1).source, file: ev.at(-1).kind === 'answer_agy' ? s.rt.agyTranscriptPath || null : null, turns };
+    }
     // 대화 기록도 화면 기록도 없으면 지금 들고 있는 마지막 답 하나
     if (s.rt.lastAnswer) return { source: s.rt.answerSource || 'hook', file: null, turns: [{ turn: 1, prompt: s.rt.lastPrompt || null, promptAt: s.rt.lastPromptAt || null, answer: s.rt.lastAnswer, answerAt: s.rt.lastAnswerAt, tools: null, long: isLongAnswer(s.rt.lastAnswer) }] };
     return { source: null, file: null, turns: [] };
@@ -99,7 +100,7 @@ export class Outputs {
     const t = pickTurn(turns, p.turn);
     if (p.turn != null && !t) throw c.apiError('not_found', `없는 턴: ${p.turn}(턴 ${turns.length}개)`);
     return {
-      sessionId: s.sessionId, name: s.name, workspaceKey: s.workspaceKey || null, workspace: c.workspaceName(s.workspaceKey), source,
+      sessionId: s.sessionId, name: s.name, workspaceKey: s.workspaceKey || null, workspace: c.workspaceName(s.workspaceKey), source: t?.source || source,
       turnCount: turns.length,
       turn: t ? { ...t, markdown: t.answer || '' } : null,
       turns: turns.map((x) => ({ turn: x.turn, prompt: clip1(x.prompt, 120), answerHead: clip1(x.answer, 160), answerAt: x.answerAt, chars: (x.answer || '').length, long: x.long })),
@@ -117,7 +118,7 @@ export class Outputs {
     const dir = path.join(c.cfg.dataDir, 'outputs', safeName(wsName));
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, outputFileName({ session: s.name, turn: t.turn, at: t.answerAt }));
-    const text = renderMarkdown({ session: s.name, workspace: wsName, cwd: s.cwd, turn: t.turn, prompt: t.prompt, answer: t.answer, answerAt: t.answerAt, source });
+    const text = renderMarkdown({ session: s.name, workspace: wsName, cwd: s.cwd, turn: t.turn, prompt: t.prompt, answer: t.answer, answerAt: t.answerAt, source: t.source || source });
     fs.writeFileSync(file, text, 'utf8');
     c.store.addEvent(s.sessionId, 'output_saved', { turn: t.turn, file, bytes: Buffer.byteLength(text) });
     return { saved: true, file, turn: t.turn, bytes: Buffer.byteLength(text), dir };

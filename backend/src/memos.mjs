@@ -31,6 +31,12 @@ export function geometry(p, base, min = MEMO) {
   return { ...base, ...f };
 }
 
+// 비동기 이름·경로 조회 중 워크스페이스가 닫힐 수 있다. 쓰기 직전에 현재 소속을 확인한다.
+export function requireWorkspace(ctx, key) {
+  if (key != null && !ctx.store.getWorkspace(key)) throw ctx.apiError('not_found', `없는 워크스페이스: ${key}`);
+  return key;
+}
+
 // ctx: { store, broadcast(event, data), resolveWorkspace(ref, { required }) → Promise<{ key } | null>, occupied() → 사각형들, apiError }
 export class Memos {
   constructor(ctx) { this.ctx = ctx; }
@@ -54,7 +60,7 @@ export class Memos {
   // x·y를 주면 그 자리 그대로. 아니면 빈자리(P6c: ctx.place = 단일 캔버스 빈자리. near는 원하는 왼쪽 위 { x, y })
   async create(p) {
     const size = geometry({ w: p.w ?? MEMO.w, h: p.h ?? MEMO.h }, {});
-    const ws = (await this.wsKey(p.workspace)) ?? null;
+    const ws = requireWorkspace(this.ctx, (await this.wsKey(p.workspace)) ?? null);
     const at = p.x != null && p.y != null ? geometry({ x: p.x, y: p.y }, {}) : placeAt(this.ctx, size, ws, p.near);
     const m = { memoId: 'm' + crypto.randomBytes(5).toString('hex'), workspaceKey: ws, ...at, ...size, text: this.text(p.text), color: p.color ? String(p.color).slice(0, 32) : null, createdAt: Date.now() };
     this.ctx.store.insertMemo(m);
@@ -64,11 +70,11 @@ export class Memos {
   }
   // memo.update { memo, text?, x?, y?, w?, h?, color?, workspace? }
   async update(p) {
+    const ws = requireWorkspace(this.ctx, await this.wsKey(p.workspace));
     const m = this.find(p.memo);
     const f = geometry(p, {});
     if (p.text !== undefined) f.text = this.text(p.text);
     if (p.color !== undefined) f.color = p.color ? String(p.color).slice(0, 32) : null;
-    const ws = await this.wsKey(p.workspace);
     if (ws !== undefined) f.workspaceKey = ws;
     if (Object.keys(f).length) this.ctx.store.updateMemo(m.memoId, f);
     const v = this.ctx.store.getMemo(m.memoId);

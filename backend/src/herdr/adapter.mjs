@@ -50,6 +50,7 @@ export function herdrCall(pipe, method, params = {}, timeoutMs = 15000) {
     let buf = '';
     let done = false;
     const sock = net.connect(pipe);
+    sock.setEncoding('utf8');
     const timer = setTimeout(() => { if (!done) { done = true; sock.destroy(); reject(new HerdrError('timeout', `no response in ${timeoutMs}ms`, method)); } }, timeoutMs);
     sock.on('connect', () => sock.write(JSON.stringify({ id, method, params }) + '\n'));
     sock.on('data', (d) => (buf += d));
@@ -190,7 +191,7 @@ export class HerdrAdapter extends EventEmitter {
     this._watching = true;
     this._connectLoop();
   }
-  stopEvents() { this._watching = false; this._subGen++; if (this._sub) this._sub.destroy(); this._sub = null; }
+  stopEvents() { this._watching = false; this._subGen++; this._pendingSub?.destroy(); this._pendingSub = null; if (this._sub) this._sub.destroy(); this._sub = null; }
 
   async _connectLoop() {
     while (this._watching) {
@@ -220,16 +221,23 @@ export class HerdrAdapter extends EventEmitter {
   }
 
   async _subscribeNow() {
+    if (!this._watching) throw new HerdrError('closed', 'event watcher stopped', 'events.subscribe');
     const panes = await this._livePanes();
+    if (!this._watching) throw new HerdrError('closed', 'event watcher stopped', 'events.subscribe');
     const subscriptions = [
       { type: 'pane.created' }, { type: 'pane.closed' }, { type: 'pane.exited' }, { type: 'pane.agent_detected' }, { type: 'workspace.closed' }, { type: 'pane.moved' },
       ...panes.map((p) => ({ type: 'pane.agent_status_changed', pane_id: p })),
     ];
     const gen = ++this._subGen;
     const sock = net.connect(this.pipe);
+    sock.setEncoding('utf8');
+    this._pendingSub = sock;
     await new Promise((resolve, reject) => {
       let buf = '';
       let acked = false;
+      const timer = setTimeout(() => { reject(new HerdrError('timeout', 'subscription acknowledgement timed out', 'events.subscribe')); sock.destroy(); }, this.subscribeTimeoutMs || 10000);
+      const clear = () => { clearTimeout(timer); if (this._pendingSub === sock) this._pendingSub = null; };
+      sock.once('error', clear); sock.once('close', clear);
       sock.on('connect', () => sock.write(JSON.stringify({ id: 'mtsub' + gen, method: 'events.subscribe', params: { subscriptions } }) + '\n'));
       sock.on('data', (d) => {
         buf += d;
@@ -238,7 +246,7 @@ export class HerdrAdapter extends EventEmitter {
           const line = buf.slice(0, i); buf = buf.slice(i + 1);
           if (!line.trim()) continue;
           let m; try { m = JSON.parse(line); } catch { continue; }
-          if (!acked) { acked = true; if (m.error) { reject(new HerdrError(m.error.code, m.error.message, 'events.subscribe')); sock.destroy(); } else resolve(); continue; }
+          if (!acked) { acked = true; clear(); if (m.error) { reject(new HerdrError(m.error.code, m.error.message, 'events.subscribe')); sock.destroy(); } else resolve(); continue; }
           // 구독을 바꾸는 동안 옛 구독과 새 구독이 잠깐 함께 열려 있다. 두 곳으로 온 같은 이벤트는 한 번만 낸다.
           // (P2에서 고침: 전에는 새 구독을 여는 순간부터 옛 구독의 이벤트를 버리고, 받은 즉시 옛 구독을 닫아 파이프에 남은 이벤트까지 버렸다.
           //  세션을 잇달아 띄우면 그 사이의 agent_detected를 잃어 전달이 no_agent로 멈췄다.)
@@ -252,7 +260,7 @@ export class HerdrAdapter extends EventEmitter {
         if (sock === this._sub && this._watching) { this._sub = null; this.connected = false; this.emit('disconnected'); this._connectLoop(); }
       });
     });
-    if (sock.destroyed) throw new HerdrError('closed', 'subscription closed right after ack', 'events.subscribe');
+    if (sock.destroyed || !this._watching || gen !== this._subGen) { sock.destroy(); throw new HerdrError('closed', 'subscription closed or watcher stopped', 'events.subscribe'); }
     const old = this._sub; this._sub = sock;
     if (old) setTimeout(() => old.destroy(), SUB_OVERLAP_MS); // 옛 구독은 새 구독이 받은 뒤 잠깐 더 열어 두어 오는 중이던 이벤트를 받는다
     this.subscribedPanes = panes;
@@ -386,6 +394,8 @@ class Controller extends EventEmitter {
     this.pid = this.proc.pid;
     this.exited = null;
     let buf = '';
+    this.proc.stdout.setEncoding('utf8');
+    this.proc.stderr.setEncoding('utf8');
     this.proc.stdout.on('data', (d) => {
       buf += d;
       let i;

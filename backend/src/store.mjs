@@ -249,15 +249,15 @@ export class Store {
     const like = `%${String(q).replace(/[!%_]/g, (c) => '!' + c)}%`;
     const rows = [
       ...this.st("SELECT 'delivery' AS src, session_id, text, created_at AS t FROM deliveries WHERE text LIKE ? ESCAPE '!' ORDER BY created_at DESC LIMIT ?").all(like, limit),
-      ...this.st("SELECT 'hook' AS src, session_id, data AS text, t FROM events WHERE kind = 'hook' AND data LIKE ? ESCAPE '!' ORDER BY id DESC LIMIT ?").all(like, limit),
+      ...this.st("SELECT 'hook' AS src, session_id, data AS text, t FROM events WHERE kind = 'hook' AND (CASE WHEN json_valid(data) THEN json_extract(data, '$.prompt') END LIKE ? ESCAPE '!' OR CASE WHEN json_valid(data) THEN json_extract(data, '$.lastAnswer') END LIKE ? ESCAPE '!') ORDER BY id DESC LIMIT ?").all(like, like, limit),
       ...this.st("SELECT 'link' AS src, l.to_session AS session_id, e.text, e.t FROM link_events e JOIN links l ON l.link_id = e.link_id WHERE e.kind = 'prompt' AND e.text LIKE ? ESCAPE '!' ORDER BY e.id DESC LIMIT ?").all(like, limit),
     ];
     return rows.map(plain);
   }
-  // P6c: 출력(hook이 없는 세션의 턴 끝 화면 답, 판 이벤트 answer_screen)에서 찾는다
+  // 화면 답과 제공자별 완료 답. JSON 표현 대신 본문에서 찾아 따옴표·역슬래시도 그대로 검색한다.
   searchOutputs(q, limit = 100) {
     const like = `%${String(q).replace(/[!%_]/g, (c) => '!' + c)}%`;
-    return this.st("SELECT session_id, data AS text, t FROM events WHERE kind = 'answer_screen' AND data LIKE ? ESCAPE '!' ORDER BY id DESC LIMIT ?").all(like, limit).map(plain);
+    return this.st("SELECT session_id, data AS text, t FROM events WHERE kind IN ('answer_screen', 'answer_gemini', 'answer_agy') AND CASE WHEN json_valid(data) THEN json_extract(data, '$.text') END LIKE ? ESCAPE '!' ORDER BY id DESC LIMIT ?").all(like, limit).map(plain);
   }
 }
 installRecords(Store);

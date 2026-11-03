@@ -6,7 +6,7 @@ import { findExecutable } from './platform.mjs';
 import { geminiContext } from './gemini.mjs';
 import { installAgyHooks } from './agy.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
-export function writeAgySession({ dir, sessionId, token, hookUrl, branchEnv, pluginDir, herdrPath, hooksFile = path.join(os.homedir(), '.gemini/config/hooks.json'), executable = findExecutable('agy') }) {
+export function writeAgySession({ dir, sessionId, token, hookUrl, branchEnv = {}, pluginDir, herdrPath, hooksFile = path.join(os.homedir(), '.gemini/config/hooks.json'), executable = findExecutable('agy') }) {
   if (!executable) throw Object.assign(new Error('Antigravity CLI가 설치되지 않았습니다. https://antigravity.google/docs/getting-started'), { code: 'not_installed' });
   installAgyHooks({ file: hooksFile, nodePath: process.execPath, script: path.resolve(here, '../scripts/agy-hook.mjs') });
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });

@@ -4,7 +4,7 @@
 // 열과 카드 바꾸기는 순수 함수 applyKanbanOp로 한다(단위 시험). 노드 자리와 워크스페이스 소속은 메모와 같은 규칙이다(memos.mjs).
 import crypto from 'node:crypto';
 import { m, confirmResult } from './msg.mjs'; // P16: 화면 글 열쇠
-import { geometry, placeAt } from './memos.mjs';
+import { geometry, placeAt, requireWorkspace } from './memos.mjs';
 
 export const KANBAN = { w: 640, h: 360, minW: 200, minH: 120, maxColumns: 12, maxCards: 500, maxText: 2000, maxTitle: 80 };
 export const DEFAULT_COLUMNS = ['할 일', '하는 중', '끝'];
@@ -90,7 +90,7 @@ export class Kanbans {
   async create(p) {
     const cols = typeof p.columns === 'string' ? p.columns.split(',') : p.columns;
     const size = geometry({ w: p.w ?? KANBAN.w, h: p.h ?? KANBAN.h }, {}, KANBAN);
-    const ws = (await this.wsKey(p.workspace)) ?? null;
+    const ws = requireWorkspace(this.ctx, (await this.wsKey(p.workspace)) ?? null);
     const at = p.x != null && p.y != null ? geometry({ x: p.x, y: p.y }, {}, KANBAN) : placeAt(this.ctx, size, ws, p.near);
     const k = { kanbanId: 'b' + crypto.randomBytes(5).toString('hex'), workspaceKey: ws, title: this.title(p.title, cols && cols.length === 1 ? '체크리스트' : '칸반'), ...at, ...size, columns: newColumns(cols), createdAt: Date.now() };
     this.ctx.store.insertKanban(k);
@@ -101,7 +101,7 @@ export class Kanbans {
   // op: addColumn{name,index?} renameColumn{column,name} moveColumn{column,index} removeColumn{column} addCard{column?,text,session?,index?}
   //     editCard{card,text} moveCard{card,column?,index?} removeCard{card} linkCard{card,session|null}
   async update(p) {
-    const ws = await this.wsKey(p.workspace);
+    const ws = requireWorkspace(this.ctx, await this.wsKey(p.workspace));
     const k = this.find(p.kanban);
     const f = geometry(p, {}, KANBAN);
     if (p.title !== undefined) f.title = this.title(p.title);

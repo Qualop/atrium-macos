@@ -28,7 +28,9 @@ export class HerdrError extends Error {
 
 // 부모 Claude Code 세션 표시 변수와 백엔드 자신의 변수를 뺀 환경
 export function cleanEnv(base = process.env) {
-  return Object.fromEntries(Object.entries(base).filter(([k]) => !/^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_EFFORT|CLAUDE_PID|CLAUDE_AGENT_SDK|HERDR_|MTASK_|ATRIUM_)/i.test(k)));
+  const npmLaunch = Object.keys(base).some((k) => /^npm_lifecycle_event$/i.test(k));
+  // npm --prefix app is a launcher setting, not the login shell's Node prefix.
+  return Object.fromEntries(Object.entries(base).filter(([k]) => !/^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_EFFORT|CLAUDE_PID|CLAUDE_AGENT_SDK|HERDR_|MTASK_|ATRIUM_)/i.test(k) && !(npmLaunch && /^npm_config_prefix$/i.test(k))));
 }
 
 function execText(file, args, opts = {}) {

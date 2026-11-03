@@ -83,6 +83,8 @@ try {
   await until(async () => {
     try { return (await client.call('backend.status')).relay.some((r) => r.sessionId === shell.sessionId && r.frames > 0); } catch { return false; }
   }, 'terminal frames');
+  const initial = await client.call('session.get', { session: shell.sessionId, lines: 100 });
+  assert.doesNotMatch(String(initial.screenTail || ''), /nvm is not compatible with the .npm_config_prefix/i);
   const terminal = page.locator('.xterm-helper-textarea').first();
   await terminal.focus();
   await page.keyboard.type('printf "ATRIUM_MAC_%s\\n" OK'); await page.keyboard.press('Enter');

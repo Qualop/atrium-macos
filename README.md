@@ -119,7 +119,7 @@ To stop the sessions too, choose the menu item that stops **herdr and all sessio
 
 ## Verification and platform status
 
-As of **2026-11-04**, local verification passed **457 backend tests and 94 UI tests**, plus the renderer build. The macOS integration checks include nine concurrent sessions, model selection, Korean copy at 900×600, multiline paste, synthetic Korean IME events, WebGL context loss, backend crash recovery, and engine stop/start. Test groups were run separately; these are not a claim that every combination or platform has been tested.
+As of **2026-11-04**, local verification passed **458 backend tests and 94 UI tests**, plus the renderer build. The macOS integration checks include nine concurrent sessions, model selection, Korean copy at 900×600, multiline paste, synthetic Korean IME events, WebGL context loss, backend crash recovery, and engine stop/start. Test groups were run separately; these are not a claim that every combination or platform has been tested.
 
 | Environment | Status |
 |---|---|

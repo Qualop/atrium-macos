@@ -17,3 +17,9 @@ test('stopEvents cancels an acknowledgement that arrives later',async(t)=>{
  const a=new HerdrAdapter({herdrPath:'unused',session:'atrium-dev-transport',logDir:dir});a.pipe=pipe;a._watching=true;t.after(()=>a.stopEvents());
  const pending=a._subscribe().catch(()=>{});await received;a.stopEvents();await pending;assert.equal(a._sub,null);
 });
+test('npm launcher prefix does not leak into agent login shells, while deliberate user configuration is preserved', async()=>{
+ const {cleanEnv}=await import('../src/herdr/adapter.mjs');
+ const fromNpm=cleanEnv({PATH:'/bin',npm_lifecycle_event:'start',npm_config_prefix:'/app',NPM_CONFIG_PREFIX:'/app',npm_config_registry:'https://registry.example',CUSTOM:'keep'});
+ assert.equal(fromNpm.npm_config_prefix,undefined);assert.equal(fromNpm.NPM_CONFIG_PREFIX,undefined);assert.equal(fromNpm.CUSTOM,'keep');assert.equal(fromNpm.npm_config_registry,'https://registry.example');
+ assert.equal(cleanEnv({npm_config_prefix:'/user-prefix'}).npm_config_prefix,'/user-prefix');
+});

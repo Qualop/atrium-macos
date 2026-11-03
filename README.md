@@ -59,7 +59,7 @@ For a **Gemini API key or supported enterprise authentication**, install `npm in
 
 For example, connect a Claude session to a Gemini session with the **reviewer** role. Ask the working session to have its reviewer inspect the change, then address the findings. The role notice provides the delegation commands. Gemini can also delegate to Claude or Codex. Naming a session `reviewer` alone does not assign a role.
 
-Gemini prompt submissions, completed answers and shell tool calls feed the board's collaboration records. Managed children inherit their parent's agent kind; use `--kind claude`, `--kind codex` or `--kind gemini` / `--kind agy` to change it. Answer login, trust and approval prompts in the terminal. Gemini CLI gets a separate settings profile referencing its existing login/history. Antigravity requires a named `atrium-board` entry in `~/.gemini/config/hooks.json`; existing hooks are preserved, and that entry only reports from Atrium-managed sessions. Antigravity hook payloads omit final response text, so its completed answers use terminal snapshots. If your settings disable hooks, detailed collaboration tracking is unavailable. Claude history auto-indexing and sleep controls do not apply to Gemini.
+Gemini prompt submissions, completed answers and shell tool calls feed the board's collaboration records. Managed children inherit their parent's agent kind; use `--kind claude`, `--kind codex` or `--kind gemini` / `--kind agy` to change it. Answer login, trust and approval prompts in the terminal. Gemini CLI gets a separate settings profile referencing its existing login/history. Antigravity requires a named `atrium-board` entry in `~/.gemini/config/hooks.json`; existing hooks are preserved, and that entry only reports from Atrium-managed sessions. Antigravity hook payloads omit final response text, so Atrium reads completed responses from that session’s native transcript, with terminal snapshots as a fallback. If your settings disable hooks, detailed collaboration tracking is unavailable. Claude history auto-indexing and sleep controls do not apply to Gemini.
 
 ## What is included
 
@@ -119,7 +119,7 @@ To stop the sessions too, choose the menu item that stops **herdr and all sessio
 
 ## Verification and platform status
 
-As of **2026-11-03**, local verification passed **353 backend tests and 80 UI tests**, plus the renderer build. The macOS integration checks include nine concurrent sessions, model selection, Korean copy at 900×600, multiline paste, synthetic Korean IME events, WebGL context loss, backend crash recovery, and engine stop/start. Test groups were run separately; these are not a claim that every combination or platform has been tested.
+As of **2026-11-03**, local verification passed **355 backend tests and 80 UI tests**, plus the renderer build. The macOS integration checks include nine concurrent sessions, model selection, Korean copy at 900×600, multiline paste, synthetic Korean IME events, WebGL context loss, backend crash recovery, and engine stop/start. Test groups were run separately; these are not a claim that every combination or platform has been tested.
 
 | Environment | Status |
 |---|---|
@@ -128,7 +128,7 @@ As of **2026-11-03**, local verification passed **353 backend tests and 80 UI te
 | Intel Mac hardware | Not verified. |
 | Windows | Existing implementation retained and CI configured; native regression testing has not been performed locally. |
 
-Google model listing was also verified from the installed app. The actual Gemini CLI completed a turn and exact-ID resume against a local fake model server. Full Antigravity reviewer turns remain pending completion of its interactive onboarding; mixed-provider collaboration is covered by backend contract tests.
+Google model listing was also verified from the installed app. The actual Gemini CLI completed a turn and exact-ID resume against a local fake model server. A live Google worker/reviewer pair completed review → correction → re-review through board deliveries. Mixed-provider collaboration is covered separately by backend contract tests.
 
 Physical reboot recovery, real IME candidate windows and language switching, OS notification clicks, and authenticated model work across every provider still require manual validation. A passing test suite is not a security certification.
 

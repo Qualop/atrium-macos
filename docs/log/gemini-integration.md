@@ -1,4 +1,4 @@
-상태: 열림
+상태: 닫힘
 날짜: 2026-11-03
 
 ## 지시
@@ -17,10 +17,12 @@ Gemini CLI를 Atrium에서 모델 선택·세션 실행·상호 리뷰·하위 �
 
 ## 보고
 
-- 백엔드 353개, 화면 80개 통과. renderer 빌드, 문서 규약, diff 검사 통과.
+- 백엔드 355개, 화면 80개 통과. renderer 빌드, 문서 규약, diff 검사 통과.
 - 설치본 macOS 시험: Gemini CLI 모델 14개·Codex 모델 8개, Google 제공자 선택(payload는 fixture), 한국어, 터미널 입력, 창/백엔드 재시작 검증. 실제 설치 앱 API에서는 agy 모델 6개 조회 성공.
 - 실제 Gemini CLI 0.66.0 + 로컬 가짜 모델 서버: 세션 프로필·hook·최종 답·정확한 ID 이어 가기 성공. 실제 계정 토큰을 사용한 모델 추론 시험은 아니다.
 - Claude→Gemini/agy 및 Gemini/agy→Codex 요청 추적은 백엔드 처리기와 SQLite 계약 시험으로 검증했다.
 - 실제 agy 초기 설정 화면이 herdr에서 idle로 보이는 문제를 발견했다. 테스트 세션을 중단하고 보드 대기열 전송 직전 실제 입력창 footer를 확인하도록 보완했다. 초기 동의·테마·로그인 화면에는 메시지와 Enter를 보내지 않는다.
 - 설치된 /Applications/Atrium.app 반영·서명 검증·최소 PATH 시험 완료. 설치 전 코드는 /tmp/atrium-google-backup-McU5tS에 백업했다.
-- Gemini CLI 개인 OAuth는 인증 후 서비스에서 UNSUPPORTED_CLIENT로 거절됨을 실제 화면과 공식 저장소 보고로 확인했다. Google 개인 계정 경로는 Antigravity CLI 1.4.12(공식 설치 스크립트·체크섬 검증)로 추가했다. agy는 공용 hooks.json에 명명된 조건부 항목이 필요하다. 실제 계정 모델의 상호 리뷰는 Antigravity 인증 후 별도 확인이 필요하다.
+- Gemini CLI 개인 OAuth는 인증 후 서비스에서 UNSUPPORTED_CLIENT로 거절됨을 실제 화면과 공식 저장소 보고로 확인했다. Google 개인 계정 경로는 Antigravity CLI 1.4.12(공식 설치 스크립트·체크섬 검증)로 추가했다. agy는 공용 hooks.json에 명명된 조건부 항목이 필요하다. 사용자가 Google 로그인과 초기 설정을 완료하고 데이터 제공을 거절했다. 이 선택을 유지했다. 실제 Google 모델로 별도 작업자·검토자 두 세션의 리뷰 → 수정 → 재검토가 통과했다.
+
+- 실사용에서 답변에 입력 문구·spinner가 섞이고 herdr가 working에 남는 문제를 추가 발견했다. 인증된 hook이 가리키는 native transcript의 완료 PLANNER_RESPONSE만 읽으며, fullyIdle Stop과 실제 입력창을 함께 확인해 상태를 끝낸다. 부분 JSONL과 생각/입력/시스템 행을 제외하는 회귀 시험을 추가했다.

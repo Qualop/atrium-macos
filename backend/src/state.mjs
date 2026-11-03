@@ -171,6 +171,7 @@ export function deriveState(rt) {
   if (rt.kind === 'shell') return { state: rt.shell && rt.shell.atPrompt === false ? 'shell_running' : 'shell_idle' };
   const s = h.status;
   if (rt.kind === 'agy' && !rt.agyTurnActive && rt.agyComposer && rt.agyComposer !== 'ready') return { state: rt.agyComposer, ...(rt.agyComposer === 'waiting' ? { ask: { kind: 'screen', tail: rt.screenAsk?.tail || null } } : {}) };
+  if (rt.kind === 'agy' && rt.agyStoppedAt && !rt.agyTurnActive && rt.agyComposer === 'ready' && s !== 'blocked') return rt.lastError ? { state: 'error', error: rt.lastError } : { state: 'ready' };
   if (rt.kind === 'agy' && rt.agyTurnActive && s !== 'blocked') return { state: 'working' };
   if (rt.kind === 'gemini' && rt.geminiIntegration && s !== 'blocked') {
     if (!rt.geminiReady) return { state: 'starting' };

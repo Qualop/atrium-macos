@@ -20,6 +20,7 @@ import { summarizeChanges, CHANGE_KINDS } from './changes.mjs';
 import { ResourceMonitor, childProcesses } from './resources.mjs';
 import { listAgyModels, withAgyModel, agyModelFromArgs } from './agy.mjs';
 import { writeAgySession } from './agy-session.mjs';
+import { readAgyAnswer } from './agy-transcript.mjs';
 import { normalizeAgyHook, agyComposerState } from './agy-hooks.mjs';
 import { writeGeminiSession, normalizeGeminiHook, geminiAuthIssue } from './gemini.mjs';
 import { listGeminiModels } from './gemini-models.mjs';
@@ -215,6 +216,7 @@ export class Backend {
   }
 
   async stop(reason = 'stop') {
+    this.stopping = true;
     this.log('backend stopping:', reason);
     clearInterval(this.heartbeat); clearInterval(this.quietTimer); clearInterval(this.clientTimer); clearInterval(this.gitTimer); clearInterval(this.shellTimer);
     this.resources.stop();
@@ -468,14 +470,15 @@ export class Backend {
       if (typeof nativeBody.transcriptPath === 'string') s.rt.agyTranscriptPath = nativeBody.transcriptPath;
       if (body.notification_type === 'agy_working') {
         if (!s.rt.agyTurnActive) s.rt.turn = { startedAt: Date.now(), endedAt: null };
-        s.rt.agyTurnActive = true; this.queue.onAgentWorking(s.sessionId);
+        s.rt.agyTurnActive = true; s.rt.agyStoppedAt = null; s.rt.lastError = null; this.queue.onAgentWorking(s.sessionId);
       }
       if (body.notification_type === 'agy_stop' && nativeBody.fullyIdle === true) {
         const started = s.rt.turn.startedAt;
         setImmediate(async () => {
-          await this.readScreenAnswer(s);
-          if (s.rt.turn.startedAt !== started) return;
-          s.rt.agyTurnActive = false; s.rt.turn.endedAt = Date.now();
+          if (!this.sessions.has(s.sessionId) || this.stopping) return;
+          await this.readScreenAnswer(s, { completed: true });
+          if (!this.sessions.has(s.sessionId) || this.stopping || s.rt.turn.startedAt !== started) return;
+          s.rt.agyTurnActive = false; s.rt.turn.endedAt = Date.now(); s.rt.agyStoppedAt = Date.now();
           if (nativeBody.error) s.rt.lastError = { type: 'agy_error', message: clip(nativeBody.error, 1000), at: Date.now() };
           this.broadcastSession(s, { cause: 'agy:stop' });
         });
@@ -694,7 +697,18 @@ export class Backend {
       if (!this.hooked(s)) s.rt.screenAsk = { tail: s.kind === 'gemini' ? geminiAuthIssue(text) || tailText(text, 14) : tailText(text, 14), at: Date.now() };
     } catch {}
   }
-  async readScreenAnswer(s) {
+  async readScreenAnswer(s, { completed = false } = {}) {
+    if (s.kind === 'agy' && s.rt.agySessionId) {
+      if (!completed && s.rt.agyTurnActive) return;
+      const answer = readAgyAnswer(s.rt.agyTranscriptPath);
+      if (answer) {
+        s.rt.lastAnswer = answer.text; s.rt.lastAnswerAt = answer.step !== s.rt.agyAnswerStep ? Date.now() : s.rt.lastAnswerAt || answer.at || Date.now(); s.rt.answerSource = 'transcript';
+        if (answer.step !== s.rt.agyAnswerStep) {
+          this.store.addEvent(s.sessionId, 'answer_agy', { text: answer.text, prompt: answer.prompt }); s.rt.agyAnswerStep = answer.step;
+        }
+        return;
+      }
+    }
     if (s.kind === 'gemini' && s.rt.geminiTurnActive) return;
     try {
       const text = await this.adapter.readScreen(s.paneId, { source: 'recent_unwrapped', lines: 60 });

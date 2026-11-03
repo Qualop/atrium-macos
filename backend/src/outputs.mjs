@@ -80,6 +80,8 @@ export class Outputs {
       if (r.exists) return { source: 'transcript', file, turns: turnsFromMessages(r.messages) };
     }
     const all = c.store.events({ sessionId: s.sessionId, limit: 2000 });
+    const agy = all.filter((e) => e.kind === 'answer_agy');
+    if (agy.length) return { source: 'transcript', file: s.rt.agyTranscriptPath || null, turns: turnsFromScreenEvents(agy) };
     const gemini = all.filter((e) => e.kind === 'answer_gemini');
     if (gemini.length) return { source: 'hook', file: null, turns: turnsFromScreenEvents(gemini) };
     const ev = all.filter((e) => e.kind === 'answer_screen');

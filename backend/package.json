@@ -1,12 +1,12 @@
 {
   "name": "atrium-backend",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Atrium backend: herdr adapter, hook receiver, session state, delivery queue, SQLite, WebSocket API and the atrium CLI",
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=24 <25"
+    "node": "^22.13.0 || ^24.0.0 || ^26.0.0"
   },
   "bin": {
     "atrium": "bin/atrium.mjs",

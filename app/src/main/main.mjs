@@ -11,6 +11,7 @@ import { loadConfig, BACKEND_ROOT, APP_NAME, APP_ID, envVar, legacyAppUserData }
 import { startBackend, stopBackend, backendInfo, health } from '../../../backend/src/client.mjs';
 import { startTray, whenBoardReady } from './tray.mjs'; // I7(P6b): 트레이 상주
 import { translate, DEFAULT_LANGUAGE } from '../renderer/lib/i18n.js'; // P16: 대화상자 글. 언어는 트레이가 받은 판 설정
+import { macCliDirectories } from './cli-paths.mjs';
 import { migrateAppProfile } from './profile.mjs'; // P18: 옛 창 프로필 옮기기
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +24,7 @@ if (fs.existsSync(path.join(process.resourcesPath, 'runtime', 'cli-paths.json'))
   } catch {}
 }
 const bundledNode = path.join(process.resourcesPath, 'runtime', 'node');
+if (process.platform === 'darwin') process.env.PATH = [...new Set([...(fs.existsSync(bundledNode) ? [path.dirname(bundledNode)] : []), ...(process.env.PATH || '').split(path.delimiter), ...macCliDirectories(app.getPath('home'))])].filter(Boolean).join(path.delimiter);
 // Atrium 로고(app/design/brand에서 가져옴): 창·작업 표시줄·Alt+Tab은 ico, 알림은 256px PNG
 const WINDOW_ICON = path.join(APP_ROOT, 'assets', process.platform === 'win32' ? 'icon.ico' : 'atrium-icon-256.png');
 const NOTIFY_ICON = path.join(APP_ROOT, 'assets', 'atrium-icon-256.png');

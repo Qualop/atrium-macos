@@ -9,6 +9,7 @@ const out = path.join(ROOT, 'dist');
 fs.mkdirSync(out, { recursive: true });
 
 await esbuild.build({
+  absWorkingDir: ROOT,
   entryPoints: { renderer: path.join(ROOT, 'src', 'renderer', 'main.jsx') },
   outdir: out,
   bundle: true,

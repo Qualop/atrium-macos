@@ -12,14 +12,18 @@ function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atrium-package-audit-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const write = (name, value) => { const file = path.join(root, name); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, value); };
+  write('app/scripts/licenses.mjs', fs.readFileSync(new URL('../scripts/licenses.mjs', import.meta.url)));
+  write('app/licenses/herdr-LICENSE', 'fixture license');
   write('app/scripts/package-macos.mjs', fs.readFileSync(new URL('../scripts/package-macos.mjs', import.meta.url)));
   const digest = crypto.createHash('sha256').update('download fixture').digest('hex');
   write('app/scripts/setup-macos.mjs', fs.readFileSync(new URL('../scripts/setup-macos.mjs', import.meta.url), 'utf8').replace(/'[a-f0-9]{64}'/g, `'${digest}'`));
+  write('backend/src/runtime.mjs', fs.readFileSync(new URL('../../backend/src/runtime.mjs', import.meta.url)));
   write('backend/src/config.mjs', "export const HERDR_VERSION = '0.9.5';");
   write('backend/src/platform.mjs', 'export const findExecutable = () => null;');
   write('app/src/main/main.mjs', 'process.stdout.write(JSON.stringify({ path: process.env.PATH }));');
-  write('app/package.json', JSON.stringify({ type: 'module', main: 'src/main/main.mjs' }));
-  for (const file of ['app/dist/index.html', 'app/assets/atrium-icon-256.png', 'app/THIRD_PARTY_NOTICES.txt', 'app/node_modules/react/index.js', 'backend/bin/atrium.mjs', 'backend/scripts/bridge.mjs', 'backend/package.json', 'backend/node_modules/ws/index.js', 'LICENSE', `.tools/herdr/0.9.5-${process.arch}/herdr`, 'app/node_modules/electron/dist/Electron.app/Contents/Info.plist']) write(file, 'fixture');
+  write('app/package.json', JSON.stringify({ type: 'module', version: '0.2.0', main: 'src/main/main.mjs' }));
+  for (const file of ['app/dist/index.html', 'app/assets/atrium-icon-256.png', 'app/THIRD_PARTY_NOTICES.txt', 'app/node_modules/react/index.js', 'backend/bin/atrium.mjs', 'backend/scripts/bridge.mjs', 'backend/node_modules/ws/index.js', 'backend/node_modules/ws/LICENSE', 'LICENSE', `.tools/herdr/0.9.5-${process.arch}/herdr`, 'app/node_modules/electron/dist/LICENSE', 'app/node_modules/electron/dist/LICENSES.chromium.html', 'app/node_modules/electron/dist/Electron.app/Contents/Info.plist']) write(file, 'fixture');
+  write('backend/package.json', JSON.stringify({name:'fixture-backend',version:'0.2.0',dependencies:{}}));
   write('preload.mjs', `
 import fs from 'node:fs';
 import cp from 'node:child_process';
@@ -50,7 +54,7 @@ syncBuiltinESMExports();
 test('packaging refuses unsupported Node before creating an output bundle', { skip: process.platform !== 'darwin' }, (t) => {
   const f = fixture(t), result = f.run({ FIXTURE_NODE_VERSION: '22.0.0' });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /Node.js 24/);
+  assert.match(result.stderr, /Node.js 22.13/);
   assert.equal(fs.existsSync(path.join(f.root, 'out/Atrium.app')), false);
 });
 
@@ -92,4 +96,10 @@ test('a relocated installed bundle exposes its bundled Node to shebang CLI shims
   assert.ok(runtimePath.split(':').includes(fs.realpathSync(path.join(resources, 'runtime'))));
   const shim = spawnSync('/usr/bin/env', ['node'], { env: { PATH: runtimePath }, encoding: 'utf8', timeout: 2000 });
   assert.equal(shim.stdout, 'bundled-node');
+});
+
+test('release bundle metadata does not contain the builder home or machine-specific CLI directories', { skip: process.platform !== 'darwin' }, t => {
+ const f=fixture(t), result=f.run();assert.equal(result.status,0,result.stderr);
+ const dirs=JSON.parse(fs.readFileSync(path.join(f.root,'out/Atrium.app/Contents/Resources/runtime/cli-paths.json'),'utf8'));
+ assert.deepEqual(dirs,['/opt/homebrew/bin','/usr/local/bin']);assert.ok(!JSON.stringify(dirs).includes(f.root));
 });

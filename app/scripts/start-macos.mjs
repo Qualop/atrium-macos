@@ -1,3 +1,4 @@
+import { requireSupportedNode } from '../../backend/src/runtime.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawn } from 'node:child_process';
@@ -5,7 +6,7 @@ import { electronExecutable } from './platform.mjs';
 import { loadConfig, HERDR_VERSION } from '../../backend/src/config.mjs';
 
 if (process.platform !== 'darwin') throw new Error('macOS용 실행 명령입니다.');
-if (Number(process.versions.node.split('.')[0]) !== 24) throw new Error('Node.js 24로 실행하세요.');
+requireSupportedNode();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cfg = loadConfig();
 try {

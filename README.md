@@ -17,9 +17,15 @@ Atrium lets you run several coding sessions, see which ones need your attention,
 
 *Actual macOS UI in an isolated test project. The displayed model catalog depends on your installed Codex and provider configuration.*
 
+## Download
+
+Get the **macOS Apple Silicon DMG or ZIP** from the [v0.2.0 release](https://github.com/Qualop/atrium-macos/releases/tag/v0.2.0). Requires macOS 13 or later. Node and herdr are included, so **you do not need to install Node separately**. Agent CLIs and sign-in remain separate.
+
+This build is ad-hoc signed and not Apple-notarized. macOS may require explicit permission to open it in System Settings → Privacy & Security.
+
 ## Start on macOS
 
-You need **Node.js 24**, **Git**, and whichever agent CLI you want to use. Install and sign in to your chosen CLI separately; Google account users should use Antigravity CLI (see below). Plain terminals do not require an AI account.
+You need **Node.js 22.13+ (22.x), 24.x or 26.x**, **Git**, and whichever agent CLI you want to use. Install and sign in to your chosen CLI separately; Google account users should use Antigravity CLI (see below). Plain terminals do not require an AI account.
 
 ```sh
 git clone https://github.com/Qualop/atrium-macos.git
@@ -87,7 +93,7 @@ After setup, run from the **repository root**:
 node app/scripts/package-macos.mjs
 ```
 
-This creates `out/Atrium.app`. Move it into **Applications** with Finder, then open Atrium normally. The bundle includes Electron, Node 24, herdr and the required runtime dependencies. Agent CLIs and their accounts remain separate.
+This creates `out/Atrium.app`. Move it into **Applications** with Finder, then open Atrium normally. The bundle includes Electron, Node 24.22.2, herdr and the required runtime dependencies. Agent CLIs and their accounts remain separate.
 
 - Build on the Mac where you intend to use it: the package records detected local CLI paths for Finder launches.
 - The package uses a **local ad-hoc signature**. It is not an Apple-notarized distribution or a downloadable DMG release.
@@ -119,7 +125,7 @@ To stop the sessions too, choose the menu item that stops **herdr and all sessio
 
 ## Verification and platform status
 
-As of **2026-11-04**, local verification passed **458 backend tests and 94 UI tests**, plus the renderer build. The macOS integration checks include nine concurrent sessions, model selection, Korean copy at 900×600, multiline paste, synthetic Korean IME events, WebGL context loss, backend crash recovery, and engine stop/start. Test groups were run separately; these are not a claim that every combination or platform has been tested.
+As of **2026-11-04**, local verification passed **459 backend tests and 96 UI tests**, plus the renderer build. Source compatibility is tested on the minimum and latest Node 22/24/26 versions. The macOS integration checks include nine concurrent sessions, model selection, Korean copy at 900×600, multiline paste, synthetic Korean IME events, WebGL context loss, backend crash recovery, and engine stop/start. Test groups were run separately; these are not a claim that every combination or platform has been tested.
 
 | Environment | Status |
 |---|---|
@@ -154,7 +160,7 @@ ATRIUM_TEST_GEMINI=1 ATRIUM_TEST_MODELS=1 ATRIUM_TEST_COPY=1 npm --prefix app ru
 
 Start the development profile with `cd app && npm run mac -- --dev`. Integration tests create separate temporary profiles, folders and herdr sessions; they do not use the normal board's data.
 
-Architecture: **Electron / React / React Flow / xterm.js → local Node 24 backend → herdr → agent CLIs**, with board state stored in SQLite.
+Architecture: **Electron / React / React Flow / xterm.js → local Node backend → herdr → agent CLIs**, with board state stored in SQLite.
 
 - [Testing guide](docs/testing.md)
 - [Architecture](docs/ARCH.md)

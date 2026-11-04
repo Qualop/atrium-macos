@@ -8,7 +8,7 @@
 [Electron 창: React, @xyflow/react, xterm.js] ─┬─ WebSocket (127.0.0.1, 토큰)
 [시험용 CLI: atrium]                           ─┘          │
                                                            ▼
-                  [Atrium 백엔드: Node 24]
+                  [Atrium 백엔드: Node 22.13+ / 24 / 26]
                    ├─ herdr 어댑터: 소켓 API(Windows 파이프 / macOS Unix 소켓, 요청마다 연결) + events.subscribe
                    ├─ 화면 중계: 가까이 보이는 노드마다 `herdr terminal session control` 자식 프로세스
                    ├─ hook 수신기(HTTP POST) ← 각 claude의 http hook
@@ -191,7 +191,7 @@
 | 대화 기록 읽기 | hook이 알려준 `transcript_path`를 이어서 읽는다. 마지막 지시, 대화 보기용 메시지 목록(`transcript.mjs`) |
 | 전달 대기열 | 4절 B1의 규칙, 제출 확인(`<pasted_content>` 벗기고 비교), 취소(`delivery.mjs`, `text.mjs`) |
 | 답하기 | 4절 A1의 키 순서, 보내기 전 확인. 허용한 키만 보낸다(`answer.mjs`) |
-| 저장소 | SQLite(Node 24 내장 `node:sqlite`, E8): 판 배치, 노드와 세션 ID 연결, 이벤트, 전달, 봤음 기록, 연결, 워크스페이스, 덩어리, 기능 표, 대화 색인, 하위 세션. WAL, `synchronous = NORMAL`, `busy_timeout = 2000`, STRICT 표. `node:sqlite` 호출과 SQL은 `store.mjs`와 그 일부인 `store-records.mjs`, `store-recall.mjs`, `store-branch.mjs` 안에만 둔다 |
+| 저장소 | SQLite(Node 내장 `node:sqlite`, E8): 판 배치, 노드와 세션 ID 연결, 이벤트, 전달, 봤음 기록, 연결, 워크스페이스, 덩어리, 기능 표, 대화 색인, 하위 세션. WAL, `synchronous = NORMAL`, `busy_timeout = 2000`, STRICT 표. `node:sqlite` 호출과 SQL은 `store.mjs`와 그 일부인 `store-records.mjs`, `store-recall.mjs`, `store-branch.mjs` 안에만 둔다 |
 | API 서버 | WebSocket. 명령, 조회, 이벤트 구독, 터미널 프레임 스트림(`api.mjs`) |
 | 시험용 CLI `atrium` | API를 그대로 부르는 얇은 클라이언트(`bin/atrium.mjs`, `bin/atrium-features.mjs`, 별칭 `bin/mtask.mjs`). herdr를 직접 부르지 않는다 |
 | git 조사 | 브랜치, 바뀐 파일 수, `git diff --stat`, 워크스페이스 키(`git.mjs`) |

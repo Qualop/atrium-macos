@@ -50,7 +50,7 @@ export async function connect(cfg) {
 }
 
 // 백엔드가 없으면 띄운다. 백엔드는 herdr 서버가 없으면 띄운다(ARCH 1절 백엔드 수명).
-// nodePath: 백엔드를 돌릴 Node 24. Electron main에서는 process.execPath가 electron.exe라서 따로 준다.
+// nodePath: 백엔드를 돌릴 지원 Node 런타임. Electron main에서는 process.execPath가 electron.exe라서 따로 준다.
 export async function startBackend(cfg, { nodePath = process.execPath } = {}) {
   const info = backendInfo(cfg);
   if (info && (await health(info.port))) return { already: true, pid: info.pid, port: info.port };

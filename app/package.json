@@ -1,13 +1,13 @@
 {
   "name": "atrium-app",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Atrium window: an infinite canvas of CLI agent sessions (Electron, React, xterm.js)",
   "license": "MIT",
   "type": "module",
   "main": "src/main/main.mjs",
   "engines": {
-    "node": ">=24 <25"
+    "node": "^22.13.0 || ^24.0.0 || ^26.0.0"
   },
   "scripts": {
     "setup:mac": "node scripts/setup-macos.mjs",
@@ -17,7 +17,9 @@
     "build": "node scripts/build.mjs",
     "start": "node scripts/build.mjs && electron . --dev",
     "real": "node scripts/build.mjs && electron .",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "package:mac": "node scripts/package-macos.mjs",
+    "release:mac": "node scripts/release-macos.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",

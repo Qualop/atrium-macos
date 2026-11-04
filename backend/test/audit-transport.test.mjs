@@ -6,11 +6,11 @@ test('UTF-8 characters split between socket chunks stay intact',async(t)=>{
  assert.equal((await herdrCall(pipe,'fixture')).text,text);
 });
 test('an event subscription with no acknowledgement times out and does not stall later subscriptions',async(t)=>{
- let calls=0;const{pipe,dir,sockets}=await fixture(t,s=>s.once('data',()=>{if(++calls>1)s.write('{"result":{}}\n');}));
+ let respond=false;const{pipe,dir,sockets}=await fixture(t,s=>s.once('data',()=>{if(respond)s.write('{"result":{}}\n');}));
  const a=new HerdrAdapter({herdrPath:'unused',session:'atrium-dev-transport',logDir:dir});a.pipe=pipe;a._watching=true;a.subscribeTimeoutMs=25;t.after(()=>a.stopEvents());
  const request=a._subscribe().then(()=>null,e=>e);const got=await Promise.race([request,new Promise(r=>setTimeout(()=>r({code:'hung'}),150))]);
  if(got?.code==='hung')for(const s of sockets)s.destroy();
- assert.equal(got?.code,'timeout');await a._subscribe();assert.ok(a._sub);
+ assert.equal(got?.code,'timeout');respond=true;delete a.subscribeTimeoutMs;await a._subscribe();assert.ok(a._sub);
 });
 test('stopEvents cancels an acknowledgement that arrives later',async(t)=>{
  let accept;const received=new Promise(r=>accept=r);const{pipe,dir}=await fixture(t,s=>s.once('data',()=>{accept(s);setTimeout(()=>{if(!s.destroyed)s.write('{"result":{}}\n');},40);}));

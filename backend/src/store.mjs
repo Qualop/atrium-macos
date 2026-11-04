@@ -1,6 +1,6 @@
 // 저장소(ARCH 5절): 판 배치, 노드와 세션 ID 연결, 이벤트, 전달, 봤음 기록(P3), 세션끼리 연결과 오간 일(P4),
 // 리포지토리 워크스페이스(P5), 단일 캔버스의 영역 자리·붙여 묶기·크기 단계·검색(P6a). sessions.workspace_id는 herdr 작업 공간 ID다(코드에서는 herdrWorkspaceId). 판의 워크스페이스는 workspace_key다.
-// E8 결과로 Node 24 내장 node:sqlite를 쓴다. node:sqlite 호출과 SQL은 이 파일 안에만 둔다.
+// E8 결과로 Node 내장 node:sqlite를 쓴다. node:sqlite 호출과 SQL은 이 파일 안에만 둔다.
 import fs from 'node:fs';
 import path from 'node:path';
 import { RECORDS_SCHEMA, installRecords } from './store-records.mjs'; // P6b: Thread, 메모, 칸반, 루프 표
@@ -10,7 +10,7 @@ import { WORKTREE_SCHEMA, WORKTREE_COLUMNS, installWorktrees } from './store-wor
 import { normalize, fromLine, leaves, isLeaf } from './dock-tree.mjs'; // P17: 덩어리 분할 나무
 
 let DatabaseSync;
-try { ({ DatabaseSync } = await import('node:sqlite')); } catch (e) { throw new Error(`node:sqlite를 불러오지 못했다(Node 24가 필요하다): ${e.message}`); }
+try { const sqlite = await import('node:sqlite'); DatabaseSync = sqlite.Database || sqlite.DatabaseSync; } catch (e) { throw new Error(`node:sqlite를 불러오지 못했습니다. Node.js 22.13+ / 24.x / 26.x가 필요합니다: ${e.message}`); }
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;

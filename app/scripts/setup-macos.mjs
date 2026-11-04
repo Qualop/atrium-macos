@@ -1,3 +1,4 @@
+import { requireSupportedNode } from '../../backend/src/runtime.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -6,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { HERDR_VERSION } from '../../backend/src/config.mjs';
 
 if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch)) throw new Error('macOS Apple Silicon 또는 Intel이 필요합니다.');
-if (Number(process.versions.node.split('.')[0]) !== 24) throw new Error('Node.js 24로 실행하세요.');
+requireSupportedNode();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 // herdrdev/herdr v0.9.5 공식 GitHub 릴리스의 SHA-256. 버전 변경 시 함께 갱신한다.
 const assets = {

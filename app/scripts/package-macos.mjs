@@ -1,14 +1,16 @@
+import { copyRuntimeLicenses } from './licenses.mjs';
+import { requireSupportedNode } from '../../backend/src/runtime.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { findExecutable } from '../../backend/src/platform.mjs';
 import { HERDR_VERSION } from '../../backend/src/config.mjs';
 
 if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch)) throw new Error('macOS Apple Silicon 또는 Intel이 필요합니다.');
-if (Number(process.versions.node.split('.')[0]) !== 24) throw new Error('Node.js 24로 실행하세요.');
+requireSupportedNode();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const appRoot = path.join(root, 'app');
+const version = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8')).version;
 const destination = path.join(root, 'out', 'Atrium.app');
 function assertDestinationFree() {
   try { fs.lstatSync(destination); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
@@ -27,9 +29,14 @@ try {
   copy(path.join(appRoot, 'node_modules/react'), path.join(resources, 'app/node_modules/react'));
   for (const p of ['src', 'bin', 'scripts', 'package.json', 'node_modules/ws']) copy(path.join(root, 'backend', p), path.join(resources, 'backend', p));
   copy(path.join(root, 'LICENSE'), path.join(resources, 'LICENSE.atrium'));
+  for (const notice of ['LICENSE', 'LICENSES.chromium.html']) copy(path.join(appRoot, 'node_modules/electron/dist', notice), path.join(resources, 'licenses/electron', notice));
+  copy(path.join(appRoot, 'licenses/herdr-LICENSE'), path.join(resources, 'licenses/herdr-LICENSE'));
+  copyRuntimeLicenses([appRoot, path.join(root, 'backend')], path.join(resources, 'licenses/npm'));
   copy(process.execPath, path.join(resources, 'runtime/node'));
+  const nodeLicense = path.resolve(path.dirname(process.execPath), '../LICENSE');
+  if (fs.existsSync(nodeLicense)) copy(nodeLicense, path.join(resources, 'runtime/LICENSE.node'));
   copy(path.join(root, '.tools/herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr'), path.join(resources, '.tools/herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr'));
-  const dirs = [...new Set([path.dirname(process.execPath), ...['claude', 'codex', 'gemini', 'agy'].map((name) => findExecutable(name)).filter(Boolean).map((p) => path.dirname(p)), path.join(process.env.HOME || '', '.local/bin'), '/opt/homebrew/bin', '/usr/local/bin'])];
+  const dirs = ['/opt/homebrew/bin', '/usr/local/bin'];
   fs.writeFileSync(path.join(resources, 'runtime/cli-paths.json'), JSON.stringify(dirs, null, 2));
   // Resolve the bundled runtime after installation, including when the app was
   // moved. Finder's minimal PATH must also support CLIs using /usr/bin/env node.
@@ -44,7 +51,7 @@ try {
   const appManifest = path.join(resources, 'app/package.json');
   fs.writeFileSync(appManifest, JSON.stringify({ ...JSON.parse(fs.readFileSync(appManifest, 'utf8')), main: 'packaged-main.mjs' }, null, 2));
   const plist = path.join(output, 'Contents/Info.plist');
-  for (const [key, value] of Object.entries({ CFBundleDisplayName: 'Atrium', CFBundleName: 'Atrium', CFBundleIdentifier: 'dev.atrium.desktop.local', CFBundleShortVersionString: '0.1.0', CFBundleVersion: '1' })) {
+  for (const [key, value] of Object.entries({ CFBundleDisplayName: 'Atrium', CFBundleName: 'Atrium', CFBundleIdentifier: 'dev.atrium.desktop.local', CFBundleShortVersionString: version, CFBundleVersion: version })) {
     execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, plist]);
   }
   const icons = path.join(staging, 'Atrium.iconset'); fs.mkdirSync(icons);

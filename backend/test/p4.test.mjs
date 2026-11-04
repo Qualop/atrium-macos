@@ -184,14 +184,16 @@ test('저장소: 연결과 오간 기록, P3 board.db에 종류·출처 열 더�
 test('F5: hook이 없는 세션은 보낸 뒤 herdr working으로 제출을 확인한다(응답보다 먼저 와도)', async () => {
   const store = new Store(path.join(tmp(), 'q.db'));
   const cfg = { inputQuietMs: 0, submitConfirmMs: 30000, deliveryMaxWaitMs: 60000 };
-  let release;
-  const q = new DeliveryQueue({ store, cfg, view: () => ({ state: 'ready', agentPresent: true, herdrConnected: true, closed: false }), send: () => new Promise((r) => { release = r; }) });
+  let release, started;
+  const sending = new Promise((r) => { started = r; });
+  const q = new DeliveryQueue({ store, cfg, view: () => ({ state: 'ready', agentPresent: true, herdrConnected: true, closed: false }), send: () => new Promise((r) => { release = r; started(); }) });
   const d = q.enqueue('c', 'hi');
-  await new Promise((r) => setTimeout(r, 20));
+  await sending;
   assert.equal(d.status, 'sending');
   q.onAgentWorking('c'); // working이 agent.prompt 응답보다 먼저
+  const confirmed = new Promise((r) => q.on('delivery', (event) => { if (event.status === 'confirmed') r(); }));
   release();
-  await new Promise((r) => setTimeout(r, 20));
+  await confirmed;
   assert.equal(store.getDelivery(d.deliveryId).status, 'confirmed');
   assert.equal(store.getDelivery(d.deliveryId).reason, 'herdr working');
   store.close();

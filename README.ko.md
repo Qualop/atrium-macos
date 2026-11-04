@@ -17,9 +17,15 @@ Atrium은 여러 코딩 작업창을 넓은 작업 보드에 펼쳐 놓는 앱�
 
 *별도 테스트 프로젝트에서 촬영한 실제 화면입니다. 모델 목록은 설치된 Codex와 제공자 설정에 따라 달라집니다.*
 
+## 다운로드
+
+[v0.2.0 릴리스](https://github.com/Qualop/atrium-macos/releases/tag/v0.2.0)에서 **macOS Apple Silicon용 DMG 또는 ZIP**을 받으세요. macOS 13 이상을 지원하며, 앱에는 Node와 herdr가 포함되어 **Node를 별도로 설치할 필요가 없습니다**. 에이전트 CLI 설치·로그인은 별도로 진행합니다.
+
+이 빌드는 ad-hoc 서명이며 Apple 공증은 없습니다. macOS가 실행을 막으면 시스템 설정 → 개인정보 보호 및 보안에서 해당 앱의 실행을 직접 허용해야 할 수 있습니다.
+
 ## macOS에서 시작하기
 
-**Node.js 24**, **Git**, 사용할 에이전트 CLI가 필요합니다. Claude Code·Codex·Gemini CLI는 별도로 설치하고 로그인하세요. 일반 터미널만 사용할 때는 AI 계정이 필요하지 않습니다.
+**Node.js 22.13+ (22.x), 24.x 또는 26.x**, **Git**, 사용할 에이전트 CLI가 필요합니다. Claude Code·Codex·Gemini CLI는 별도로 설치하고 로그인하세요. 일반 터미널만 사용할 때는 AI 계정이 필요하지 않습니다.
 
 ```sh
 git clone https://github.com/Qualop/atrium-macos.git
@@ -88,7 +94,7 @@ Gemini의 요청 제출·완료 답변·셸 도구 호출은 보드 기록과 �
 node app/scripts/package-macos.mjs
 ```
 
-생성된 `out/Atrium.app`을 Finder에서 **응용 프로그램** 폴더로 옮기면 일반 앱처럼 실행할 수 있습니다. 앱 안에는 Electron, Node 24, herdr와 필요한 실행 의존성이 포함됩니다. 에이전트 CLI와 계정은 별도로 준비해야 합니다.
+생성된 `out/Atrium.app`을 Finder에서 **응용 프로그램** 폴더로 옮기면 일반 앱처럼 실행할 수 있습니다. 앱 안에는 Electron, Node 24.22.2, herdr와 필요한 실행 의존성이 포함됩니다. 에이전트 CLI와 계정은 별도로 준비해야 합니다.
 
 - 사용할 Mac에서 직접 빌드하세요. Finder 실행을 위해 빌드 당시 감지한 CLI 경로를 앱에 저장합니다.
 - **로컬 ad-hoc 서명**을 사용하는 앱입니다. Apple 공증을 받은 배포판이나 다운로드용 DMG는 제공하지 않습니다.
@@ -120,7 +126,7 @@ node app/scripts/package-macos.mjs
 
 ## 검증 범위와 지원 상태
 
-**2026-11-04 로컬 검증 기준**, 백엔드 테스트 **458개**, 화면 테스트 **94개**와 화면 빌드가 통과했습니다. macOS 통합 시험에서는 9개 동시 세션, 모델 선택, 900×600 한국어 UI, 여러 줄 붙여넣기, 합성 한글 IME 이벤트, WebGL 손실, 백엔드 강제 종료 후 복구, 실행 엔진 중단·재시작을 확인했습니다. 시험 묶음을 나누어 실행한 결과이며, 모든 조합과 플랫폼을 검증했다는 뜻은 아닙니다.
+**2026-11-04 로컬 검증 기준**, 백엔드 테스트 **459개**, 화면 테스트 **96개**와 화면 빌드가 통과했습니다. 소스 호환성은 Node 22·24·26의 최소·최신 버전에서 검사합니다. macOS 통합 시험에서는 9개 동시 세션, 모델 선택, 900×600 한국어 UI, 여러 줄 붙여넣기, 합성 한글 IME 이벤트, WebGL 손실, 백엔드 강제 종료 후 복구, 실행 엔진 중단·재시작을 확인했습니다. 시험 묶음을 나누어 실행한 결과이며, 모든 조합과 플랫폼을 검증했다는 뜻은 아닙니다.
 
 | 환경 | 상태 |
 |---|---|
@@ -155,7 +161,7 @@ ATRIUM_TEST_GEMINI=1 ATRIUM_TEST_MODELS=1 ATRIUM_TEST_COPY=1 npm --prefix app ru
 
 개발용 앱은 `cd app && npm run mac -- --dev`로 실행합니다. 통합 시험은 새 임시 폴더·프로필·herdr 세션을 사용하며 실사용 보드의 데이터를 사용하지 않습니다.
 
-구조는 **Electron / React / React Flow / xterm.js → 로컬 Node 24 백엔드 → herdr → 에이전트 CLI**이며, 보드 상태는 SQLite에 저장합니다.
+구조는 **Electron / React / React Flow / xterm.js → 로컬 Node 백엔드 → herdr → 에이전트 CLI**이며, 보드 상태는 SQLite에 저장합니다.
 
 - [시험 요령](docs/testing.md)
 - [아키텍처](docs/ARCH.md)

@@ -7,6 +7,7 @@ import { api } from './api.js';
 import { useStore, toast } from './store.js';
 import { loopBadge, loopsOfSession, triggerText, stopText, LOOP_STATUS, STOP_REASON, dur } from './lib/items.js';
 import { useT, errText, tMsg, fmtTime } from './lib/i18n.js';
+import { useDialog } from './dialog.js';
 
 function useNow(on) { const [n, set] = useState(Date.now()); useEffect(() => { if (!on) return; set(Date.now()); const t = setInterval(() => set(Date.now()), 1000); return () => clearInterval(t); }, [on]); return n; }
 
@@ -43,10 +44,11 @@ export function LoopDialog({ target, onClose }) {
     setBusy(true);
     try { const l = await api.call('loop.create', params(true)); toast(t('loops.created', { name: l.targetName || label })); onClose(); } catch (err) { toast(t('loops.createFail', { error: errText(err) }), 'error'); setBusy(false); }
   }
+  const box = useDialog(onClose); // P52
   const change = (f) => (e) => { setAsk(null); f(e.target.type === 'checkbox' ? e.target.checked : e.target.value); };
   return (
     <div className="mt-modal-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <form className="mt-modal mt-loop-dialog" onSubmit={check} data-role="loop-dialog">
+      <form ref={box} className="mt-modal mt-loop-dialog" onSubmit={check} data-role="loop-dialog">
         <h3>{t('loops.dialogTitle', { label })}</h3>
         <label>{t('loops.prompt')}<textarea rows={3} value={prompt} onChange={change(setPrompt)} data-field="loop-prompt" placeholder={t('loops.promptPh')} autoFocus /></label>
         <fieldset className="mt-loop-set">

@@ -7,6 +7,8 @@ import { RECORDS_SCHEMA, installRecords } from './store-records.mjs'; // P6b: Th
 import { RECALL_SCHEMA, RECALL_COLUMNS, RECALL_SESSION_FIELDS, installRecall } from './store-recall.mjs'; // P7: 대화 기록 색인, 닫힌 세션
 import { BRANCH_COLUMNS, installBranch } from './store-branch.mjs'; // P8: 하위 세션 기록
 import { WORKTREE_SCHEMA, WORKTREE_COLUMNS, installWorktrees } from './store-worktrees.mjs'; // P27: 워크트리 영역
+import { IMPORTS_SCHEMA, installImports } from './store-imports.mjs'; // P34: 데스크톱 앱 가져오기 장부
+import { installMerge } from './store-merge.mjs'; // P37: 워크스페이스 키 옮기기(폴더가 저장소가 되면 합치기)
 import { normalize, fromLine, leaves, isLeaf } from './dock-tree.mjs'; // P17: 덩어리 분할 나무
 
 let DatabaseSync;
@@ -50,7 +52,7 @@ CREATE TABLE IF NOT EXISTS docks (dock_id TEXT PRIMARY KEY, workspace_key TEXT, 
 // P3에서 더한 열. P1·P2에서 만든 board.db에는 ALTER TABLE로 더한다.
 // P22: 그룹·묶음 실행·한 줄 메모를 뺐다. 옛 판의 sessions.group_id, deliveries.group_id, thread_results.group_id 열과 notes 표는 남지만 읽지도 쓰지도 않는다(dropGroups)
 const ADDED_COLUMNS = {
-  sessions: { touched_at: 'INTEGER', kind: 'TEXT', origin: 'TEXT', parent_session_id: 'TEXT', workspace_key: 'TEXT', flavor: 'TEXT' }, // kind·origin·parent는 P4, workspace_key는 P5, flavor(띄운 방법, 예: deepseek)는 P25
+  sessions: { touched_at: 'INTEGER', kind: 'TEXT', origin: 'TEXT', parent_session_id: 'TEXT', workspace_key: 'TEXT', flavor: 'TEXT', extra_args: 'TEXT' }, // extra_args(호출자의 claude 추가 인자, JSON 배열)는 P33 // kind·origin·parent는 P4, workspace_key는 P5, flavor(띄운 방법, 예: deepseek)는 P25
   workspaces: { x: 'REAL', y: 'REAL' }, // P6a: 영역의 자리(빈 워크스페이스, 영역 옮기기)
   nodes: { size: 'TEXT' }, // P6a: 크기 단계(large, normal, small)
   docks: { tree: 'TEXT' }, // P17: 분할 나무(dock-tree.mjs). 없으면 옛 한 줄 덩어리(dir, members)이고 뜰 때 나무로 바꾼다(canvas-ops migrateDocks)
@@ -65,7 +67,7 @@ function sessionRow(r) {
     model: r.model, effort: r.effort, permissionMode: r.permission_mode, settingsPath: r.settings_path, hookToken: r.hook_token,
     resumeArgv: r.resume_argv ? JSON.parse(r.resume_argv) : null, resumeVerified: !!r.resume_verified,
     createdAt: r.created_at, closedAt: r.closed_at, seenAt: r.seen_at, touchedAt: r.touched_at ?? null, runtime: r.runtime ? JSON.parse(r.runtime) : null,
-    kind: r.kind || 'claude', origin: r.origin || 'board', parentSessionId: r.parent_session_id ?? null, workspaceKey: r.workspace_key ?? null, flavor: r.flavor ?? null,
+    kind: r.kind || 'claude', origin: r.origin || 'board', parentSessionId: r.parent_session_id ?? null, workspaceKey: r.workspace_key ?? null, flavor: r.flavor ?? null, extraArgs: r.extra_args ? JSON.parse(r.extra_args) : [],
   };
 }
 function linkRow(r) {
@@ -100,6 +102,7 @@ export class Store {
     this.db.exec(RECORDS_SCHEMA);
     this.db.exec(RECALL_SCHEMA);
     this.db.exec(WORKTREE_SCHEMA);
+    this.db.exec(IMPORTS_SCHEMA);
     for (const [table, cols] of [...Object.entries(ADDED_COLUMNS), ...Object.entries(RECALL_COLUMNS), ...Object.entries(BRANCH_COLUMNS), ...Object.entries(WORKTREE_COLUMNS)]) {
       const have = new Set(this.db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
       for (const [col, type] of Object.entries(cols)) if (!have.has(col)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
@@ -117,11 +120,11 @@ export class Store {
   setMeta(key, value) { this.st('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, JSON.stringify(value)); }
 
   insertSession(s) {
-    this.st(`INSERT INTO sessions (session_id, name, cwd, pane_id, workspace_id, agent_name, model, effort, permission_mode, settings_path, hook_token, resume_argv, created_at, touched_at, runtime, kind, origin, parent_session_id, workspace_key, flavor)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    this.st(`INSERT INTO sessions (session_id, name, cwd, pane_id, workspace_id, agent_name, model, effort, permission_mode, settings_path, hook_token, resume_argv, created_at, touched_at, runtime, kind, origin, parent_session_id, workspace_key, flavor, extra_args)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       s.sessionId, s.name, s.cwd, s.paneId ?? null, s.herdrWorkspaceId ?? null, s.agentName ?? null, s.model ?? null, s.effort ?? null,
       s.permissionMode, s.settingsPath ?? '', s.hookToken ?? '', s.resumeArgv ? JSON.stringify(s.resumeArgv) : null, s.createdAt, s.touchedAt ?? null, JSON.stringify(s.runtime || null),
-      s.kind || 'claude', s.origin || 'board', s.parentSessionId ?? null, s.workspaceKey ?? null, s.flavor ?? null);
+      s.kind || 'claude', s.origin || 'board', s.parentSessionId ?? null, s.workspaceKey ?? null, s.flavor ?? null, s.extraArgs && s.extraArgs.length ? JSON.stringify(s.extraArgs) : null);
   }
   updateSession(sessionId, fields) {
     const map = { paneId: 'pane_id', herdrWorkspaceId: 'workspace_id', agentName: 'agent_name', resumeVerified: 'resume_verified', closedAt: 'closed_at', seenAt: 'seen_at', touchedAt: 'touched_at', resumeArgv: 'resume_argv', runtime: 'runtime', cwd: 'cwd', parentSessionId: 'parent_session_id', workspaceKey: 'workspace_key', kind: 'kind', origin: 'origin', flavor: 'flavor', ...RECALL_SESSION_FIELDS };
@@ -264,3 +267,5 @@ installRecords(Store);
 installRecall(Store); // P7
 installBranch(Store); // P8
 installWorktrees(Store); // P27
+installImports(Store); // P34
+installMerge(Store); // P37

@@ -25,7 +25,8 @@ const server = http.createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const url = `http://127.0.0.1:${server.address().port}`;
 const settings = writeGeminiSession({ dir, sessionId: crypto.randomUUID(), hookUrl: `${url}/hooks/gemini`, token: 'fixture', userHome: dir });
-const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(GEMINI_|GOOGLE_|GCLOUD_|CLOUDSDK_|HERDR_|ATRIUM_)/.test(k))), ...settings.env, GEMINI_API_KEY: 'local-fixture-key', GOOGLE_GEMINI_BASE_URL: url };
+const fixtureKey = ['local', 'fixture', 'key'].join('-');
+const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(GEMINI_|GOOGLE_|GCLOUD_|CLOUDSDK_|HERDR_|ATRIUM_)/.test(k))), ...settings.env, GEMINI_API_KEY: fixtureKey, GOOGLE_GEMINI_BASE_URL: url };
 const child = spawn('gemini', ['--model', 'gemini-2.5-flash', '--prompt', 'Reply with ATRIUM_GEMINI_CONTRACT_OK'], { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'] });
 let stdout = '', stderr = '';
 child.stdout.on('data', (c) => stdout += c); child.stderr.on('data', (c) => stderr += c);

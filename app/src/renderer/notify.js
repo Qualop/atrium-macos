@@ -7,6 +7,7 @@ import { notifyKey, shouldNotify, NOTIFY_DELAY_MS } from './lib/attention.js';
 import { askLine } from './lib/labels.js';
 import { t } from './lib/i18n.js';
 import { perfLog } from './perf.js';
+import { notifyAllowed } from './lib/multiclient.js';
 
 const KEY = 'mt.notified';
 const DAY = 24 * 3600 * 1000;
@@ -23,7 +24,10 @@ function decide(id, key) {
   if (!s || notifyKey(s) !== key) return; // 그새 풀렸다
   const el = document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`);
   const canvas = document.querySelector('.mt-canvas');
-  const r = shouldNotify({ focused: document.hasFocus(), pageVisible: document.visibilityState === 'visible', nodeRect: el && el.getBoundingClientRect(), canvasRect: canvas && canvas.getBoundingClientRect() });
+  let r = shouldNotify({ focused: document.hasFocus(), pageVisible: document.visibilityState === 'visible', nodeRect: el && el.getBoundingClientRect(), canvasRect: canvas && canvas.getBoundingClientRect() });
+  // P47: 창이 여럿 붙었으면 백엔드가 고른 클라이언트(최근에 쓴 쪽, 없으면 PC 창)만 띄운다
+  const peer = notifyAllowed(getState().peers);
+  if (r.notify && !peer.allowed) r = { ...r, notify: false, why: peer.reason, notifyClient: getState().peers.notify };
   done.set(key, Date.now()); save(done);
   const rec = { at: Date.now(), sessionId: id, name: s.name, key, ...r };
   notifyLog.push(rec);

@@ -277,6 +277,7 @@ async function fakeBoard({ limits } = {}) {
   const b = {
     cfg: { profile: 'dev', herdrSession: 'atrium-dev-p8test', port: 0, dataDir: dir }, apiToken: 'board-api-token', store, sessions: new Map(), bus: new EventEmitter(),
     broadcasts: [], spawned: [], killed: [], links: [], queued: [],
+    agentModels: async ({ kind }) => ({ models: kind === 'codex' ? [{ id: 'custom-codex', name: 'Custom Codex' }] : [] }),
     api: { broadcast: (e, d) => b.broadcasts.push([e, d]) }, log: () => {}, requireHerdr: () => {},
     hooked: (s) => s.kind === 'claude' && s.origin === 'board',
     summary: (s) => ({ state: 'ready', ask: null }),
@@ -323,12 +324,16 @@ test('K1: 하위 세션은 부모의 폴더·모델·노력 수준·권한 모�
   // 워크트리는 git 저장소에서만
   await assert.rejects(b.branch.spawnChild(lead, { name: 'w3', worktree: 'feat', wait: false }), /git 저장소/);
   await assert.rejects(b.branch.spawnChild(lead, { name: 'w3', kind: 'shell', wait: false }), /에이전트만/);
-  // 신뢰를 받지 않은 저장소에서는 claude -w가 바로 끝나므로 띄우기 전에 거부한다(신뢰는 대신 누르지 않는다)
+  // 커밋 없는 저장소는 거부하고, 커밋이 있지만 미신뢰이면 관문을 띄운다(신뢰는 대신 누르지 않는다)
   const repo = tmp();
   execFileSync('git', ['init', '-q', repo]);
   b.cfg.claudeJson = path.join(repo, 'no-claude.json');
   fs.writeFileSync(b.cfg.claudeJson, JSON.stringify({ projects: {} }));
-  await assert.rejects(b.branch.spawnChild(lead, { name: 'w3', cwd: repo, worktree: 'feat', wait: false }), (e) => e.code === 'needs_trust');
+  await assert.rejects(b.branch.spawnChild(lead, { name: 'w3', cwd: repo, worktree: 'feat', wait: false }), (e) => e.code === 'needs_commit');
+  execFileSync('git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'fixture']);
+  const gated = await b.branch.spawnChild(lead, { name: 'trust-worker', cwd: repo, worktree: 'trust-feature', wait: false });
+  assert.equal(gated.needsTrust, true); assert.equal(b.spawned.at(-1).worktree, null);
+  assert.equal(b.branch.holds(gated.sessionId), true);
   fs.writeFileSync(b.cfg.claudeJson, JSON.stringify({ projects: { [repo.split(path.sep).join('/')]: { hasTrustDialogAccepted: true } } }));
   const wt = await b.branch.spawnChild(lead, { name: 'w3', cwd: repo, worktree: 'feat', wait: false });
   assert.equal(b.spawned.at(-1).worktree, 'feat'); assert.equal(wt.worktree, 'feat');
@@ -437,7 +442,7 @@ test('K1: 하위 세션 명령은 env의 판으로 세션 토큰을 들고 간�
     const noenv = await runChild(['child'], {});
     assert.match(noenv.stderr, /판이 띄운 세션이 아니다/);
     const nope = await runChild(['kill', 'w1'], env);
-    assert.equal(nope.code, 2); assert.match(nope.stderr, /child, children, child-kill, wake만/);
+    assert.equal(nope.code, 2); assert.match(nope.stderr, /child, children, child-kill, child-wait, wake, models만/);
     const five = await runChild(['child-kill', 'lead'], env);
     assert.match(five.stderr, /not_parent/);
   } finally { srv.close(); }

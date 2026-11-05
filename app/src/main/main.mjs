@@ -6,6 +6,7 @@
 import { app, BrowserWindow, ipcMain, shell, Notification, dialog, Menu } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, BACKEND_ROOT, APP_NAME, APP_ID, envVar, legacyAppUserData } from '../../../backend/src/config.mjs';
 import { startBackend, stopBackend, backendInfo, health } from '../../../backend/src/client.mjs';
@@ -60,10 +61,11 @@ async function ensureBackend() {
 ipcMain.handle('mt:backend', async () => {
   const info = await ensureBackend();
   return {
-    port: info.port, token: info.token, pid: info.pid, profile: cfg.profile, herdrSession: cfg.herdrSession,
+    platform: process.platform, port: info.port, token: info.token, pid: info.pid, profile: cfg.profile, herdrSession: cfg.herdrSession,
     // 새 세션 대화상자의 기본 폴더. 개발용은 시험 프로젝트(신뢰된 폴더 아래, 따로 git 저장소가 아님, P1 5절 11)
     defaultCwd: cfg.profile === 'dev' ? path.join(BACKEND_ROOT, '.dev', 'proj') : app.getPath('home'),
     defaultModel: cfg.profile === 'dev' ? 'haiku' : '',
+    deviceName: os.hostname(), clientKind: 'desktop', // P47: 백엔드에 알리는 기기 이름과 클라이언트 종류
   };
 });
 // E5: Electron 프로세스(main, renderer, GPU 등)의 메모리와 CPU

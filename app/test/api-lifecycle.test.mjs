@@ -48,3 +48,23 @@ test('a failed event subscription closes the socket so the board can reconnect',
   assert.equal(api.status, 'closed');
   api.close();
 });
+
+test('old socket events and pending calls cannot cross a connection generation', async () => {
+  window.mt.backend = async () => ({ port: 5, token: 'fixture' });
+  const api = new Api(); await api.connect(); const old = api.ws;
+  old.readyState = Socket.OPEN;
+  const oldMessage = old.onmessage, oldClose = old.onclose;
+  const pending = api.call('terminal.attach').catch(e => e.code);
+  await api.connect(); assert.equal(await pending, 'disconnected');
+  let frames = 0; api.on('terminal.frame', () => frames++);
+  oldMessage({ data: JSON.stringify({ event: 'terminal.frame', data: {} }) }); oldClose();
+  assert.equal(frames, 0); assert.equal(api.status, 'connecting'); assert.equal(api.wait.size, 0);
+  api.close();
+});
+
+test('closing during a backend lookup never creates a replacement socket', async () => {
+  const lookup = defer(); window.mt.backend = () => lookup.promise;
+  const api = new Api(); const connect = api.connect(); api.close();
+  lookup.resolve({ port: 6, token: 'fixture' }); await connect;
+  assert.equal(api.ws, null); assert.equal(api.status, 'closed');
+});

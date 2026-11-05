@@ -141,16 +141,17 @@ test('P25 spawn: 직접 명령은 새 셸 패널에 그 글을 그대로 치고(
   const cmd = 'echo ds-test; claude --model haiku';
   const { b, calls, cwd } = spawnBackend({ healthUrl: await closedUrl(), settings: { deepseekCommand: cmd } });
   const r = await b.spawn({ cwd, kind: FLAVOR });
-  assert.equal(r.kind, 'shell'); assert.equal(r.flavor, 'deepseek'); assert.equal(r.command, cmd);
+  assert.equal(r.kind, 'shell'); assert.equal(r.flavor, 'deepseek'); assert.equal(r.command, '[command]');
   assert.ok(!calls.some((c) => c[0] === 'startAgent'), '판이 에이전트를 띄우지 않는다');
   assert.deepEqual(calls.filter((c) => c[0] === 'sendText').map((c) => c[2]), [cmd]);
   assert.deepEqual(calls.filter((c) => c[0] === 'paneKeys').map((c) => c[2]), [['enter']]);
   const s = b.sessions.get(r.sessionId);
   assert.equal(b.hooked(s), false); assert.equal(s.settingsPath, '');
-  assert.equal(b.store.spawnInfo(r.sessionId).command, cmd);
+  assert.equal(b.store.spawnInfo(r.sessionId).command, '[command]');
   // 대화상자가 넘긴 명령이 설정보다 먼저, 첫 지시는 받지 않는다, 줄바꿈은 거부
   const r2 = await b.spawn({ cwd, kind: FLAVOR, command: 'pi --x' });
-  assert.equal(r2.command, 'pi --x');
+  assert.equal(r2.command, '[command]');
+  assert.equal(calls.filter((c) => c[0] === 'sendText').at(-1)[2], 'pi --x');
   await assert.rejects(() => b.spawn({ cwd, kind: FLAVOR, prompt: 'hi' }), (e) => e.key === 'deepseekCommandNoPrompt');
   await assert.rejects(() => b.spawn({ cwd, kind: FLAVOR, command: 'a\nb' }), (e) => e.key === 'deepseekCommandLine');
   // 셸에서 에이전트가 나타나 종류가 바뀌어도 flavor는 남는다(표시는 DeepSeek)

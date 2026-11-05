@@ -30,7 +30,8 @@ export function faceFor(nodeWidth, zoom, prev = null) {
 // nodes: [{ id, x, y, w, h }] (판 좌표), viewport: { x, y, zoom } (React Flow), screen: { width, height } (화면 px)
 // 돌려줌: 제어기를 붙일 노드 id 목록(가까운 순). margin만큼 화면 밖도 보이는 것으로 친다(끌 때 깜빡이지 않게).
 // prev: 지금 붙어 있는 노드 id 모음. 그 노드에는 얼굴 이력을 적용한다(SessionNode와 같은 기준).
-export function pickAttached(nodes, viewport, screen, { max = DEFAULT_MAX_CONTROLLERS, margin = 80, prev = null, focusId = null } = {}) {
+// focus(초점 노드 id), selected(고른 노드 id 모음): 보이고 가까이 얼굴이면 거리와 상관없이 상한 안에 먼저 넣는다(이슈 #1-16). 초점이 먼저다
+export function pickAttached(nodes, viewport, screen, { max = DEFAULT_MAX_CONTROLLERS, margin = 80, prev = null, focusId = null, focus = focusId, selected = null } = {}) {
   const { x: vx, y: vy, zoom } = viewport;
   const cx = screen.width / 2, cy = screen.height / 2;
   const seen = [];
@@ -39,9 +40,9 @@ export function pickAttached(nodes, viewport, screen, { max = DEFAULT_MAX_CONTRO
     const left = n.x * zoom + vx, top = n.y * zoom + vy, right = left + n.w * zoom, bottom = top + n.h * zoom;
     if (right < -margin || bottom < -margin || left > screen.width + margin || top > screen.height + margin) continue;
     const dx = clampDist(cx, left, right), dy = clampDist(cy, top, bottom);
-    seen.push({ id: n.id, d: dx * dx + dy * dy });
+    seen.push({ id: n.id, d: dx * dx + dy * dy, rank: n.id === focus ? 0 : selected && selected.has(n.id) ? 1 : 2 });
   }
-  seen.sort((a, b) => Number(b.id === focusId) - Number(a.id === focusId) || a.d - b.d);
+  seen.sort((a, b) => a.rank - b.rank || a.d - b.d);
   return seen.slice(0, max).map((s) => s.id);
 }
 const clampDist = (c, lo, hi) => (c < lo ? lo - c : c > hi ? c - hi : 0);

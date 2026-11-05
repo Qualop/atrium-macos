@@ -11,10 +11,12 @@ import { api } from './api.js';
 import { STATE_LABEL, agoText, labelFit } from './lib/labels.js';
 import { useT, tMsg, errText, fmtTime } from './lib/i18n.js';
 import { linkLabel } from '../../../backend/src/links.mjs';
+import { useDialog } from './dialog.js';
 
 const ACTIVE_MS = 30 * 60 * 1000;
 
-function Pill({ s }) {
+// P46: 덩어리 안 연결 글(Docks.jsx DockLinks)도 같은 상태 알약을 쓴다
+export function Pill({ s }) {
   useT();
   if (!s) return null;
   return <span className={`mt-pill st-${s.state}`} data-state={s.state}>{STATE_LABEL[s.state] || s.state}</span>;
@@ -68,6 +70,7 @@ export function RoleDialog({ from, to, onClose }) {
   const b = useStore((st) => st.sessions.get(to));
   const [role, setRole] = useState(() => t('links.defaultRole'));
   const [busy, setBusy] = useState(false);
+  const box = useDialog(() => onClose()); // P52
   if (!a || !b) return null;
   async function submit(e) {
     e.preventDefault();
@@ -80,7 +83,7 @@ export function RoleDialog({ from, to, onClose }) {
   }
   return (
     <div className="mt-modal-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <form className="mt-modal" onSubmit={submit} data-role="link-role">
+      <form ref={box} className="mt-modal" onSubmit={submit} data-role="link-role">
         <h3>{t('links.roleTitle', { a: a.name, b: b.name })}</h3>
         <label>{t('links.roleLabel', { b: b.name })}<input autoFocus value={role} onChange={(e) => setRole(e.target.value)} data-field="role" maxLength={40} /></label>
         <div className="mt-card-sub">{t('links.roleHelp1', { a: a.name, b: b.name })}<span className="mono">{b.agentName}</span>{t('links.roleHelp2', { a: a.name, pane: b.paneId, role: role.trim() || t('links.role') })}</div>

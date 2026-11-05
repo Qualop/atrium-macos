@@ -22,6 +22,13 @@ const ID_ARG_RE = /(?:--resume|--session-id|-r)(?:=|\s+)"?([0-9a-f]{8}-[0-9a-f]{
 
 const textOf = (content) => (typeof content === 'string' ? content : Array.isArray(content) ? content.filter((c) => c && c.type === 'text').map((c) => c.text).join('\n') : '');
 
+// P53(#8): Claude Code는 저장소 밖의 폴더와 분리된 HEAD에서 gitBranch에 "HEAD"를 쓴다. 브랜치 이름이 아니므로 버린다.
+// 색인에 이미 HEAD로 남은 줄도 있어 보여줄 때도 이것을 거친다(CONVO_PARSER는 올리지 않는다)
+export function branchName(b) {
+  const s = typeof b === 'string' ? b.trim() : '';
+  return s && s !== 'HEAD' ? s : null;
+}
+
 // 머리와 꼬리의 글 → 대화 요약. 사람이 쓴 지시(첫 것과 마지막 것), 마지막 답, 제목(Claude Code가 남긴 이름·요약), cwd, 브랜치, 출처(entrypoint)
 export function parseTranscriptChunks(head, tail = '') {
   const out = { cwd: null, branch: null, entrypoints: [], title: null, titleSource: null, firstPrompt: null, firstAt: null, startAt: null, promptKey: null, lastPrompt: null, lastPromptAt: null, lastAnswer: null, lastAnswerAt: null, lastAt: null, prompts: 0, answers: 0, tailAnswers: 0, lastPromptLine: null };
@@ -37,7 +44,7 @@ export function parseTranscriptChunks(head, tail = '') {
       if (o.uuid) { if (seen.has(o.uuid)) continue; seen.add(o.uuid); } // 머리와 꼬리가 겹친 줄
       if (o.entrypoint) ents.add(o.entrypoint);
       if (o.cwd && !out.cwd) out.cwd = o.cwd;
-      if (o.gitBranch) out.branch = o.gitBranch;
+      if (branchName(o.gitBranch)) out.branch = branchName(o.gitBranch);
       const at = o.timestamp ? Date.parse(o.timestamp) : null;
       if (at && (!out.lastAt || at > out.lastAt)) out.lastAt = at;
       if (at && !isTail && (!out.startAt || at < out.startAt)) out.startAt = at; // P13: 대화가 시작한 시각(머리의 가장 이른 줄)
@@ -190,6 +197,24 @@ export function desktopSessionRoots(base) {
   for (const p of ps) { if (!p.isDirectory()) continue; const d = path.join(base, p.name, 'claude-code-sessions'); try { if (fs.statSync(d).isDirectory()) out.push(d); } catch {} }
   return out;
 }
+// P34: 가져오기(desktop-import.mjs)가 쓰는 앱 세션 한 줄의 필드. 형식이 공개되지 않아 없는 필드는 null로 둔다
+const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+const timeOf = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null);
+export function desktopInfoOf(o, file = null) {
+  if (!o || typeof o !== 'object') return null;
+  const id = (x) => (str(x) ? str(x).toLowerCase() : null);
+  return {
+    provider: 'claude', file, sessionId: str(o.sessionId), cliSessionId: UUID_RE.test(id(o.cliSessionId) || '') ? id(o.cliSessionId) : null, priorCliSessionIds: (Array.isArray(o.priorCliSessionIds) ? o.priorCliSessionIds : []).map(id).filter((v) => UUID_RE.test(v || '')),
+    cwd: str(o.cwd), originCwd: str(o.originCwd), title: str(o.title), model: str(o.model), effort: str(o.effort), permissionMode: str(o.permissionMode),
+    isArchived: !!o.isArchived, isStarred: !!o.isStarred, lastActivityAt: timeOf(o.lastActivityAt), worktreePath: str(o.worktreePath), worktreeName: str(o.worktreeName),
+    branch: str(o.branch), lastAssistantUuid: str(o.lastAssistantUuid), adoptedFromOtherSurface: !!o.adoptedFromOtherSurface,
+  };
+}
+// P34: 앱 세션 목록 전부(보관 포함). readDesktopSessions와 같은 캐시를 쓴다
+export function listDesktopSessions(base, cache = new Map()) {
+  readDesktopSessions(base, cache);
+  return [...cache.values()].map((c) => c.info).filter((x) => x && x.sessionId);
+}
 export function readDesktopSessions(base, cache = new Map()) {
   const out = new Map();
   const seen = new Set();
@@ -204,8 +229,8 @@ export function readDesktopSessions(base, cache = new Map()) {
         let mtime = 0; try { mtime = fs.statSync(p).mtimeMs; } catch { continue; }
         let c = cache.get(p);
         if (!c || c.mtime !== mtime) {
-          try { const o = JSON.parse(fs.readFileSync(p, 'utf8')); c = { mtime, ids: [o.cliSessionId, ...(Array.isArray(o.priorCliSessionIds) ? o.priorCliSessionIds : [])].filter(Boolean).map((x) => String(x).toLowerCase()), archived: !!o.isArchived }; }
-          catch { c = { mtime, ids: [], archived: false }; }
+          try { const o = JSON.parse(fs.readFileSync(p, 'utf8')); c = { mtime, ids: [o.cliSessionId, ...(Array.isArray(o.priorCliSessionIds) ? o.priorCliSessionIds : [])].filter(Boolean).map((x) => String(x).toLowerCase()), archived: !!o.isArchived, info: desktopInfoOf(o, p) }; }
+          catch { c = { mtime, ids: [], archived: false, info: null }; }
           cache.set(p, c);
         }
         for (const id of c.ids) out.set(id, { archived: c.archived });
@@ -276,7 +301,7 @@ export function convoView(row, { binding, board = null, root = null }) {
   const cwd = row.cwd ? normPath(row.cwd) : null;
   const rel = cwd && root && pathKey(cwd) !== pathKey(root) && pathKey(cwd).startsWith(pathKey(root) + '/') ? cwd.slice(normPath(root).length + 1) : null;
   return {
-    convId: row.convId, cwd, folder: rel, branch: row.branch || null, worktree: !!row.worktree,
+    convId: row.convId, cwd, folder: rel, branch: branchName(row.branch), worktree: !!row.worktree,
     title: row.title || null, titleSource: row.titleSource || null, firstPrompt: row.firstPrompt || null, lastPrompt: row.lastPrompt || null, lastAnswer: row.lastAnswer || null,
     lastAt: row.lastAt || row.mtime || null, size: row.size, prompts: row.prompts || 0, entrypoints: row.entrypoints || [],
     board, binding, canOpen: !board && !binding.bound,

@@ -1,5 +1,4 @@
-// P6c 창 쪽 순수 규칙: 메모·칸반 노드의 워크스페이스 소속(놓은 자리), 루프 배지 글, Thread 결과 글, 미션 맵 배치. 단위 시험이 있다(test/p6c-lib.test.mjs).
-import { treeOrder } from './branch.js'; // P8(K4): 미션 맵의 나무 순서
+// P6c 창 쪽 순수 규칙: 메모·칸반 노드의 워크스페이스 소속(놓은 자리), 루프 배지 글, Thread 결과 글(미션 맵 배치는 P32부터 lib/mission-layout.js). 단위 시험이 있다(test/p6c-lib.test.mjs).
 import { t as tr } from './i18n.js';
 
 // 열쇠 → 글(P16). 객체처럼 읽되 그때의 언어로 돌려준다(LOOP_STATUS[l.status])
@@ -80,8 +79,10 @@ export const RESULT_PHASE = labelMap('items.resultPhase', ['delivering', 'runnin
 export const ITEM_PHASE = labelMap('items.itemPhase', ['active', 'done', 'partial', 'failed']);
 export const SOURCE_LABEL = labelMap('items.source', ['bar', 'output', 'loop', 'atrium', 'mtask']);
 
-// 미션 맵 배치(I6): 두 열(0 사람과 지시하는 세션, 1 세션). P22에서 그룹 열을 뺐다. 거르기(category)를 받으면 그 분류의 세션만(사람은 남긴다)
-// → { boxes: Map id → { x, y, w, h, node }, edges: [{ ...edge, path }], width, height }
+// 미션 맵 배치는 lib/mission-layout.js(P32)
+
+// Compatibility layout API; the UI uses the new tree layout in mission-layout.js.
+import { treeOrder } from './branch.js';
 export const MISSION = { colW: 260, colGap: 140, rowH: 66, rowGap: 14, pad: 24, head: 34, indent: 18 };
 export function missionLayout(graph, { filter = 'all' } = {}) {
   const L = MISSION;

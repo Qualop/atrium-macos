@@ -11,7 +11,8 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { spawn, execFile } from 'node:child_process';
-import { HERDR_VERSION, HERDR_PROTOCOL } from '../config.mjs';
+import { HERDR_VERSION, HERDR_PROTOCOL, HERDR_PROTOCOLS, HERDR_TESTED } from '../config.mjs';
+import { discoverHerdr, parseWhere, herdrCompat, herdrServerExe, withPathFirst } from './discover.mjs';
 import { herdrDirectory, herdrSocket, findExecutable } from '../platform.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -35,8 +36,54 @@ export function cleanEnv(base = process.env) {
 
 function execText(file, args, opts = {}) {
   return new Promise((res) => {
+    if (!file) return res({ code: 'ENOENT', stdout: '', stderr: 'herdr not found' }); // P40: herdr를 못 찾았으면 부르지 않는다
     execFile(file, args, { encoding: 'utf8', windowsHide: true, timeout: 20000, ...opts }, (err, stdout, stderr) => res({ code: err ? (err.code ?? 1) : 0, stdout: String(stdout || ''), stderr: String(stderr || '') }));
   });
+}
+
+// P40: 이 PC에서 herdr 찾기(discover.mjs의 순서). env의 PATH·USERPROFILE·LOCALAPPDATA를 읽는다(시험 판은 가린 env로 띄운다)
+export async function findHerdr({ envPath = '', settingPath = '', bundledPath = '', env = process.env } = {}) {
+  const home = env.USERPROFILE || env.HOME || '';
+  const localAppData = env.LOCALAPPDATA || (home ? path.join(home, 'AppData', 'Local') : '');
+  const w = process.platform === 'win32' ? await execText('where.exe', ['herdr'], { timeout: 5000, env: { ...env } }) : { code: 0, stdout: findExecutable('herdr', { env }) || '' };
+  let releases = [];
+  try { releases = home ? fs.readdirSync(path.join(home, '.herdr', 'packages', 'standalone', 'releases')) : []; } catch {}
+  return discoverHerdr({ envPath, settingPath, bundledPath, platform: process.platform, home, localAppData, wherePaths: w.code === 0 ? parseWhere(w.stdout) : [], releases }, {
+    exists: (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } },
+    version: async (p) => { const r = await execText(p, ['--version'], { timeout: 8000, env: cleanEnv(env) }); return r.code === 0 ? r.stdout + r.stderr : null; },
+  });
+}
+
+// P40: 이 세션의 herdr 서버 프로세스의 실행 파일(읽기만 한다). 못 읽으면 null
+export async function readServerExe(session, serverPid = null) {
+  if (process.platform !== 'win32') {
+    const rows = await execText('/bin/ps', serverPid ? ['-p', String(serverPid), '-o', 'pid=,comm='] : ['-axo', 'pid=,comm='], { timeout: 5000 });
+    if (rows.code !== 0) return null;
+    for (const line of rows.stdout.split('\n')) {
+      const m = /^\s*(\d+)\s+(.*)$/.exec(line); if (!m || path.basename(m[2]) !== 'herdr') continue;
+      const args = await execText('/bin/ps', ['-p', m[1], '-o', 'args='], { timeout: 5000 });
+      const raw = args.stdout.trim(), exe = m[2].trim();
+      const cmd = raw.startsWith(exe) ? JSON.stringify(exe) + raw.slice(exe.length) : raw;
+      const found = herdrServerExe([{ pid: Number(m[1]), exe, cmd }], session, serverPid); if (found) return found;
+    }
+    return null;
+  }
+  const ps = `$ErrorActionPreference = 'SilentlyContinue'; @(Get-CimInstance Win32_Process -Filter "Name='herdr.exe'" -Property ProcessId,ExecutablePath,CommandLine | ForEach-Object { [pscustomobject]@{ i = $_.ProcessId; e = $_.ExecutablePath; c = $_.CommandLine } }) | ConvertTo-Json -Compress`;
+  const r = await execText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeout: 15000 });
+  if (r.code !== 0) return null;
+  try { return herdrServerExe([].concat(JSON.parse(r.stdout || '[]') || []).map((x) => ({ pid: x.i, exe: x.e || null, cmd: x.c || '' })), session, serverPid); } catch { return null; }
+}
+
+// P40: 레지스트리의 Machine+User PATH(펼친 값). herdr가 새 패널에 주는 PATH와 같은 출처다. 1분 동안 기억한다. 못 읽으면 null
+let regPathCache = null;
+export async function registryPath() {
+  if (process.platform !== 'win32') return process.env.PATH || '';
+  if (regPathCache && Date.now() - regPathCache.at < 60000) return regPathCache.value;
+  const ps = "$m = [Environment]::GetEnvironmentVariable('Path','Machine'); $u = [Environment]::GetEnvironmentVariable('Path','User'); [Environment]::ExpandEnvironmentVariables((@($m, $u) | Where-Object { $_ }) -join ';')";
+  const r = await execText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeout: 10000 });
+  const value = r.code === 0 ? r.stdout.trim() : '';
+  regPathCache = { at: Date.now(), value: value || null };
+  return regPathCache.value;
 }
 
 // herdr 세션 폴더와 소켓(Windows 이름 있는 파이프). 기본 세션은 %APPDATA%\herdr, 이름 있는 세션은 그 아래 sessions\<이름>
@@ -102,17 +149,19 @@ export function agentInfo(a) {
   };
 }
 
-// P4(F5): herdr가 아는 에이전트 종류. `herdr agent`(하위 명령 없이)가 보여주는 도움말의 "kinds:" 줄을 읽는다. 버전 0.9.5에 묶인 형식이다.
+// P4(F5): herdr가 아는 에이전트 종류. `herdr agent`(하위 명령 없이)가 보여주는 도움말의 "kinds:" 줄을 읽는다. 0.9.5의 형식이다.
+// P40: 다른 버전에서 이 줄을 못 읽으면 빈 목록이 되고, 판은 종류를 막지 않는다(spawn이 빈 목록이면 검사를 건너뛴다)
 export function parseKinds(helpText) {
   const m = String(helpText || '').match(/^\s*kinds:\s*(.+)$/m);
   return m ? m[1].split('|').map((k) => k.trim()).filter((k) => /^[a-z][a-z0-9_-]*$/.test(k)) : [];
 }
 
 export class HerdrAdapter extends EventEmitter {
-  constructor({ herdrPath, session, logDir }) {
+  constructor({ herdrPath, session, logDir, protocols = HERDR_PROTOCOLS, tested = HERDR_TESTED }) {
     super();
     if (!session || session === 'default') throw new Error('이름 있는 herdr 세션만 쓴다');
-    this.herdrPath = herdrPath;
+    this.herdrPath = herdrPath || null; // P40: 백엔드가 찾은 실행 파일. 못 찾았으면 null(서버를 띄우지 않는다)
+    this.policy = { protocols, tested };
     this.session = session;
     this.logDir = logDir;
     this.sessionDir = herdrSessionDir(session);
@@ -131,17 +180,9 @@ export class HerdrAdapter extends EventEmitter {
   // ---------- 서버 ----------
   async ping() { return this.call('ping', {}, 3000); }
   async probe() { try { return { running: true, pong: await this.ping() }; } catch (e) { return { running: false, error: e.code }; } }
-  checkCompat(pong) {
-    const problems = [];
-    if (!pong) problems.push('no pong');
-    else {
-      if (pong.version !== HERDR_VERSION) problems.push(`version ${pong.version} != ${HERDR_VERSION}`);
-      if (pong.protocol !== HERDR_PROTOCOL) problems.push(`protocol ${pong.protocol} != ${HERDR_PROTOCOL}`);
-      if (!pong.capabilities || typeof pong.capabilities !== 'object') problems.push('capabilities missing');
-    }
-    return { ok: problems.length === 0, problems, version: pong && pong.version, protocol: pong && pong.protocol, capabilities: pong && pong.capabilities };
-  }
-  async cliVersion() { const r = await execText(this.herdrPath, ['--version'], { env: cleanEnv() }); return r.stdout.trim(); }
+  // P40: 프로토콜이 지원 목록에 있으면 붙는다. 시험한 버전이 아니면 level 'untested'로 경고한다(discover.mjs herdrCompat)
+  checkCompat(pong) { return herdrCompat(pong, this.policy); }
+  async cliVersion() { if (!this.herdrPath) return null; const r = await execText(this.herdrPath, ['--version'], { env: cleanEnv() }); return r.stdout.trim() || null; }
   // P4: 고정한 herdr가 주는 에이전트 스킬 글(`herdr --skill`, ~/.agents/skills/herdr/SKILL.md와 같다)
   async skillText() { const r = await execText(this.herdrPath, ['--skill'], { env: cleanEnv() }); return r.code === 0 && r.stdout.includes('name: herdr') ? r.stdout : null; }
   serverPid() {
@@ -152,6 +193,7 @@ export class HerdrAdapter extends EventEmitter {
   async startServer() {
     const p0 = await this.probe();
     if (p0.running) return { started: false, pong: p0.pong, pid: this.serverPid() };
+    if (!this.herdrPath) throw new HerdrError('not_found', 'herdr executable not found', 'server'); // P40
     fs.mkdirSync(this.logDir, { recursive: true });
     const out = fs.openSync(path.join(this.logDir, `herdr-server-${this.session}.out`), 'a');
     const env = cleanEnv();
@@ -289,8 +331,19 @@ export class HerdrAdapter extends EventEmitter {
     };
   }
   async createWorkspace({ cwd, label, env }) {
-    const r = await this.call('workspace.create', { cwd, label, focus: false, ...(env ? { env } : {}) });
+    const discovered = await this.paneEnv().catch(() => null);
+    const merged = { ...(discovered || {}), ...(env || {}) };
+    if (this.herdrPath && merged.PATH) merged.PATH = withPathFirst({ PATH: merged.PATH }, path.dirname(this.herdrPath)).PATH;
+    const r = await this.call('workspace.create', { cwd, label, focus: false, ...(Object.keys(merged).length ? { env: merged } : {}) });
     return { workspaceId: r.workspace.workspace_id, paneId: r.root_pane.pane_id };
+  }
+  // P40: 판이 만드는 작업 공간의 env. PATH 맨 앞에 판 서버의 herdr 폴더를 넣어, 패널 안 에이전트가 치는 `herdr`가 서버와 같은 실행 파일이 되게 한다.
+  // herdr는 새 패널의 PATH를 레지스트리(Machine+User)에서 다시 만든다(서버 env의 PATH는 이어지지 않는다, P40에서 확인). 그래서 같은 레지스트리 PATH에 앞만 더한다.
+  // 레지스트리를 못 읽으면 백엔드의 PATH. 판 밖에서 나눈 패널(herdr pane split)은 herdr가 만드는 PATH 그대로다
+  async paneEnv() {
+    if (!this.herdrPath) return null;
+    const base = await registryPath().catch(() => null) || process.env[Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH')] || '';
+    return { PATH: withPathFirst({ PATH: base }, path.dirname(this.herdrPath)).PATH };
   }
   async waitShellReady(paneId, timeoutMs = 15000) {
     const prompt = process.platform === 'win32' ? 'PS [^\\n]*>' : '(?m)[^\\n]*[$#%❯]\\s*$';
@@ -395,6 +448,7 @@ class Controller extends EventEmitter {
     this.proc = spawn(adapter.herdrPath, ['--session', adapter.session, 'terminal', 'session', 'control', paneId, '--takeover', '--cols', String(cols), '--rows', String(rows)], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: cleanEnv() });
     this.pid = this.proc.pid;
     this.exited = null;
+    this.proc.on('error', (e) => { this.emit('stderr', `controller spawn failed: ${e.code || e.message}`); if (this.exited === null) { this.exited = -1; this.emit('exit', -1); } }); // P40
     let buf = '';
     this.proc.stdout.setEncoding('utf8');
     this.proc.stderr.setEncoding('utf8');

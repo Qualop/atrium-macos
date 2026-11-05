@@ -152,12 +152,14 @@ for (const kind of ['memo', 'kanban']) for (const action of ['create', 'update']
   const { store, dir } = db(t), b = new Backend({ logDir: dir });
   b.store = store; b.api = { broadcast() {} }; b.sessions = new Map();
   store.insertWorkspace({ key: 'ws', kind: 'folder', root: '/fake/repo', createdAt: 1 });
-  const ctx = { store, broadcast() {}, occupied: () => [], resolveWorkspace: (ref) => b.resolveWorkspace(ref), apiError, sessionCard() {} };
+  const closingLookup = deferred();
+  const ctx = { store, broadcast() {}, occupied: () => [], resolveWorkspace: () => closingLookup.promise, apiError, sessionCard() {} };
   const item = kind === 'memo' ? new Memos(ctx) : new Kanbans(ctx);
   const existing = action === 'update' ? await item.create({}) : null;
   const pending = item[action]({ workspace: 'ws', ...(existing ? { [kind]: existing[`${kind}Id`] } : {}) });
   const rejection = assert.rejects(pending, { code: 'not_found' });
   await b.workspaceClose({ workspace: 'ws', confirm: true });
+  closingLookup.resolve({ key: 'ws' });
   await rejection;
   assert.equal([...store.memos(), ...store.kanbans()].some((x) => x.workspaceKey === 'ws'), false);
 });

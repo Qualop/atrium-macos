@@ -1,11 +1,12 @@
 // 메모 노드(ARCH 4절 I3, P6c): 캔버스에 두는 마크다운 글. 머리줄을 끌어 옮기고, 고르면 크기 손잡이가 생긴다.
 // 보기와 편집: 글을 두 번 누르거나 ✎로 편집(Ctrl+Enter 또는 바깥을 누르면 저장, Esc는 취소). 할 일 상자는 보기에서 바로 누른다.
 // 워크스페이스 영역 안에 놓으면 그 소속이다(Canvas가 놓은 자리로 정해 memo.update { workspace }). 지우기는 글이 있으면 한 번 더 묻는다.
-// 줄여 보아 노드가 작으면 첫 줄만 크게(화면 기준 글자) 보인다.
+// 줄여 보아 노드가 작으면 첫 줄만 크게(화면 기준 글자) 보인다. P50(#6): 그 먼 얼굴을 두 번 누르면 화면을 그 메모로 옮겨 편집을 연다. 새 메모는 바로 편집이다.
 import { memo, useEffect, useRef, useState } from 'react';
 import { NodeResizer, useStore as useFlowStore } from '@xyflow/react';
 import { api } from './api.js';
-import { useStore, getState, setMemoLocal, toast, wsName } from './store.js';
+import { useStore, getState, setMemoLocal, toast, wsName, editMemo, takeMemoEdit } from './store.js';
+import { memoFar } from './lib/memo-edit.js'; // P50(#6)
 import { Markdown } from './Markdown.jsx';
 import { toggleTask } from './lib/markdown.js';
 import { useT, t, errText, tMsg } from './lib/i18n.js';
@@ -36,8 +37,18 @@ function MemoNodeInner({ data, selected }) {
   const [draft, setDraft] = useState(m ? m.text : '');
   const [confirm, setConfirm] = useState(null);
   const ta = useRef(null);
+  // P50(#6): 편집을 열면 입력칸에 초점을 준다. 먼 얼굴이라 입력칸이 아직 없으면 화면이 다가와 입력칸이 생길 때 준다
+  const wantFocus = useRef(!!m && !m.text);
+  const startEdit = () => { wantFocus.current = true; setEdit(true); };
+  const asked = useStore((st) => st.memoEdit === id);
+  const far = !!m && memoFar(m.w, zoom);
+  useEffect(() => { if (asked) { takeMemoEdit(id); startEdit(); } }, [asked]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!edit && m) setDraft(m.text); }, [m && m.text, edit]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (edit && ta.current) { ta.current.focus(); ta.current.setSelectionRange(ta.current.value.length, ta.current.value.length); } }, [edit]);
+  useEffect(() => {
+    if (!edit || far || !ta.current || !wantFocus.current) return;
+    wantFocus.current = false;
+    ta.current.focus(); ta.current.setSelectionRange(ta.current.value.length, ta.current.value.length);
+  }, [edit, far]);
   if (!m) return null;
 
   const save = async (text = draft) => {
@@ -53,7 +64,6 @@ function MemoNodeInner({ data, selected }) {
     } catch (e) { toast(t('memo.deleteFail', { error: errText(e) }), 'error'); }
   };
   const onToggle = (n, checked) => save(toggleTask(m.text, n, checked));
-  const far = m.w * zoom < 220;
   const title = firstLine(m.text);
 
   return (
@@ -68,11 +78,11 @@ function MemoNodeInner({ data, selected }) {
         {m.workspaceKey ? <span className="mt-memo-ws" data-role="memo-ws">{wsName(m.workspaceKey)}</span> : <span className="mt-memo-ws free" data-role="memo-ws">{t('memo.noWs')}</span>}
         {!far && (edit
           ? <button className="mt-x nodrag" data-action="memo-done" title={t('memo.saveTitle')} onMouseDown={(e) => e.preventDefault()} onClick={() => save()}>✓</button>
-          : <button className="mt-x nodrag" data-action="memo-edit" title={t('memo.editTitle')} onClick={() => setEdit(true)}>✎</button>)}
+          : <button className="mt-x nodrag" data-action="memo-edit" title={t('memo.editTitle')} onClick={startEdit}>✎</button>)}
         {!far && <button className="mt-x nodrag" data-action="memo-delete" title={t('memo.deleteTitle')} onClick={() => del()}>×</button>}
       </div>
       {far
-        ? <div className="mt-memo-far" style={{ fontSize: Math.min(14 / Math.max(zoom, 0.02), m.h * 0.3) }}>{title || t('memo.title')}</div>
+        ? <div className="mt-memo-far" title={t('memo.editTitle')} onDoubleClick={() => editMemo(id)} style={{ fontSize: Math.min(14 / Math.max(zoom, 0.02), m.h * 0.3) }}>{title || t('memo.title')}</div>
         : edit
           ? <textarea ref={ta} className="mt-memo-edit nodrag nowheel" data-field="memo-text" value={draft} spellCheck={false} placeholder={t('memo.placeholder')}
               onChange={(e) => setDraft(e.target.value)} onBlur={() => save()}
@@ -82,7 +92,7 @@ function MemoNodeInner({ data, selected }) {
                 if (e.key === 'Escape') { e.preventDefault(); setDraft(m.text); setEdit(false); }
                 e.stopPropagation();
               }} />
-          : <div className="mt-memo-body nowheel" data-role="memo-view" onDoubleClick={() => setEdit(true)}>
+          : <div className="mt-memo-body nowheel" data-role="memo-view" onDoubleClick={startEdit}>
               {m.text.trim() ? <Markdown text={m.text} onToggle={onToggle} /> : <div className="mt-memo-empty">{t('memo.empty')}</div>}
             </div>}
       {confirm && <InlineConfirm message={confirm} onYes={() => { setConfirm(null); del(true); }} onNo={() => setConfirm(null)} />}
@@ -100,8 +110,12 @@ export async function createItem(kind, extra = {}) {
   // P16: 새 칸반의 제목과 열 이름은 지금 언어로 만든다(만든 뒤에는 사용자의 글이다)
   const named = kind === 'kanban' && !extra.title && !extra.columns ? { title: t('kanban.defaultTitle'), columns: [t('kanban.colTodo'), t('kanban.colDoing'), t('kanban.colDone')] } : {};
   const p = { ...named, ...extra, workspace: ws || undefined, near: { x: Math.round(c.x - size.w / 2), y: Math.round(c.y - size.h / 2) } };
+  // P50(#6): 누른 단추(레일)에 초점이 남으면 이어 친 Space·Enter가 단추를 다시 눌러 메모가 또 생긴다
+  const a = typeof document !== 'undefined' ? document.activeElement : null;
+  if (a && a.tagName === 'BUTTON' && a.blur) a.blur();
   try {
     const r = await api.call(kind === 'memo' ? 'memo.create' : 'kanban.create', p);
+    if (kind === 'memo' && r && r.memoId) editMemo(r.memoId, r); // 새 메모는 바로 편집(먼 얼굴이면 화면을 그 메모로)
     toast(t(kind === 'memo' ? 'memo.created' : 'kanban.created', { where: ws ? t('memo.inWs', { ws: wsName(ws) }) : t('memo.inNoWs') }));
     return r;
   } catch (e) { toast(t(kind === 'memo' ? 'memo.createFail' : 'kanban.createFail', { error: errText(e) }), 'error'); return null; }

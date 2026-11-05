@@ -1,13 +1,13 @@
 // 워크트리 영역(P27, BRIEF "워크스페이스"). backend.mjs의 Backend(b)를 받아 리포 워크스페이스마다 살아 있는 워크트리를 읽고 영역을 맞춘다.
 // - 목록: 리포 워크스페이스마다 `git -C <본 저장소> worktree list --porcelain`. 폴더가 있는 것만 산다(worktree-areas.mjs liveWorktrees).
 //   뜰 때, 주기적으로(기본 10초), 세션의 git이 바뀌었을 때(kick) 읽는다. 판은 워크트리를 만들거나 지우지 않고 읽기만 한다(BRIEF 2절).
-// - 영역: 새 워크트리는 표 worktree_areas에 자리를 정해 넣고(본 영역 오른쪽 열, areaSlot), 없어진 워크트리(목록 읽기가 성공했을 때만)는 행을 지운다.
+// - 영역: 새 워크트리는 표 worktree_areas에 자리를 정해 넣고(P35: 리포 영역 안 빈자리, boxSlot), 없어진 워크트리(목록 읽기가 성공했을 때만)는 행을 지운다.
 // - 노드: 세션의 지금 폴더(hook cwd, 없으면 시작 폴더)가 든 워크트리가 저장한 영역(nodes.area)과 다르면 그 영역의 빈자리로 옮긴다.
 //   덩어리 안 노드는 옮기지 않는다. 대화 노드는 recall.layoutCanvas가 같은 규칙(areaOf)으로 놓는다.
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
-import { parseWorktreeList, liveWorktrees, worktreeOfPath, areaKey, wsOfArea, areaSlot } from './worktree-areas.mjs';
-import { canvasItems, regions, settleRegions, dockOf, slotRegions } from './canvas-ops.mjs';
+import { parseWorktreeList, liveWorktrees, worktreeOfPath, areaKey, wsOfArea, boxSlot } from './worktree-areas.mjs';
+import { canvasItems, regions, settleRegions, dockOf, slotRegions, slotItems, anchorWorkspace } from './canvas-ops.mjs';
 import { slotInRegion } from './canvas.mjs';
 import { pathKey } from './workspaces.mjs';
 
@@ -58,11 +58,13 @@ export function attachWorktrees(b, { tickMs = TICK_MS, list = gitWorktrees, exis
       for (const x of live) {
         const a = have.find((r) => r.wt === x.key);
         if (a) { if (a.branch !== (x.branch || null) || a.path !== x.path) { b.store.putWorktreeArea({ ...a, branch: x.branch || null, path: x.path }); changed = true; } continue; }
-        const regs = regions(b);
-        const main = regs.get(w.key);
-        const sats = [...regs].filter(([k]) => k !== w.key && wsOfArea(k) === w.key).map(([, r]) => r);
-        const others = [...regs].filter(([k]) => wsOfArea(k) !== w.key).map(([, r]) => r);
-        const at = areaSlot({ main, sats, others });
+        // P35: 리포 영역 안 빈자리(본 저장소 쪽 것의 오른쪽이나 아래, 다른 상자와 겹치지 않게). 리포 영역이 커져 다른 영역과 겹치면 settleRegions가 그 영역을 민다
+        anchorWorkspace(b, w.key);
+        const items = canvasItems(b);
+        const regs = regions(b, items);
+        const content = items.filter((i) => i.ws === w.key && i.kind !== 'wtbox');
+        const boxes = [...regs].filter(([k]) => k !== w.key && wsOfArea(k) === w.key).map(([, r]) => r);
+        const at = boxSlot({ main: regs.get(w.key) || null, content, boxes });
         b.store.putWorktreeArea({ wsKey: w.key, wt: x.key, path: x.path, branch: x.branch || null, x: at.x, y: at.y });
         b.store.addEvent(null, 'worktree_area_created', { key: w.key, worktree: x.path, branch: x.branch || null, at });
         changed = true;
@@ -85,7 +87,7 @@ export function attachWorktrees(b, { tickMs = TICK_MS, list = gitWorktrees, exis
       const items = canvasItems(b).filter((i) => i.id !== s.sessionId);
       const regs = regions(b, items);
       const k = want && regs.has(areaKey(w.key, want)) ? areaKey(w.key, want) : w.key;
-      const at = slotInRegion({ wsKey: k, size: { w: n.w, h: n.h }, items, regions: slotRegions(regs, k) });
+      const at = slotInRegion({ wsKey: k, size: { w: n.w, h: n.h }, items: slotItems(items, k), regions: slotRegions(regs, k) });
       b.store.setNode({ ...n, x: at.x, y: at.y, area: want });
       b.store.addEvent(s.sessionId, 'node_moved', { from: { x: n.x, y: n.y, w: n.w, h: n.h }, to: { x: at.x, y: at.y, w: n.w, h: n.h }, cause: want ? 'worktree area' : 'main area', area: want || null });
       moved++;
@@ -99,7 +101,10 @@ export function attachWorktrees(b, { tickMs = TICK_MS, list = gitWorktrees, exis
   function sync(cause = 'tick') {
     chain = chain.catch(() => {}).then(async () => {
       if (stopped) return { changed: false, moved: 0 };
-      const changed = await syncAreas();
+      // Reconcile before listing worktrees, but never write after stop().
+      const merged = b.reconcileWorkspaces ? await b.reconcileWorkspaces(cause, { cancelled: () => stopped }).catch((e) => { log(`workspace merge error ${e.stack}`); return []; }) : [];
+      if (stopped) return { changed: false, moved: 0 };
+      const changed = (await syncAreas()) || merged.length > 0;
       if (stopped) return { changed: false, moved: 0 };
       const moved = relocateNodes();
       if (!changed && !moved) return { changed: false, moved: 0 };

@@ -5,6 +5,7 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api.js';
 import { setLanguage, t, errText } from './lib/i18n.js';
+import { readScale, saveScale, SCALE_KEYS } from './lib/scale.js'; // P45
 
 const state = {
   conn: 'connecting',
@@ -26,12 +27,13 @@ const state = {
   boardSeenAt: null, // A3: 판을 마지막으로 본 시각(백엔드 기록)
   resources: null, // D1
   clients: null, // D3: 판 전용 herdr 세션에 붙은 다른 화면
+  peers: null, // P47: 이 백엔드에 붙은 창·웹 클라이언트 { clients, notify(알림 받을 클라이언트 ID), me }
   links: new Map(), // P4: linkId → 연결(누가 누구에게 시켰는지, 역할, 띄움)
   dialog: null, // { kind: 'spawn' | 'role' | 'link' | 'wsopen' | 'wsclose' | 'close', from?, to?, linkId?, cwd?, ids? }
   killAsk: null, // P22: { id, at } Delete 키로 그 노드의 닫기 확인(X와 같음)을 연다
-  briefing: null, // E2: { sessionId, data } 들어갈 때 브리핑
   // P5: 리포지토리 워크스페이스
   workspaces: [], // [{ key, name, kind, root, createdAt, counts, x, y }] 처음 생긴 순서
+  groups: [], // P44: 가상 그룹 [{ id, name, members: [워크스페이스 키] }](판 데이터 meta wsGroups)
   currentWs: null, // 마지막에 고른(가 본) 워크스페이스의 키
   vpNow: null, // 지금 캔버스의 뷰포트
   canvasSize: null,
@@ -41,6 +43,8 @@ const state = {
   pendingInput: null, // H4: { id, buf, at } 노드를 눌러 들어간 뒤 터미널이 붙기 전에 친 글
   arranged: new Set(), // H7: 이 창에서 정리한 워크스페이스(되돌리기 단추)
   searchOpen: false, // H2: Ctrl+F
+  bottomShown: false, // P43: 아래 바가 보인다(평소에는 숨는다)
+  bottomPin: (() => { try { return typeof sessionStorage !== 'undefined' && sessionStorage.getItem('mt.bottomPin') === '1'; } catch { return false; } })(), // P43: 창 시험이 아래 바를 늘 보이게 고정한다
   // P6c
   memos: new Map(), // memoId → { memoId, workspaceKey, x, y, w, h, text, color }
   kanbans: new Map(), // kanbanId → { kanbanId, workspaceKey, title, x, y, w, h, columns }
@@ -50,9 +54,11 @@ const state = {
   threadOpen: false,
   loops: new Map(), // loopId → 루프
   settings: null, // { tray, language, … }. language를 받으면 화면 언어를 바꾼다(P16)
+  launchers: null, // P33 호출자: { launchers: [{ id, name, harness, …, favorite, preview }], favorites: [id], harnesses }
   outputView: null, // { sessionId, turn } 출력 보기 창
   missionOpen: false, // 미션 맵 덮개
   itemSelected: null, // 캔버스에서 고른 메모·칸반 노드 id(memo:…, kanban:…)
+  memoEdit: null, // P50(#6): 편집을 열 메모 id(메모 노드가 받아 편집을 열고 지운다)
   // P13: 판 밖 대화 노드(읽기 전용 카드)와 대화끼리의 띄움 선. 백엔드 recall.layoutCanvas가 만든다
   convoNodes: new Map(), // convId → { convId, workspaceKey, x, y, w, h, block, title, lastPrompt, lastAnswer, lastAt, binding, subagents, spawnedBy, … }
   convoEdges: [], // [{ id, from, to, via, name }] from·to는 세션 ID나 convo:<대화 ID>
@@ -118,6 +124,7 @@ export async function loadBoard() {
   put('memos', memos.map((m) => [m.memoId, m]));
   put('kanbans', kanbans.map((k) => [k.kanbanId, k]));
   if (b.workspaces && state.workspaces === before.workspaces) state.workspaces = b.workspaces;
+  if (b.groups && state.groups === before.groups) state.groups = b.groups;
   if (b.convoNodes) {
     put('convoNodes', b.convoNodes.map((c) => [c.convId, c]));
     if (state.convoEdges === before.convoEdges) state.convoEdges = b.convoEdges || [];
@@ -153,7 +160,6 @@ export function setViewNow(vp, size) {
   state.vpNow = vp; if (size) state.canvasSize = size; changed();
 }
 export function setKillAsk(id) { state.killAsk = id ? { id, at: Date.now() } : null; changed(); }
-export function setBriefing(v) { state.briefing = v; changed(); }
 // 시험용(P3, 노드 오류 경계): 이 세션 노드가 그릴 때 일부러 오류를 낸다. 창 안의 window.__mt.setDebugThrow로만 켠다
 export function setDebugThrow(id) { state.debugThrow = id; changed(); }
 
@@ -222,6 +228,10 @@ export function setSelected(ids) {
 // P17: 분할선을 끄는 동안 덩어리 나무(비율)를 창에서만 바꾼다. 놓으면 dock.update로 저장하고 board.changed로 다시 읽는다
 export function setDockLocal(id, f) { const d = state.docks.get(id); if (!d) return; state.docks = new Map(state.docks); state.docks.set(id, { ...d, ...f }); changed(); }
 export function setSearchOpen(v) { state.searchOpen = v; changed(); }
+// P43: 아래 바(명령 바·칩)가 보이는가(CommandBar가 정한다, 칩 줄이 따른다). bottomPin은 창 시험이 늘 보이게 고정하는 값
+export function setBottomShown(v) { if (state.bottomShown === !!v) return; state.bottomShown = !!v; changed(); }
+// 고정은 창을 다시 읽어도(시험의 page.reload) 남게 sessionStorage에 둔다. 창을 닫으면 사라진다
+export function setBottomPin(v) { state.bottomPin = !!v; try { if (v) sessionStorage.setItem('mt.bottomPin', '1'); else sessionStorage.removeItem('mt.bottomPin'); } catch { /* 저장소를 못 쓰면 이 창에서만 */ } changed(); }
 export function markArranged(key, on) { state.arranged = new Set(state.arranged); if (on) state.arranged.add(key); else state.arranged.delete(key); changed(); }
 // H4: 노드를 눌러 들어갔다. 터미널이 붙기 전에 친 글은 모았다가 붙으면 넣는다(8초까지)
 export const PENDING_INPUT_MS = 8000;
@@ -235,6 +245,13 @@ export function takePendingInput(id) {
 }
 
 // ---------- P6c ----------
+// P50(#6): 메모 편집을 연다. 먼 얼굴이면 화면을 그 메모로 옮긴다(Canvas.jsx showMemoForEdit). rect를 주지 않으면 창이 가진 메모 자리
+export function editMemo(id, rect = null) {
+  const r = rect || state.memos.get(id);
+  if (r && state.showMemoForEdit) state.showMemoForEdit(r);
+  state.memoEdit = id; changed();
+}
+export function takeMemoEdit(id) { if (state.memoEdit === id) { state.memoEdit = null; changed(); } }
 export function setMemoLocal(id, f) { const m = state.memos.get(id); if (!m) return; state.memos = new Map(state.memos); state.memos.set(id, { ...m, ...f }); changed(); }
 export function setConvoLocal(id, f) { const c = state.convoNodes.get(id); if (!c) return; state.convoNodes = new Map(state.convoNodes); state.convoNodes.set(id, { ...c, ...f }); changed(); } // P13
 export function setKanbanLocal(id, f) { const k = state.kanbans.get(id); if (!k) return; state.kanbans = new Map(state.kanbans); state.kanbans.set(id, { ...k, ...f }); changed(); }
@@ -263,6 +280,7 @@ api.on('$open', async (r) => {
   const generation = api.generation;
   const before = { ...state };
   state.sessions = new Map(r.sessions.map((s) => [s.sessionId, s]));
+  if (r.clients) state.peers = { ...r.clients, me: r.clients.me || api.clientId }; // P47
   changed();
   const read = async (method, apply, params) => {
     const value = await api.call(method, params);
@@ -273,10 +291,10 @@ api.on('$open', async (r) => {
   const results = await Promise.allSettled([
     loadBoard(),
     read('delivery.list', (ds) => { state.deliveries = mergeSnapshot(before.deliveries, state.deliveries, new Map(ds.slice().reverse().filter((d) => state.sessions.has(d.sessionId)).map((d) => [d.deliveryId, d]))); }, { limit: 10 }),
-    read('herdr.status', (st) => { if (state.herdr === before.herdr) state.herdr = { connected: st.connected, running: st.running, session: st.session, version: st.compat && st.compat.version }; }),
+    read('herdr.status', (st) => { if (state.herdr === before.herdr) state.herdr = herdrStateOf(st); }),
     read('resources.get', (v) => { if (state.resources === before.resources) state.resources = v; }),
     read('herdr.clients', (v) => { if (state.clients === before.clients) state.clients = v; }),
-    loadThread().catch(() => {}), loadLoops().catch(() => {}),
+    loadThread().catch(() => {}), loadLoops().catch(() => {}), loadLaunchers(),
     read('settings.get', (v) => { if (state.settings === before.settings) putSettings(v.settings); }).catch(() => {}),
   ]);
   const failed = results.find((v) => v.status === 'rejected');
@@ -305,17 +323,41 @@ api.on('delivery', (d) => {
 // P13: 판 밖 대화 노드가 바뀌었다(새 대화, 자리, 보관, 판 세션이 됨, 묶임 표시)
 export function setConvoNodes(nodes, edges) { state.convoNodes = new Map((nodes || []).map((c) => [c.convId, c])); state.convoEdges = edges || []; changed(); }
 api.on('convo.nodes', (d) => setConvoNodes(d.nodes, d.edges));
-api.on('herdr', (d) => { state.herdr = { ...state.herdr, connected: d.connected }; changed(); });
+api.on('herdr', (d) => { state.herdr = { ...state.herdr, ...herdrEventOf(d) }; changed(); });
+// P40: herdr 상태(herdr.status 결과, herdr 이벤트) → 창이 쓰는 값. 띠(못 찾음, 다른 프로토콜, 검증하지 않은 버전, 새 버전)와 알약이 읽는다
+export function herdrStateOf(st) {
+  return { connected: st.connected, running: st.running, session: st.session, version: (st.compat && st.compat.version) || null, ...herdrEventOf(st) };
+}
+export function herdrEventOf(d) {
+  const out = { connected: d.connected };
+  for (const k of ['missing', 'level', 'warning', 'problems', 'protocols', 'tested', 'update', 'path', 'find']) if (k in d) out[k] = d[k];
+  if (d.version) out.version = d.version;
+  if (d.protocol != null) out.protocol = d.protocol;
+  return out;
+}
 api.on('board.changed', () => { loadBoard().catch(() => {}); });
 api.on('link.updated', (l) => { state.links = new Map(state.links); if (l.removedAt) state.links.delete(l.linkId); else state.links.set(l.linkId, l); changed(); });
 api.on('link.removed', (d) => { state.links = new Map(state.links); state.links.delete(d.linkId); changed(); });
 api.on('resources', (v) => { state.resources = v; changed(); });
 api.on('workspace.updated', (d) => {
   state.workspaces = d.workspaces || [];
+  if (d.groups) state.groups = d.groups; // P44
   if (!state.workspaces.some((w) => w.key === state.currentWs)) state.currentWs = d.current || (state.workspaces[0] || {}).key || null;
   changed();
 });
 api.on('herdr.clients', (v) => { state.clients = v; changed(); });
+api.on('clients.updated', (v) => { state.peers = { ...v, me: api.clientId }; changed(); }); // P47
+// P47: 다른 창이 노드를 옮기거나 크기를 바꿨다(board.setNode). 이 창이 보낸 것은 이미 그렸다
+api.on('board.node', (d) => { if (!d || (d.by && d.by === api.clientId) || !state.nodes.has(d.sessionId)) return; setNodeLocal(d.sessionId, { x: d.x, y: d.y, w: d.w, h: d.h, ...(d.z != null ? { z: d.z } : {}) }); });
+// P47: 사람이 이 창에서 무엇을 하면(키, 마우스) 백엔드에 알린다. 알림은 최근에 쓴 클라이언트에서만 뜬다(백엔드 pickNotifyClient)
+const ACTIVE_PING_MS = 20000;
+let lastPing = 0;
+export function noteActive(now = Date.now()) {
+  if (now - lastPing < ACTIVE_PING_MS || api.status !== 'open') return;
+  lastPing = now;
+  api.call('client.active').catch(() => { lastPing = 0; });
+}
+if (typeof window !== 'undefined' && window.addEventListener) for (const ev of ['keydown', 'pointerdown', 'wheel']) window.addEventListener(ev, () => noteActive(), { capture: true, passive: true });
 // P6c 이벤트
 api.on('memo.updated', (m) => { state.memos = new Map(state.memos); state.memos.set(m.memoId, m); changed(); });
 api.on('memo.removed', (d) => { state.memos = new Map(state.memos); state.memos.delete(d.memoId); changed(); });
@@ -325,3 +367,23 @@ api.on('thread.item', (it) => putThread([it]));
 api.on('loop.updated', (l) => { state.loops = new Map(state.loops); state.loops.set(l.loopId, l); changed(); });
 api.on('loop.removed', (d) => { state.loops = new Map(state.loops); state.loops.delete(d.loopId); changed(); });
 api.on('settings.updated', (v) => putSettings(v.settings || v));
+// P33 호출자(왼쪽 레일 즐겨찾기, 설정의 호출자 탭, 새 세션 창). 옛 백엔드면 없다
+export function putLaunchers(v) { state.launchers = v && Array.isArray(v.launchers) ? v : null; changed(); }
+let launchersRequest = 0;
+export async function loadLaunchers() {
+  const request = ++launchersRequest, generation = api.generation, before = state.launchers;
+  try {
+    const value = await api.call('launcher.list');
+    if (request === launchersRequest && generation === api.generation && state.launchers === before) putLaunchers(value);
+  } catch { /* Older backends may not expose launchers. */ }
+}
+api.on('launchers.updated', (v) => putLaunchers(v));
+
+// P45: 터미널 글자 배율과 화면 배율(lib/scale.js). 이 창(프로필)의 localStorage에 두어 다시 켜도 남는다.
+// 화면 배율은 preload가 창을 그리기 전에 먼저 맞추고(preload.cjs), 바꾸면 여기서 다시 맞춘다
+const scaleStore = () => { try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; } };
+function applyUiScale(f) { try { if (typeof window !== 'undefined' && window.mt && window.mt.setZoom) window.mt.setZoom(f); } catch { /* 웹 화면 등 창 배율이 없는 곳 */ } }
+state.termScale = readScale(scaleStore(), SCALE_KEYS.term);
+state.uiScale = readScale(scaleStore(), SCALE_KEYS.ui);
+export function setTermScale(f) { state.termScale = saveScale(scaleStore(), SCALE_KEYS.term, f); changed(); }
+export function setUiScale(f) { state.uiScale = saveScale(scaleStore(), SCALE_KEYS.ui, f); applyUiScale(state.uiScale); changed(); }

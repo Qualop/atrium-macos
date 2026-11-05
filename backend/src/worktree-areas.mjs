@@ -4,13 +4,15 @@
 //   영역 계산(canvas.mjs regionsOf, slotInRegion, separateRegions)은 이 키를 워크스페이스 키처럼 다룬다.
 // - 노드가 어느 영역에 있는지는 놓을 때 정해 저장한다(nodes.area, convo_nodes.area: 워크트리 경로 키, 본 저장소는 '').
 //   지금 폴더가 든 살아 있는 워크트리(가장 긴 경로)가 저장한 영역과 다르면 그 영역의 빈자리로 옮긴다(worktrees.mjs).
-// - 본 저장소 영역에서 워크트리 영역으로 브랜치 화살표(테두리에서 테두리로)를 긋는다(branchArrow).
+// - P35: 워크트리 영역은 리포 영역 **안**의 노란 상자다(화살표 없음). 상자 사각형은 그 상자의 안의 것(또는 빈 자리)이고,
+//   리포 영역(본 저장소 영역)은 본 저장소 쪽 것과 상자들을 함께 감싼다(withBoxes: 상자를 리포 영역의 안의 것 'wtbox'로 더한다).
+//   상자는 본 저장소 쪽 것, 같은 리포의 다른 상자와 겹치지 않는다(settleBoxes가 오른쪽·아래로 민다). 영역끼리의 겹침 풀기는 맨 위 영역(리포, 폴더)끼리만이다.
 import { pathKey, normPath } from './workspaces.mjs';
-import { overlaps, bbox, REGION_GAP } from './canvas.mjs';
+import { overlaps, bbox, regionRect, regionsOf, REGION_PAD, REGION_HEAD } from './canvas.mjs';
 
 export const WT_SEP = '#wt=';
-export const WT_EMPTY = { w: 480, h: 200 }; // 안이 빈 워크트리 영역
-export const WT_GAP = 200; // 본 영역과 워크트리 영역 사이(화살표가 지나갈 자리)
+export const WT_EMPTY = { w: 480, h: 200 }; // 안이 빈 워크트리 상자
+export const BOX_GAP = 60; // P35: 상자와 본 저장소 쪽 것 사이, 상자끼리 사이
 
 export const areaKey = (wsKey, wt) => (wt ? `${wsKey}${WT_SEP}${wt}` : wsKey);
 // 영역 키 → { ws, wt }(본 저장소 영역이면 wt '')
@@ -20,6 +22,7 @@ export function parseArea(k) {
   return i < 0 ? { ws: s || null, wt: '' } : { ws: s.slice(0, i), wt: s.slice(i + WT_SEP.length) };
 }
 export const wsOfArea = (k) => parseArea(k).ws;
+export const isBoxKey = (k) => String(k || '').includes(WT_SEP); // P35: 워크트리 상자(리포 영역 안)의 영역 키인가
 
 // 창이 쓰는 영역 자리 목록. workspaces: [{ key, x, y, auto, worktrees: [{ wt, area, x, y, branch, path }] }](backend workspaceList)
 // → 워크스페이스(그대로)와 워크트리 영역 { key: 영역 키, x, y, empty: WT_EMPTY, wsKey, wt, branch, path }
@@ -70,7 +73,7 @@ export function liveWorktrees(list, exists = () => true) {
 export function worktreeOfPath(cwd, wts, mainKey = null) {
   if (!cwd || !wts || !wts.length) return '';
   const c = pathKey(cwd);
-  const inside = (root) => c === root || c.startsWith(root + '/');
+  const inside = (root) => c === root || c.startsWith(root.endsWith('/') ? root : root + '/');
   let best = '', len = -1;
   for (const w of wts) if (inside(w.key) && w.key.length > len) { best = w.key; len = w.key.length; }
   if (best && mainKey && inside(mainKey) && mainKey.length > len) return '';
@@ -84,54 +87,93 @@ export function worktreeLabel(w) {
   return { branch, folder: folder && folder !== branch && !branch.endsWith('/' + folder) && !branch.endsWith('-' + folder) ? folder : '' };
 }
 
-// 새 워크트리 영역의 자리. main: 본 저장소 영역(사각형), sats: 이 리포의 다른 워크트리 영역들, others: 다른 모든 영역(사각형)
-// 본 영역 오른쪽 열을 위부터(이미 있는 워크트리 영역 아래), 그다음 그 열 오른쪽, 그다음 본 영역 아래. 다른 영역과 REGION_GAP/2 넘게 띄운다.
-// 빈자리가 없으면 오른쪽 열 맨 아래(겹침은 부르는 쪽이 settleRegions로 푼다)
-export function areaSlot({ main, sats = [], others = [], size = WT_EMPTY, gap = WT_GAP }) {
-  if (!main) return { x: 0, y: 0 };
-  const all = [...sats, ...others, main].filter(Boolean);
-  const free = (c) => !all.some((r) => overlaps({ ...c, w: size.w, h: size.h }, r, REGION_GAP / 2 - 1));
-  const colX = main.x + main.w + gap;
-  const cands = [{ x: colX, y: main.y }];
-  const col = sats.filter((s) => s.x >= main.x + main.w).sort((a, b) => a.y - b.y);
-  for (const s of col) cands.push({ x: s.x, y: s.y + s.h + REGION_GAP / 2 });
-  for (const s of col) cands.push({ x: s.x + s.w + REGION_GAP / 2, y: s.y });
-  cands.push({ x: main.x, y: main.y + main.h + gap });
-  for (const s of sats.filter((q) => q.y >= main.y + main.h)) cands.push({ x: s.x + s.w + REGION_GAP / 2, y: s.y });
-  for (const c of cands) if (free(c)) return { x: Math.round(c.x), y: Math.round(c.y) };
-  const low = bbox([main, ...col]);
-  return { x: Math.round(colX), y: Math.round(low.y + low.h + REGION_GAP / 2) };
+// ---------- P35: 리포 영역 안의 워크트리 상자 ----------
+// 상자 사각형. anchors: areaAnchorList(창)·areaAnchors(백엔드) 결과(상자는 wt가 있다), items: [{ ws: 영역 키, x, y, w, h }] → Map 상자 키 → 사각형
+export function boxRects(anchors, items) {
+  const by = new Map();
+  for (const it of items || []) { if (!it || it.kind === 'wtbox' || !isBoxKey(it.ws)) continue; if (!by.has(it.ws)) by.set(it.ws, []); by.get(it.ws).push(it); }
+  const out = new Map();
+  for (const a of anchors || []) { if (!a || !a.wt) continue; const r = regionRect(by.get(a.key) || [], a); if (r) out.set(a.key, r); }
+  return out;
+}
+// 상자를 리포 영역의 안의 것(kind 'wtbox', ws: 리포 키, box: 상자 키)으로 더한 목록. 이 목록으로 regionsOf를 부르면 리포 영역이 상자를 감싼다.
+// 본 저장소 쪽에 놓는 빈자리 계산(slotInRegion, 대화 노드 격자, 하위 세션 자리)도 상자를 피할 것으로 본다. 이미 든 'wtbox'는 새로 만든다
+export function withBoxes(anchors, items) {
+  const base = (items || []).filter((i) => i && i.kind !== 'wtbox');
+  const boxes = [...boxRects(anchors, base)].map(([key, r]) => ({ id: `wtbox:${key}`, kind: 'wtbox', ws: wsOfArea(key), wsKey: wsOfArea(key), box: key, x: r.x, y: r.y, w: r.w, h: r.h }));
+  return [...base, ...boxes];
+}
+// 영역들(리포 영역은 상자를 감싼다). Map 영역 키 → 사각형(상자 키도 든다)
+export const nestedRegions = (anchors, items) => regionsOf(anchors, withBoxes(anchors, items));
+
+// 겹침 쌍(놓은 뒤 새로 생기면 되돌린다): 맨 위 영역(리포, 폴더)끼리, 같은 리포의 상자끼리, 상자와 그 리포의 본 저장소 쪽 것(id).
+// 리포 영역과 그 안의 상자는 겹침이 아니다. regs: nestedRegions 결과, items: [{ id, ws, ... }](상자 'wtbox'는 무시) → Set 'a|b'
+export function regionConflicts(regs, items = []) {
+  const out = new Set();
+  const list = [...regs].filter(([, r]) => r);
+  const top = list.filter(([k]) => !isBoxKey(k)), boxes = list.filter(([k]) => isBoxKey(k));
+  for (let i = 0; i < top.length; i++) for (let j = i + 1; j < top.length; j++) if (overlaps(top[i][1], top[j][1], -1)) out.add(`${top[i][0]}|${top[j][0]}`);
+  for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) if (wsOfArea(boxes[i][0]) === wsOfArea(boxes[j][0]) && overlaps(boxes[i][1], boxes[j][1], -1)) out.add(`${boxes[i][0]}|${boxes[j][0]}`);
+  for (const [k, r] of boxes) { const ws = wsOfArea(k); for (const it of items) if (it && it.kind !== 'wtbox' && it.ws === ws && overlaps(r, it, -1)) out.add(`${k}|${it.id}`); }
+  return out;
 }
 
-// 브랜치 화살표의 끝점. from: 본 저장소 영역, to: 워크트리 영역(둘 다 테두리 사각형). → { x1, y1, x2, y2, dir: 'h' | 'v' }
-// 워크트리 영역이 오른쪽(가로 틈이 세로 틈보다 크다)이면 본 영역 오른쪽 테두리에서 워크트리 영역 왼쪽 테두리로, 아래면 아래 테두리에서 위 테두리로.
-// 끝은 워크트리 영역의 이름표 쪽(위에서 head 만큼)에 닿고, 시작은 그 높이(너비)를 본 영역 안으로 맞춘 곳. 왼쪽·위면 반대 테두리
-export function branchArrow(from, to, { head = 48, inset = 24 } = {}) {
-  if (!from || !to) return null;
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const gx = Math.max(to.x - (from.x + from.w), from.x - (to.x + to.w));
-  const gy = Math.max(to.y - (from.y + from.h), from.y - (to.y + to.h));
-  if (gx >= gy) {
-    const right = to.x + to.w / 2 >= from.x + from.w / 2;
-    const y2 = to.y + Math.min(head, to.h / 2);
-    const y1 = clamp(y2, from.y + inset, from.y + from.h - inset);
-    return right ? { x1: from.x + from.w, y1, x2: to.x, y2, dir: 'h' } : { x1: from.x, y1, x2: to.x + to.w, y2, dir: 'h' };
+// 상자 겹침 풀기. boxes: [{ key, rect }](한 리포의 상자), fixed: [사각형](그 리포의 본 저장소 쪽 것: 노드, 메모·칸반, 대화 노드) → Map key → { dx, dy }(옮길 것만).
+// 본 저장소 쪽 것은 옮기지 않고 상자만 오른쪽이나 아래(덜 옮기는 쪽)로 gap만큼 띄운다. 상자끼리는 뒤(아래, 그다음 오른쪽)에 있는 쪽을 민다.
+// 상자는 통째로 옮기므로 안의 상대 자리가 그대로다. 겹침이 없으면 빈 Map
+export function settleBoxes(boxes, fixed = [], { gap = BOX_GAP, maxRounds = 400 } = {}) {
+  const list = (boxes || []).filter((b) => b && b.rect).map((b, i) => ({ key: b.key, i, r: { ...b.rect }, dx: 0, dy: 0 }));
+  const fx = (fixed || []).filter(Boolean);
+  const push = (p, q) => { // p를 q 뒤로
+    const needX = p.r.x >= q.x ? q.x + q.w + gap - p.r.x : Infinity, needY = p.r.y >= q.y ? q.y + q.h + gap - p.r.y : Infinity;
+    const nx = Number.isFinite(needX) ? needX : q.x + q.w + gap - p.r.x, ny = Number.isFinite(needY) ? needY : q.y + q.h + gap - p.r.y;
+    if (Math.min(needX, needY) === Infinity) { if (nx <= ny) { p.r.x += nx; p.dx += nx; } else { p.r.y += ny; p.dy += ny; } return; }
+    if (needX <= needY) { p.r.x += needX; p.dx += needX; } else { p.r.y += needY; p.dy += needY; }
+  };
+  for (let round = 0; round < maxRounds; round++) {
+    let moved = false;
+    for (const p of list) for (const q of fx) if (overlaps(p.r, q, -1)) { push(p, q); moved = true; }
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+      const a = list[i], b = list[j];
+      if (!overlaps(a.r, b.r, -1)) continue;
+      const later = b.r.y - a.r.y || b.r.x - a.r.x || b.i - a.i;
+      if (later > 0) push(b, a.r); else push(a, b.r);
+      moved = true;
+    }
+    if (!moved) break;
   }
-  const down = to.y + to.h / 2 >= from.y + from.h / 2;
-  const x2 = to.x + Math.min(head * 2, to.w / 2);
-  const x1 = clamp(x2, from.x + inset, from.x + from.w - inset);
-  return down ? { x1, y1: from.y + from.h, x2, y2: to.y, dir: 'v' } : { x1, y1: from.y, x2, y2: to.y + to.h, dir: 'v' };
+  return new Map(list.filter((x) => x.dx || x.dy).map((x) => [x.key, { dx: Math.round(x.dx), dy: Math.round(x.dy) }]));
 }
 
-// 화살표 곡선(SVG path d)과 화살촉(끝점에서 들어오는 방향). ox, oy: 그리는 상자의 왼쪽 위(판 좌표)
-export function arrowPath(a, ox = 0, oy = 0, { tip = 18 } = {}) {
-  const x1 = a.x1 - ox, y1 = a.y1 - oy, x2 = a.x2 - ox, y2 = a.y2 - oy;
-  const sx = Math.sign(x2 - x1) || 1, sy = Math.sign(y2 - y1) || 1;
-  // 화살촉 길이만큼 덜 가서 곡선을 끝내고, 화살촉이 테두리에 닿는다
-  const ex = a.dir === 'h' ? x2 - sx * tip : x2, ey = a.dir === 'h' ? y2 : y2 - sy * tip;
-  const k = a.dir === 'h' ? Math.max(40, Math.abs(ex - x1) / 2) : Math.max(40, Math.abs(ey - y1) / 2);
-  const d = a.dir === 'h' ? `M ${x1} ${y1} C ${x1 + sx * k} ${y1}, ${ex - sx * k} ${ey}, ${ex} ${ey}` : `M ${x1} ${y1} C ${x1} ${y1 + sy * k}, ${ex} ${ey - sy * k}, ${ex} ${ey}`;
-  const w = tip * 0.55;
-  const head = a.dir === 'h' ? `M ${x2} ${y2} L ${ex} ${ey - w} L ${ex} ${ey + w} Z` : `M ${x2} ${y2} L ${ex - w} ${ey} L ${ex + w} ${ey} Z`;
-  return { d, head, mid: { x: (x1 + x2) / 2, y: (y1 + y2) / 2 } };
+// 새 상자의 자리(상자 사각형의 왼쪽 위). content: 그 리포의 본 저장소 쪽 것(사각형), boxes: 이미 있는 상자 사각형, main: 리포 영역(안이 비었을 때 쓴다).
+// 본 저장소 쪽 것의 오른쪽이나 아래, 이미 있는 상자의 아래나 오른쪽 가운데 어느 것과도 gap 넘게 떨어지고 리포 영역이 덜 길쭉해지는(화면 비율) 곳.
+// 리포 영역이 비었으면 그 영역 안쪽 왼쪽 위(리포 영역 자리가 그대로다)
+export function boxSlot({ main = null, content = [], boxes = [], size = WT_EMPTY, gap = BOX_GAP, aspect = 1.6 } = {}) {
+  const taken = [...content, ...boxes].filter(Boolean);
+  if (!taken.length) return main ? { x: Math.round(main.x + REGION_PAD), y: Math.round(main.y + REGION_HEAD + REGION_PAD) } : { x: 0, y: 0 };
+  const free = (c) => !taken.some((r) => overlaps({ ...c, w: size.w, h: size.h }, r, gap - 1));
+  const base = bbox(content.filter(Boolean)) || bbox(boxes);
+  const cands = [{ x: base.x + base.w + gap, y: base.y }, { x: base.x, y: base.y + base.h + gap }];
+  for (const b of boxes) cands.push({ x: b.x, y: b.y + b.h + gap }, { x: b.x + b.w + gap, y: b.y });
+  const score = (c) => { const u = bbox([...taken, { ...c, w: size.w, h: size.h }]); return Math.round(Math.max(u.w, u.h * aspect)); };
+  cands.sort((a, b) => score(a) - score(b) || a.y - b.y || a.x - b.x);
+  for (const c of cands) if (free(c)) return { x: Math.round(c.x), y: Math.round(c.y) };
+  const all = bbox(taken);
+  return { x: Math.round(all.x), y: Math.round(all.y + all.h + gap) };
+}
+
+// 옛 판(P27~P34: 리포 영역 바깥의 위성 영역)의 상자를 리포 영역 안으로 다시 놓는 옮김 값. 한 리포마다 부른다.
+// content: 본 저장소 쪽 것(사각형), boxes: [{ key, rect }](지금 상자 사각형), main: 리포 영역(안이 비었을 때) → Map key → { dx, dy }(옮길 것만).
+// 상자를 지금 위아래·왼쪽 오른쪽 순서로 하나씩 boxSlot 자리에 놓는다. 결과에 다시 돌리면 옮길 것이 없다(같은 자리)
+export function migrateBoxes({ main = null, content = [], boxes = [], gap = BOX_GAP } = {}) {
+  const order = [...(boxes || [])].filter((b) => b && b.rect).sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x || String(a.key).localeCompare(String(b.key)));
+  const placed = [];
+  const out = new Map();
+  for (const b of order) {
+    const at = boxSlot({ main, content, boxes: placed, size: { w: b.rect.w, h: b.rect.h }, gap });
+    placed.push({ x: at.x, y: at.y, w: b.rect.w, h: b.rect.h });
+    const dx = Math.round(at.x - b.rect.x), dy = Math.round(at.y - b.rect.y);
+    if (dx || dy) out.set(b.key, { dx, dy });
+  }
+  return out;
 }

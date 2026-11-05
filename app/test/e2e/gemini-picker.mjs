@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs';
+import { assertPickerFixture, assertPickerFits, favoriteFor, favoriteButton, pickerScreenshot } from './model-picker.mjs';
 
 // 실제 설치된 CLI 목록을 읽되 세션 실행은 가로챈다. 로그인·승인이나 추론을 실행하지 않는다.
 export async function checkGeminiPicker({ page, app, client, project, dir }) {
+  await assertPickerFixture({ app, client, dir });
+  const originalLanguage = (await client.call('settings.get')).settings.language;
+  const favorite = await favoriteFor(client, 'agy');
   await client.call('workspace.open', { path: project });
   await client.call('settings.set', { language: 'ko' });
   const catalog = await client.call('agent.models', { kind: 'gemini' });
@@ -35,15 +40,25 @@ export async function checkGeminiPicker({ page, app, client, project, dir }) {
   const select = form.locator('[data-field="model-select"]');
   const waitStatus = (expected) => page.waitForFunction((value) => document.querySelector('[data-role="model-status"]')?.dataset.status === value, expected);
   try {
-    assert.equal(await page.locator('[data-action="spawn-gemini"]').count(), 0);
-    const launcher = page.locator('[data-action="spawn-agy"]');
+    const rail = page.locator('[data-role="rail-favorites"]');
+    assert.equal(await rail.locator('[data-kind="gemini"]').count(), 0);
+    assert.equal(await rail.locator('[data-kind="agy"]').count(), 1);
+    const launcher = favoriteButton(page, favorite.id);
     assert.match(await launcher.getAttribute('aria-label'), /Gemini/);
     assert.equal(await launcher.locator('[data-kind="agy"]').getAttribute('alt'), 'Gemini (Antigravity)');
     await launcher.click({ modifiers: ['Shift'] });
     await form.getByLabel('세션 이름', { exact: true }).waitFor();
     await waitStatus('ready');
-    assert.equal(await form.locator('[data-field="kind"]').inputValue(), 'agy');
+    assert.equal(await form.locator('[data-field="launcher"]').inputValue(), favorite.id);
+    assert.equal(await form.locator('[data-field="kind"]').count(), 0);
     assert.deepEqual(await page.evaluate(() => window.__geminiPicker.queries[0]), { kind: 'agy' });
+    await select.selectOption('gemini-agy-fixture');
+    await form.locator('[data-action="spawn-submit"]').click();
+    await page.waitForFunction(() => window.__geminiPicker.submitted.length === 1);
+    const preset = await page.evaluate(() => window.__geminiPicker.submitted[0]);
+    assert.equal(preset.launcher, favorite.id); assert.equal(preset.model, 'gemini-agy-fixture');
+    await page.evaluate(() => { window.__geminiPicker.submitted = []; });
+    await form.locator('[data-field="launcher"]').selectOption('');
     await form.locator('[data-field="kind"]').selectOption('gemini');
     await waitStatus('ready');
     assert.equal(await form.locator('[data-field="kind"]').inputValue(), 'gemini');
@@ -62,7 +77,7 @@ export async function checkGeminiPicker({ page, app, client, project, dir }) {
     await form.locator('[data-role="advanced-args"] summary').click();
     const args = '--sandbox';
     await form.locator('[data-field="args"]').fill(args);
-    await page.screenshot({ path: path.join(dir, 'gemini-picker.png') });
+    await pickerScreenshot(page, path.join(dir, 'gemini-picker.png'));
     await form.locator('[data-action="spawn-submit"]').click();
     await page.waitForFunction(() => window.__geminiPicker.submitted.length === 1);
     const submitted = await page.evaluate(() => window.__geminiPicker.submitted[0]);
@@ -91,12 +106,8 @@ export async function checkGeminiPicker({ page, app, client, project, dir }) {
     await waitStatus('empty');
     assert.equal(await form.locator('[data-field="model"]').inputValue(), 'gemini-custom-fixture');
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 600));
-    const bounds = await form.evaluate((el) => {
-      const r = el.getBoundingClientRect();
-      return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, w: innerWidth, h: innerHeight, overflow: el.scrollWidth > el.clientWidth };
-    });
-    assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.right <= bounds.w && bounds.bottom <= bounds.h && !bounds.overflow);
-    await page.screenshot({ path: path.join(dir, 'gemini-picker-empty.png') });
+    await assertPickerFits(form);
+    await pickerScreenshot(page, path.join(dir, 'gemini-picker-empty.png'));
     await form.locator('[data-field="kind"]').selectOption('shell');
     assert.equal(await form.locator('[data-field="model-select"]').count(), 0);
     await form.locator('[data-field="kind"]').selectOption('agy');
@@ -108,7 +119,8 @@ export async function checkGeminiPicker({ page, app, client, project, dir }) {
     await page.waitForFunction((n) => window.__geminiPicker.submitted.length > n, before);
     const google = await page.evaluate(() => window.__geminiPicker.submitted.at(-1));
     assert.equal(google.kind, 'agy'); assert.equal(google.model, 'gemini-agy-fixture');
-    await page.screenshot({ path: path.join(dir, 'google-picker.png') });
+    await pickerScreenshot(page, path.join(dir, 'google-picker.png'));
+    fs.writeFileSync(path.join(dir, 'gemini-picker.json'), JSON.stringify({ catalog, preset, direct: submitted, defaults, google, agySource: 'fixture-agy', singleGeminiFavorite: true }, null, 2));
     console.log('PASS Google account / Antigravity picker: provider, model payload, reviewer guidance (fixture catalog)');
     console.log(`PASS Gemini picker: ${catalog.models.length} CLI models (${catalog.source}), exact kind/model/args payload, reviewer help, defaults, manual fallback, refresh, 900x600`);
   } finally {
@@ -118,6 +130,7 @@ export async function checkGeminiPicker({ page, app, client, project, dir }) {
       delete window.__geminiPicker;
     });
     if (await form.isVisible()) await form.getByRole('button', { name: '취소', exact: true }).click();
+    await client.call('settings.set', { language: originalLanguage });
     await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setSize(...size), originalSize);
   }
 }

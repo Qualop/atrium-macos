@@ -166,6 +166,13 @@
   --cv-run: #3fcf86;
   --cv-wt-bg: rgba(226, 178, 76, 0.035);
   --cv-wt-line: rgba(226, 178, 76, 0.32);
+  /* P35: 리포 영역 안의 워크트리 상자(노란 테마). --cv-wt-bg·--cv-wt-line보다 조금 짙게 해 리포 영역 안에서 상자로 읽히게 한다 */
+  --wt-box-bg: rgba(226, 178, 76, 0.05);
+  --wt-box-line: rgba(226, 178, 76, 0.42);
+  --wt-box-line-run: rgba(226, 178, 76, 0.68);
+  --wt-box-text: #e2b24c;           /* 이름표 ⎇ 브랜치(--warn과 같은 노랑) */
+  --wt-box-dim: rgba(226, 178, 76, 0.72); /* 이름표 폴더 이름과 세는 값 */
+  --wt-box-head-bg: var(--canvas);  /* 이름표 뒤(테두리 선을 가린다) */
   --cv-missed: #e0607a;
 
   /* 선 */

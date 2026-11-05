@@ -104,7 +104,8 @@ export class DeliveryQueue extends EventEmitter {
       const d = this._head(sid);
       if (!d || d.status === 'sending') continue;
       if (d.status === 'sent') {
-        if (now - (d.sentAt || now) > this.cfg.submitConfirmMs) this._set(d, 'unconfirmed', 'no UserPromptSubmit hook');
+        if (!d.sentAt) d.sentAt = now; // 다른 길로 sentAt 없는 sent가 생겨도 여기서부터 기한을 센다
+        if (now - d.sentAt > this.cfg.submitConfirmMs) this._set(d, 'unconfirmed', 'no UserPromptSubmit hook');
         continue;
       }
       if (now - d.createdAt > this.cfg.deliveryMaxWaitMs) { this._set(d, 'failed', `timeout (${d.reason || 'queued'})`); continue; }

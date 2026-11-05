@@ -87,6 +87,7 @@ export function tMsg(r, fallback) {
 export function errText(e) {
   if (!e) return '';
   if (e.key && has(`backend.${e.key}`)) return msgText({ key: e.key, vars: e.vars });
+  if (e.key && e.key.includes('.') && has(e.key)) return t(e.key, e.vars || {}); // P33: 기능 절의 열쇠(launchers.err.…)
   if (e.code && has(`errors.${e.code}`)) return t(`errors.${e.code}`, { message: e.message });
   return e.message || String(e);
 }

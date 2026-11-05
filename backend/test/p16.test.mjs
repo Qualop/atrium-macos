@@ -42,8 +42,7 @@ test('복귀 요약 줄에도 열쇠가 붙는다(사용자 내용인 마지막 
   assert.equal(by('needs_you').text, '권한: Bash: ls');
   assert.deepEqual(by('exited').msg, { key: 'chgKilled', vars: {} });
   assert.equal(by('turn_done').msg, null);
-  assert.equal(by('herdr').msg.key, 'chgList');
-  assert.equal(by('herdr').msg.vars.items[0].key, 'chgHerdrDown');
+  assert.equal(by('herdr').msg.key, 'chgHerdrDown');
 });
 
 test('루프 확인 문구: 한국어 글과 같은 짜임의 열쇠', () => {

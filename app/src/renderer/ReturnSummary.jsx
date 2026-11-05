@@ -8,6 +8,7 @@ import { awayLongEnough, DEFAULT_AWAY_MS, CHANGE_LABEL } from './lib/attention.j
 import { ago, agoText } from './lib/labels.js';
 import { useT, tMsg } from './lib/i18n.js';
 import { perfLog } from './perf.js';
+import { useDialog } from './dialog.js';
 
 function awayMs() {
   const q = new URLSearchParams(location.search).get('awaySec');
@@ -55,13 +56,18 @@ export function useReturnSummary() {
 }
 
 export function ReturnSummary({ summary, onClose }) {
-  const t = useT();
   if (!summary) return null;
+  return <SummaryCard summary={summary} onClose={onClose} />;
+}
+// P52: 떠 있는 창이다. 저절로 뜨므로 초점을 가져가지 않고, Esc로 닫는다(터미널·입력 칸에서 친 Esc는 그쪽 몫)
+function SummaryCard({ summary, onClose }) {
+  const t = useT();
+  const box = useDialog(onClose, { modal: false });
   const go = (id) => { const st = getState(); if (id && st.navigateTo && st.sessions.has(id)) st.navigateTo(id); };
   const mins = Math.round((summary.until - summary.since) / 60000);
   const away = ago(summary.since, summary.until);
   return (
-    <div className="mt-return" data-role="return-summary">
+    <div ref={box} className="mt-return" data-role="return-summary">
       <div className="mt-card-head">
         <span className="mt-card-title">{summary.why === 'manual' ? t('returnSummary.manual', { n: mins }) : t('returnSummary.away', { away })}</span>
         <button className="mt-card-min" data-action="return-close" title={t('common.close')} onClick={onClose}>×</button>

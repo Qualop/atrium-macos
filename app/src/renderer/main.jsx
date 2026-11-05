@@ -8,6 +8,13 @@
 // P7: 캔버스 왼쪽의 사이드바(J5). 캔버스와 한 줄(mt-body)에 두어 사이드바를 열면 캔버스가 옆으로 줄어든다
 // P11: 위쪽 줄과 아래쪽 워크스페이스 단추를 없애고 캔버스 위에 떠 있는 크롬(Chrome.jsx)으로 바꿨다. 크롬은 캔버스와 같은 칸(mt-stage)에 있어 사이드바를 열면 함께 옆으로 간다.
 //   색은 tokens.css, 글꼴은 fonts.css(앱에 넣은 OFL 글꼴). 글꼴을 읽은 뒤에 그린다(터미널이 처음부터 제 글꼴로 칸 크기를 잰다)
+// P48(원격 R2): Electron 밖(브라우저)에서 돌면 웹 어댑터(web.js)가 window.mt를 두고, 짝을 맺기 전에는 짝 맺기 화면(Pair.jsx)만 보인다.
+//   PC 창에는 브라우저의 허락 요청 카드(WebDevices.jsx)가 뜬다
+import './dialog.js';
+import { isWeb } from './web.js';
+import { RemoteBar } from './RemoteBar.jsx'; // P49: 웹 화면의 다시 연결 띠와 왕복 지연
+import { webGate } from './Pair.jsx';
+import { PairRequestBanner } from './WebDevices.jsx';
 import '@xyflow/react/dist/style.css';
 import '@xterm/xterm/css/xterm.css';
 import './fonts.css';
@@ -17,7 +24,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ReactFlowProvider } from '@xyflow/react';
 import { api } from './api.js';
-import { useStore, getState, openDialog, setKillAsk, setDebugThrow, setSearchOpen, pendingFor, setMissionOpen, setConvoNodes, setFocus } from './store.js';
+import { useStore, getState, openDialog, setKillAsk, setDebugThrow, setSearchOpen, pendingFor, setMissionOpen, setConvoNodes, setFocus, setBottomPin } from './store.js';
 import { OutputPanel } from './Output.jsx';
 import { LoopDialog } from './Loops.jsx';
 import { MissionMap } from './Mission.jsx';
@@ -29,9 +36,10 @@ import { CommandBar } from './CommandBar.jsx';
 import { SpawnDialog } from './SpawnDialog.jsx';
 import { RoleDialog, LinkPanel } from './Links.jsx';
 import { OpenRepoDialog, CloseWsDialog } from './Workspaces.jsx';
+import { DesktopImportDialog } from './DesktopImport.jsx'; // P34
 import { Sidebar } from './Sidebar.jsx'; // P7(J5): 평소에 닫힌 왼쪽 사이드바
 import { SearchBox, SelectionBar } from './Search.jsx';
-import { keyToData, closeKeyTargets } from './lib/keys.js';
+import { keyToData, closeKeyTargets, boardArrowKey } from './lib/keys.js';
 import { ReturnSummary, useReturnSummary } from './ReturnSummary.jsx';
 import { CloseDialog } from './SessionNode.jsx';
 import { AppBoundary } from './ErrorBoundary.jsx';
@@ -49,11 +57,12 @@ function Dialogs() {
   const d = useStore((st) => st.dialog);
   if (!d) return null;
   const close = () => openDialog(null);
-  if (d.kind === 'spawn') return <SpawnDialog cwd={d.cwd} agentKind={d.agentKind} onClose={close} />;
+  if (d.kind === 'spawn') return <SpawnDialog cwd={d.cwd} agentKind={d.agentKind} launcher={d.launcher} onClose={close} />;
   if (d.kind === 'close') return <CloseDialog ids={d.ids || []} onClose={close} />;
   if (d.kind === 'role') return <RoleDialog from={d.from} to={d.to} onClose={close} />;
   if (d.kind === 'link') return <LinkPanel linkId={d.linkId} onClose={close} />;
   if (d.kind === 'wsopen') return <OpenRepoDialog onClose={close} />;
+  if (d.kind === 'desktopImport') return <DesktopImportDialog onClose={close} />;
   if (d.kind === 'wsclose') return <CloseWsDialog ws={d.ws} onClose={close} />;
   if (d.kind === 'loop') return <LoopDialog target={d.target} onClose={close} />;
   if (d.kind === 'settings') return <SettingsDialog onClose={close} />;
@@ -99,6 +108,9 @@ function App() {
   const order = [...inbox.needsYou, ...inbox.problems].map((s) => s.sessionId);
   const orderRef = useRef(order);
   orderRef.current = order;
+  // P11: 왼쪽 레일의 "손으로 잇기"(노드 손잡이를 늘 보인다), 오른쪽 레일의 루프 목록. P43: 판에서 ← 키로도 바꾼다
+  const [linking, setLinking] = useState(false);
+  const [loopsOpen, setLoopsOpen] = useState(false);
 
   useEffect(() => {
     // H4: 노드를 눌러 들어간 직후 터미널이 붙기 전에 친 키(입력칸 밖)는 모아 둔다. 터미널에 초점이 가면 그만 모은다
@@ -108,7 +120,17 @@ function App() {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); e.stopPropagation(); cmd.current?.focus(); return; }
       const st = getState();
       const p = st.pendingInput && pendingFor(st.pendingInput.id);
-      if (!p) return;
+      // P43: 판에 초점이 있을 때의 방향키(lib/keys.js boardArrowKey). 노드에 들어가 터미널을 기다리는 동안(p)은 터미널 몫이다.
+      // 잡는 단계에서 받아 React Flow(고른 노드를 방향키로 옮긴다)보다 먼저 쓴다
+      const arrow = boardArrowKey(e, { dialog: st.dialog, missionOpen: st.missionOpen, outputOpen: !!st.outputView, pending: !!p });
+      if (arrow) {
+        e.preventDefault(); e.stopPropagation();
+        if (arrow === 'command') cmd.current && cmd.current.focus();
+        else if (arrow === 'search') { if (st.searchOpen) { const el = document.querySelector('[data-field="search"]'); if (el) el.select(); } else setSearchOpen(true); }
+        else if (arrow === 'tool') setLinking((l) => !l);
+        return;
+      }
+      if (!p || st.dialog || st.searchOpen || st.missionOpen || st.outputView || st.killAsk) return;
       if (e.target && e.target.closest && e.target.closest('.xterm')) return;
       if (editable(e.target)) return;
       const data = keyToData(e);
@@ -135,9 +157,6 @@ function App() {
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keydown', onKeyCapture, true); };
   }, []);
 
-  // P11: 왼쪽 레일의 "손으로 잇기"(노드 손잡이를 늘 보인다), 오른쪽 레일의 루프 목록
-  const [linking, setLinking] = useState(false);
-  const [loopsOpen, setLoopsOpen] = useState(false);
   return (
     <div className={`mt-app${linking ? ' linking' : ''}`}>
       <div className="mt-body">
@@ -163,6 +182,8 @@ function App() {
         </div>
       </div>
       <Dialogs />
+      {loaded && <PairRequestBanner />}
+      {isWeb && <RemoteBar />}
       {splash !== 'off' && <Splash error={!loaded && conn === 'error' ? t('app.backendFailed', { detail }) : null} leaving={splash === 'leaving'} />}
       <div className="mt-toasts">{toasts.map((t) => <div key={t.id} className={`mt-toast ${t.kind}`}>{t.text}</div>)}</div>
     </div>
@@ -170,7 +191,7 @@ function App() {
 }
 
 // 시험 스크립트(Playwright)와 E5·E6 측정이 읽는 창 안의 값
-window.__mt = { api, getState, perf, budget, terms, maxControllers: MAX_CONTROLLERS, notifyLog, setDebugThrow, setConvoNodes, setFocus }; // P13: setConvoNodes는 성능 시험의 기준(대화 노드 뺀 판). P26: setFocus는 초점 세션 시험
+window.__mt = { api, getState, perf, budget, terms, maxControllers: MAX_CONTROLLERS, notifyLog, setDebugThrow, setConvoNodes, setFocus, pinBottom: setBottomPin }; // P13: setConvoNodes는 성능 시험의 기준(대화 노드 뺀 판). P26: setFocus는 초점 세션 시험. P43: pinBottom(true)은 아래 바를 늘 보이게(옛 창 시험)
 window.addEventListener('error', (e) => { perf.perfLog('window_error', { message: e.message, at: `${e.filename}:${e.lineno}` }); window.mt.log(`error ${e.message} ${e.filename}:${e.lineno}`); });
 window.addEventListener('unhandledrejection', (e) => { perf.perfLog('unhandled', { message: String(e.reason && (e.reason.message || e.reason)) }); window.mt.log(`unhandled ${e.reason && (e.reason.stack || e.reason.message || e.reason)}`); });
 
@@ -185,7 +206,11 @@ const fontsReady = Promise.race([
     .map((f) => document.fonts.load(f, f.includes('Nanum') || f.includes('Pretendard') ? '가나' : 'Ab').catch(() => null))),
   new Promise((r) => setTimeout(r, 1500)),
 ]);
-fontsReady.then(() => root.render(<ReactFlowProvider><App /></ReactFlowProvider>));
-api.connect();
-startNotifier();
-startViewingReport(); // P21(D4): 초점 노드는 저절로 잠재우지 않는다
+function boot() {
+  fontsReady.then(() => root.render(<ReactFlowProvider><App /></ReactFlowProvider>));
+  api.connect();
+  startNotifier();
+  startViewingReport(); // P21(D4): 초점 노드는 저절로 잠재우지 않는다
+}
+// P48: 웹 화면은 짝을 맺은 뒤에 판에 붙는다
+if (isWeb) webGate().then(boot); else boot();

@@ -1,4 +1,5 @@
-// P27 시험: 워크트리 영역 — 목록 읽기, 워크트리 판정, 영역 자리, 브랜치 화살표, 판 위 동기화(노드·대화 노드를 그 영역에, 함께 옮기기, 지우면 사라짐, 다시 켜도 같은 자리)
+// P27 시험: 워크트리 영역 — 목록 읽기, 워크트리 판정, 이름표 글, 판 위 동기화(노드·대화 노드를 그 영역에, 함께 옮기기, 지우면 사라짐, 다시 켜도 같은 자리)
+// P35: 워크트리 영역은 리포 영역 안의 상자다. 화살표와 위성 자리(areaSlot) 시험은 뺐고, 상자 자리·감싸기·겹침 풀기·옮기기는 p35.test.mjs에 있다
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { NODE, overlaps, bbox, REGION_GAP } from '../src/canvas.mjs';
+import { NODE } from '../src/canvas.mjs';
 import { Store } from '../src/store.mjs';
 import { newRuntime } from '../src/state.mjs';
 import { Backend } from '../src/backend.mjs';
@@ -15,11 +16,11 @@ import { Recall } from '../src/recall.mjs';
 import { DEFAULTS } from '../src/settings.mjs';
 import { pathKey, normPath } from '../src/workspaces.mjs';
 import { attachWorktrees } from '../src/worktrees.mjs';
-import { parseWorktreeList, liveWorktrees, worktreeOfPath, areaKey, parseArea, wsOfArea, areaSlot, branchArrow, arrowPath, worktreeLabel, areaAnchorList, areaResolverOf, WT_EMPTY, WT_GAP } from '../src/worktree-areas.mjs';
+import { parseWorktreeList, liveWorktrees, worktreeOfPath, areaKey, parseArea, wsOfArea, worktreeLabel, areaAnchorList, areaResolverOf, regionConflicts, WT_EMPTY } from '../src/worktree-areas.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'p27u-'));
 const R = (x, y, w = NODE.w, h = NODE.h) => ({ x, y, w, h });
-const pairs = (regs) => { const l = [...regs]; const out = []; for (let i = 0; i < l.length; i++) for (let j = i + 1; j < l.length; j++) if (overlaps(l[i][1], l[j][1], -1)) out.push(`${l[i][0]}|${l[j][0]}`); return out; };
+const conflicts = (b) => [...regionConflicts(ops.regions(b), ops.canvasItems(b))]; // P35: 리포 영역과 그 안의 상자는 겹침이 아니다
 const inside = (r, q) => r.x >= q.x && r.y >= q.y && r.x + r.w <= q.x + q.w && r.y + r.h <= q.y + q.h;
 
 const PORCELAIN = (main, wts) => [`worktree ${main}`, 'HEAD 1111111111111111111111111111111111111111', 'branch refs/heads/main', '', ...wts.flatMap((w) => [`worktree ${w.path}`, `HEAD ${w.head || '2222222222222222222222222222222222222222'}`, w.branch ? `branch refs/heads/${w.branch}` : 'detached', ...(w.prunable ? ['prunable gitdir file points to non-existent location'] : []), ''])].join('\n');
@@ -68,39 +69,7 @@ test('P27 영역 키: 워크트리 영역은 <워크스페이스 키>#wt=<경로
   assert.equal(res('A', ''), 'A'); assert.equal(res(null, 'w1'), null);
 });
 
-test('P27 자리: 새 워크트리 영역은 본 영역 오른쪽 열 위부터 쌓이고, 오른쪽이 막히면 아래에 놓인다. 어느 영역과도 겹치지 않는다', () => {
-  const main = R(0, 0, 1600, 1000);
-  const a1 = areaSlot({ main, sats: [], others: [] });
-  assert.deepEqual(a1, { x: 1600 + WT_GAP, y: 0 }, '오른쪽 위');
-  const s1 = { ...a1, ...WT_EMPTY };
-  const a2 = areaSlot({ main, sats: [s1], others: [] });
-  assert.equal(a2.x, a1.x); assert.ok(a2.y >= s1.y + s1.h + REGION_GAP / 2 - 1, '그 아래');
-  // 오른쪽에 다른 리포 영역이 있으면 아래
-  const other = R(1700, -400, 1200, 2400);
-  const a3 = areaSlot({ main, sats: [], others: [other] });
-  assert.deepEqual(a3, { x: 0, y: 1000 + WT_GAP });
-  for (const a of [a1, a2, a3]) assert.ok(!overlaps({ ...a, ...WT_EMPTY }, main, REGION_GAP / 2 - 1));
-  assert.ok(!overlaps({ ...a3, ...WT_EMPTY }, other, REGION_GAP / 2 - 1));
-  assert.deepEqual(areaSlot({ main: null }), { x: 0, y: 0 });
-});
-
-test('P27 화살표: 본 영역 테두리에서 워크트리 영역 테두리로(오른쪽이면 가로, 아래면 세로), 끝은 이름표 쪽, 화살촉은 테두리에 닿는다', () => {
-  const main = R(0, 0, 1000, 800);
-  const right = branchArrow(main, R(1200, 100, 480, 200));
-  assert.deepEqual(right, { x1: 1000, y1: 148, x2: 1200, y2: 148, dir: 'h' });
-  const below = branchArrow(main, R(100, 1000, 480, 200));
-  assert.equal(below.dir, 'v'); assert.equal(below.y1, 800); assert.equal(below.y2, 1000);
-  assert.ok(below.x1 >= main.x && below.x1 <= main.x + main.w);
-  const left = branchArrow(main, R(-800, 0, 480, 200));
-  assert.equal(left.x1, 0); assert.equal(left.x2, -320);
-  // 워크트리 영역이 본 영역보다 훨씬 아래로 내려가도 시작은 본 영역 테두리 안
-  const far = branchArrow(main, R(1200, 2000, 480, 200));
-  assert.ok(far.y1 <= 800 && far.y1 >= 0);
-  assert.equal(branchArrow(null, main), null);
-  const g = arrowPath(right, 980, 100);
-  assert.match(g.d, /^M 20 48 C /);
-  assert.match(g.head, /^M 220 48 L /, '화살촉 끝이 워크트리 영역 테두리');
-  assert.deepEqual(g.mid, { x: 120, y: 48 });
+test('P27 이름표 글: ⎇ 브랜치, 폴더 이름이 브랜치와 다르면 함께', () => {
   // 이름표 글
   assert.deepEqual(worktreeLabel({ path: 'C:/r/.claude/worktrees/p27', branch: 'worktree-p27' }), { branch: 'worktree-p27', folder: '' });
   assert.deepEqual(worktreeLabel({ path: 'C:/r/wt/hotfix', branch: 'fix/login' }), { branch: 'fix/login', folder: 'hotfix' });
@@ -133,7 +102,7 @@ function board({ dataDir = tmp(), repo = 'C:/repo', wts = [] } = {}) {
 }
 const nodeOf = (b, name) => b.store.nodes().find((n) => n.session_id === 'id-' + name);
 
-test('P27 판: 워크트리 둘이 생기면 본 영역 옆에 영역 둘, 그 폴더의 셸 노드는 그 영역에. 리포 영역을 옮기면 함께, 워크트리 영역만 옮기면 그 자리를 지킨다', async () => {
+test('P27 판(P35 상자): 워크트리 둘이 생기면 리포 영역 안에 상자 둘, 그 폴더의 셸 노드는 그 영역에. 리포 영역을 옮기면 함께, 워크트리 영역만 옮기면 그 자리를 지킨다', async () => {
   const W1 = 'C:/repo/.claude/worktrees/p1', W2 = 'C:/repo/.claude/worktrees/p2';
   const { b, ws, add, state } = board();
   add('main', 'C:/repo', R(40, 112));
@@ -148,15 +117,15 @@ test('P27 판: 워크트리 둘이 생기면 본 영역 옆에 영역 둘, 그 �
   const regs = ops.regions(b);
   const k1 = areaKey(ws.key, pathKey(W1)), k2 = areaKey(ws.key, pathKey(W2));
   assert.ok(regs.has(ws.key) && regs.has(k1) && regs.has(k2));
-  assert.deepEqual(pairs(regs), [], '영역끼리 겹치지 않는다');
+  assert.deepEqual(conflicts(b), [], '겹치지 않는다');
   const main = regs.get(ws.key);
-  assert.ok(regs.get(k1).x >= main.x + main.w, `워크트리 영역은 본 영역 오른쪽 ${JSON.stringify([main, regs.get(k1), regs.get(k2)])}`);
-  assert.ok(regs.get(k2).y > regs.get(k1).y, '둘째는 그 아래');
+  assert.ok(inside(regs.get(k1), main) && inside(regs.get(k2), main), `상자는 리포 영역 안 ${JSON.stringify([main, regs.get(k1), regs.get(k2)])}`);
+  const m0 = nodeOf(b, 'main');
+  assert.ok(regs.get(k1).x >= m0.x + m0.w || regs.get(k1).y >= m0.y + m0.h, '본 저장소 쪽 노드의 오른쪽이나 아래');
   // 셸 노드는 그 워크트리 영역으로 옮겨졌다(본 영역에 있던 것)
   const n1 = nodeOf(b, 's1');
   assert.equal(n1.area, pathKey(W1));
   assert.ok(inside(n1, regs.get(k1)), '워크트리 영역 안');
-  assert.ok(!inside(n1, main));
   assert.ok(b.store.events({}).some((e) => e.kind === 'node_moved' && e.data.cause === 'worktree area'));
   assert.equal(nodeOf(b, 'main').area || '', '', '본 저장소 셸은 그대로');
   assert.ok(b.events.some((e) => e.event === 'board.changed'));
@@ -183,8 +152,9 @@ test('P27 판: 워크트리 둘이 생기면 본 영역 옆에 영역 둘, 그 �
   assert.equal(nodeOf(b, 's1').x, before.s1.x + 500, '다른 워크트리 영역은 그대로');
   assert.equal(ops.regions(b).get(k2).x, r2.x + 900);
   assert.ok(b.store.worktreeAreas().find((a) => a.wt === pathKey(W2)).movedAt);
-  // 브랜치 이름으로도, 겹치면 거부
-  const m1 = ops.regions(b).get(ws.key);
+  assert.ok(inside(ops.regions(b).get(k2), ops.regions(b).get(ws.key)), 'P35: 리포 영역이 옮긴 상자를 감싼다');
+  // 브랜치 이름으로도, 본 저장소 쪽 노드와 겹치면 거부
+  const m1 = nodeOf(b, 'main');
   assert.throws(() => ops.worktreeMove(b, { workspace: ws.key, worktree: 'worktree-p1', dx: m1.x - ops.regions(b).get(k1).x + 40, dy: m1.y - ops.regions(b).get(k1).y + 40 }), (e) => e.code === 'overlap');
   assert.throws(() => ops.worktreeMove(b, { workspace: ws.key, worktree: 'nope', dx: 1, dy: 1 }), (e) => e.code === 'not_found');
   // 정리는 본 저장소 영역 안의 것만
@@ -192,7 +162,7 @@ test('P27 판: 워크트리 둘이 생기면 본 영역 옆에 영역 둘, 그 �
   assert.deepEqual(plan.plan.map((x) => x.names).flat(), ['main']);
 });
 
-test('P27 판: 워크트리를 지우면 그 영역과 화살표가 사라지고, 남은 노드는 본 영역으로 온다. 다시 켜도(새 Store) 자리가 같다', async () => {
+test('P27 판: 워크트리를 지우면 그 상자가 사라지고, 남은 노드는 본 영역으로 온다. 다시 켜도(새 Store) 자리가 같다', async () => {
   const W1 = 'C:/repo/.claude/worktrees/p1', W2 = 'C:/repo/.claude/worktrees/p2';
   const dataDir = tmp();
   const first = board({ dataDir, wts: [{ path: W1, branch: 'worktree-p1' }, { path: W2, branch: 'worktree-p2' }] });
@@ -220,7 +190,7 @@ test('P27 판: 워크트리를 지우면 그 영역과 화살표가 사라지고
   const s1 = nodeOf(again.b, 's1');
   assert.equal(s1.area, '', '본 저장소 영역으로');
   assert.ok(inside(s1, regs.get(again.ws.key)));
-  assert.deepEqual(pairs(regs), []);
+  assert.deepEqual(conflicts(again.b), []);
   assert.ok(again.b.store.events({}).some((e) => e.kind === 'worktree_area_removed' && e.data.worktree === W1));
   // 목록 읽기가 실패하면(git 오류) 영역을 지우지 않는다
   const keep = again.b.store.worktreeAreas().length;
@@ -292,8 +262,8 @@ test('P27 판: 판 밖 대화 노드도 그 워크트리 영역에 놓이고(워
   let regs = ops.regions(b);
   assert.ok(regs.has(ak));
   for (const id of [ID(2), ID(3)]) assert.ok(inside(byId(id), regs.get(ak)), '대화 노드가 워크트리 영역 안');
-  assert.ok(!inside(byId(ID(2)), regs.get(repoWs.key)));
-  assert.deepEqual(pairs(regs), []);
+  assert.ok(inside(regs.get(ak), regs.get(repoWs.key)), 'P35: 상자는 리포 영역 안');
+  assert.deepEqual(conflicts(b), []);
   // 워크트리 영역만 옮기면 대화 노드도 함께
   const c2 = { ...byId(ID(2)) };
   ops.worktreeMove(b, { workspace: repoWs.key, worktree: 'feat', dx: 300, dy: 100 });
@@ -305,7 +275,7 @@ test('P27 판: 판 밖 대화 노드도 그 워크트리 영역에 놓이고(워
   regs = ops.regions(b);
   assert.ok(!regs.has(ak));
   for (const id of [ID(2), ID(3)]) { assert.equal(byId(id).area, ''); assert.equal(byId(id).block, 'feat'); }
-  assert.deepEqual(pairs(regs), []);
+  assert.deepEqual(conflicts(b), []);
 });
 
 test('P27 git: 실제 git 저장소에서 워크트리를 만들고 지우면 목록이 따라간다(git이 있을 때)', async (t) => {

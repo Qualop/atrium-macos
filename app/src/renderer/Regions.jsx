@@ -5,13 +5,13 @@
 import { memo, useMemo, useState } from 'react';
 import { useStore as useFlowStore } from '@xyflow/react';
 import { api } from './api.js';
-import { useStore, openDialog, selectWorkspace, noteWorkspace, toast, markArranged } from './store.js';
+import { useStore, getState, openDialog, selectWorkspace, noteWorkspace, toast, markArranged } from './store.js';
 import { Icon } from './lib/icons.jsx';
 import { useT, t, errText } from './lib/i18n.js';
 import { workspaceCounts } from '../../../backend/src/workspaces.mjs';
 import { REGION_HEAD, REGION_GAP } from '../../../backend/src/canvas.mjs';
 import { repoSleep, sleepRepo, wakeRepo, fmtMB } from './sleep.js'; // P24: 리포 단위 잠재우기
-import { worktreeLabel, arrowPath } from '../../../backend/src/worktree-areas.mjs'; // P27: 워크트리 영역과 브랜치 화살표
+import { worktreeLabel } from '../../../backend/src/worktree-areas.mjs'; // P27: 워크트리 영역(P35: 리포 영역 안의 노란 상자)
 
 const zoomSel = (s) => s.transform[2];
 
@@ -20,13 +20,27 @@ export async function arrangeWorkspace(key, undo = false) {
     if (undo) { await api.call('board.arrange', { workspace: key, undo: true }); markArranged(key, false); toast(t('regions.undone')); return; }
     const r = await api.call('board.arrange', { workspace: key, apply: true });
     markArranged(key, true);
+    markArranged(BOARD_ARRANGED, false); // 판 전체 정리의 되돌리기는 지워졌다
     toast(r.edges ? t('regions.arranged', { n: r.edges }) : t('regions.arrangedNoLinks'));
+  } catch (e) { toast(t('regions.arrangeFail', { error: errText(e) }), 'error'); }
+}
+// P31: 판 전체 정리(아래 칩 "정리"). 모든 워크스페이스 안을 정리하고 영역(리포 영역과 워크트리 위성 영역 묶음)도 줄 맞춰 다시 놓는다.
+// 되돌리기는 칩 줄의 "정리 되돌리기"(한 번). 영역 이름표의 "정리"는 그 영역 안만 그대로다
+export const BOARD_ARRANGED = '*';
+export async function arrangeBoard(undo = false) {
+  try {
+    if (undo) { await api.call('board.arrange', { all: true, undo: true }); markArranged(BOARD_ARRANGED, false); toast(t('arrangeAll.undone')); return; }
+    const r = await api.call('board.arrange', { all: true, apply: true });
+    for (const k of [...getState().arranged]) markArranged(k, false); // 워크스페이스 하나의 되돌리기는 지워졌다
+    markArranged(BOARD_ARRANGED, true);
+    toast(t('arrangeAll.done', { n: (r.regions || []).length }));
+    setTimeout(() => { const st = getState(); if (st.fitAll) st.fitAll(250); }, 400); // 다시 놓은 판 전체가 보이게
   } catch (e) { toast(t('regions.arrangeFail', { error: errText(e) }), 'error'); }
 }
 
 // P11: 영역은 1.5px 얇은 테두리(안에 일하는 세션이 있으면 청록 회색)로 그리고, 이름표를 테두리 위에 단다(목업의 그룹 이름표: 점, 이름 대문자 굵게, 고정폭 회색 "6 · 3 일하는 중", ⌄).
 //   테두리는 영역 맨 위(REGION_HEAD 자리)가 아니라 안의 것 32px 위에 긋는다. 이름표의 단추(정리, 되돌리기, + 세션, 이 영역으로)는 ⌄를 누르거나 이름표에 마우스를 올리면 보인다
-export const BORDER_TOP = REGION_HEAD + 8; // 영역 위에서 테두리까지(안의 것보다 REGION_PAD - 8 위). P27: 브랜치 화살표도 이 테두리에 닿는다
+export const BORDER_TOP = REGION_HEAD + 8; // 영역 위에서 테두리까지(안의 것보다 REGION_PAD - 8 위)
 function RegionNodeInner({ data }) {
   const t = useT();
   const key = data.wsKey;
@@ -62,6 +76,7 @@ function RegionNodeInner({ data }) {
           {z.asleep > 0 && <button className="mt-btn small nodrag" data-action="region-wake" title={t('regions.wakeTitle')} disabled={z.waking > 0} onClick={() => wakeRepo(key)}><Icon name="moon" />{t('regions.wake')}</button>}
           <button className="mt-btn small nodrag" data-action="region-spawn" onClick={() => { noteWorkspace(key); openDialog({ kind: 'spawn', cwd: w.root }); }}>{t('regions.addSession')}</button>
           <button className="mt-btn small ghost nodrag" title={t('regions.fit')} data-action="region-fit" onClick={() => selectWorkspace(key)}>⤢</button>
+          <button className="mt-btn small ghost nodrag" title={t('sbRemove.regionTitle')} data-action="region-remove" onClick={() => openDialog({ kind: 'wsclose', ws: [w] })}>{t('sbRemove.region')}</button>{/* P44: 판에서 지우기(세션이 있으면 모두 보관·삭제를 고른다) */}
         </span>
         <button className="mt-region-chev nodrag" title={t('regions.acts')} data-action="region-acts" onClick={() => setActs((a) => !a)}><Icon name="chevDown" /></button>
       </div>
@@ -70,8 +85,9 @@ function RegionNodeInner({ data }) {
 }
 export const RegionNode = memo(RegionNodeInner);
 
-// P27: 워크트리 영역. 본 저장소 영역 옆의 작은 영역(같은 리포 워크스페이스의 하위 영역). 이름표는 ⎇ 브랜치(폴더 이름이 다르면 함께)와 세는 값.
-//   이름표를 끌면 이 영역만 움직이고 자리를 저장한다(worktree.move). 누르면 그 리포로 간다
+// P27: 워크트리 영역. P35: 리포 영역 안의 노란 상자(테두리, 옅은 바탕, 이름표 글자 모두 노란 계열, tokens.css --wt-box-*).
+//   이름표는 ⎇ 브랜치(폴더 이름이 다르면 함께)와 세는 값. 이름표를 끌면 이 상자와 안의 노드·대화 노드가 함께 움직이고 자리를 저장한다(worktree.move). 누르면 그 리포로 간다.
+//   줌 아웃하면 이름표는 리포 영역 이름표처럼 화면 기준 크기로 커지되, 리포 영역 이름표보다 조금 작게 둔다
 function WorktreeAreaNodeInner({ data }) {
   const t = useT();
   const zoom = useFlowStore(zoomSel);
@@ -84,29 +100,10 @@ function WorktreeAreaNodeInner({ data }) {
       <div className="mt-region-box" style={{ top: BORDER_TOP }} />
       <div className="mt-region-head mt-wadrag" style={{ fontSize: fs, height: head, top }} title={t('regions.wtTitle', { path: data.path || '', branch })}>
         <b className="mt-wtarea-name">⎇ {branch}</b>
-        {folder && <span className="mt-region-meta">({folder})</span>}
-        <span className="mt-region-meta"><span data-count="sessions">{t('regions.wtSessions', { n: data.n || 0 })}</span>{data.working > 0 && <> · <span data-count="working">{t('regions.working', { n: data.working })}</span></>}{data.convos > 0 && <> · <span data-count="convos">{t('regions.convos', { n: data.convos })}</span></>}</span>
+        {folder && <span className="mt-wtarea-meta" data-role="wt-folder">({folder})</span>}
+        <span className="mt-wtarea-meta"><span data-count="sessions">{t('regions.wtSessions', { n: data.n || 0 })}</span>{data.working > 0 && <> · <span data-count="working">{t('regions.working', { n: data.working })}</span></>}{data.convos > 0 && <> · <span data-count="convos">{t('regions.convos', { n: data.convos })}</span></>}</span>
       </div>
     </div>
   );
 }
 export const WorktreeAreaNode = memo(WorktreeAreaNodeInner);
-
-// P27: 본 저장소 영역 테두리에서 워크트리 영역 테두리로 가는 브랜치 화살표(끝에 화살촉, 가운데에 브랜치 이름). 굵기와 글자는 화면 기준 크기
-function BranchArrowNodeInner({ data, width, height }) {
-  const zoom = useFlowStore(zoomSel);
-  const z = Math.max(zoom, 0.05);
-  const a = data.arrow;
-  const g = arrowPath(a, data.ox, data.oy, { tip: Math.max(16, 14 / z) });
-  const fs = Math.max(12, Math.min(64, 12 / z));
-  const label = worktreeLabel({ branch: data.branch, path: data.wt }).branch;
-  const v = a.dir === 'v';
-  return (
-    <svg className="mt-wtarrow" data-ws={data.wsKey} data-worktree={data.wt} width={width} height={height} style={{ overflow: 'visible' }}>
-      <path className="mt-wtarrow-line" d={g.d} fill="none" strokeWidth={Math.max(2, 2 / z)} />
-      <path className="mt-wtarrow-head" d={g.head} />
-      <text className="mt-wtarrow-label" x={g.mid.x + (v ? fs * 0.6 : 0)} y={v ? g.mid.y : g.mid.y - fs * 0.7} fontSize={fs} textAnchor={v ? 'start' : 'middle'}>⎇ {label}</text>
-    </svg>
-  );
-}
-export const BranchArrowNode = memo(BranchArrowNodeInner);

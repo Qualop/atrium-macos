@@ -24,7 +24,7 @@ export function BranchSettings({ settings, schema }) {
   const save = async (k) => {
     const v = draft[k];
     if (v == null || v === '') return;
-    try { await api.call('settings.set', { key: k, value: Number(v) }); setDraft((d) => ({ ...d, [k]: undefined })); toast(t('branch.saved')); } catch (e) { toast(t('branch.settingError', { error: errText(e) }), 'error'); }
+    try { await api.call('settings.set', { key: k, value: Number(v) }); setDraft((d) => d[k] === v ? { ...d, [k]: undefined } : d); toast(t('branch.saved')); } catch (e) { toast(t('branch.settingError', { error: errText(e) }), 'error'); }
   };
   // P28: 설정 탭의 세 칸 줄(이름·값·풀이, Settings.jsx와 같은 모양)
   return (
@@ -36,7 +36,7 @@ export function BranchSettings({ settings, schema }) {
         return (
           <label key={k} className="mt-set-row">
             <span className="mt-set-name">{label}</span>
-            <span className="mt-set-value"><input type="number" className="mt-set-num" min={sc ? sc.min : 1} max={sc ? sc.max : 64} data-field={`setting-${k}`} value={draft[k] ?? (settings && settings[k]) ?? ''} onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value }))} onBlur={() => save(k)} onKeyDown={(e) => { if (e.key === 'Enter') save(k); }} /></span>
+            <span className="mt-set-value"><input type="number" className="mt-set-num" min={sc ? sc.min : 1} max={sc ? sc.max : 64} data-field={`setting-${k}`} value={draft[k] ?? (settings && settings[k]) ?? ''} onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value }))} onBlur={() => save(k)} onKeyDown={(e) => { if (!e.nativeEvent.isComposing && e.keyCode !== 229 && e.key === 'Enter') save(k); }} /></span>
             <span className="mt-set-hint">{sc ? t('branch.range', { min: sc.min, max: sc.max, def: sc.default }) : ''}</span>
           </label>
         );

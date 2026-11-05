@@ -18,10 +18,10 @@ export function health(port) {
 
 export class ApiClient {
   constructor(info, { connectTimeoutMs = 10000 } = {}) { this.info = info; this.connectTimeoutMs = connectTimeoutMs; this.n = 0; this.wait = new Map(); this.handlers = []; }
-  open() {
+  open({ handshakeTimeoutMs = this.connectTimeoutMs } = {}) {
     return new Promise((res, rej) => {
       this.closed = false;
-      this.ws = new WebSocket(`ws://127.0.0.1:${this.info.port}/api?token=${this.info.token}`, { handshakeTimeout: this.connectTimeoutMs });
+      this.ws = new WebSocket(`ws://127.0.0.1:${this.info.port}/api?token=${this.info.token}`, { handshakeTimeout: handshakeTimeoutMs });
       this.ws.on('open', res);
       this.ws.on('error', rej);
       this.ws.on('message', (raw) => {
@@ -73,6 +73,12 @@ export async function startBackend(cfg, { nodePath = process.execPath } = {}) {
       c.close(); return { started: true, pid: p.pid, port: b.port, herdr: 'not connected yet' };
     }
     if (p.exitCode !== null) break;
+  }
+  // P54: 같은 판을 둘이 함께 띄우면(CLI 둘, 창과 CLI) 늦은 쪽은 포트를 못 열고 끝난다. 먼저 뜬 백엔드가 돌면 그것을 쓴다
+  for (let i = 0; i < 15; i++) {
+    const other = backendInfo(cfg);
+    if (other && other.pid !== p.pid && (await health(other.port))) return { already: true, pid: other.pid, port: other.port };
+    await sleep(200);
   }
   // P18: 백엔드가 까닭을 남기고 끝났으면(예: 옛 판을 옮기지 못함) 그 줄을 함께 알린다
   let why = '';

@@ -11,8 +11,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cfg = loadConfig();
 try {
   const version = execFileSync(cfg.herdrPath, ['--version'], { encoding: 'utf8', timeout: 10000 }).trim();
-  if (version !== `herdr ${HERDR_VERSION}`) throw new Error(`발견한 버전: ${version}`);
-} catch (e) { throw new Error(`herdr ${HERDR_VERSION}이 필요합니다. npm run setup:mac을 실행하거나 ATRIUM_HERDR를 지정하세요. ${e.message}`); }
+  if (version !== `herdr ${HERDR_VERSION}`) console.warn(`herdr 호환성은 보드에서 확인합니다: ${version}`);
+} catch { console.warn('herdr를 찾지 못했습니다. 보드는 열리며 설정에서 실행 엔진을 지정할 수 있습니다.'); }
 execFileSync(process.execPath, [path.join(root, 'scripts/build.mjs')], { cwd: root, stdio: 'inherit' });
 const env = { ...process.env, ATRIUM_NODE: process.execPath };
 delete env.ELECTRON_RUN_AS_NODE;

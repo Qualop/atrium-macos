@@ -92,6 +92,8 @@ export async function whenBoardReady(wc, timeoutMs = 30000) {
 
 // cfg: 프로필 설정, log, hasWindow() → 창이 있는가, showNode(sessionId|null) → 창을 열고 그 노드로, quit() → 앱 끝내기, notifications: 알림 기록 배열(시험이 누름을 흉내 낸다)
 // P14: closeWindow() → 창 닫기, startBackend() → 백엔드가 없으면 띄움, stopBackend() → 백엔드 끄기, confirm({ message, detail, ok }) → 참이면 진행(기본은 Electron 확인창)
+const TRAY_ID = 'tray-main'; // P47: 트레이의 클라이언트 ID(앱 하나에 트레이 하나)
+
 export function startTray({ cfg, log, hasWindow, showNode, quit, notifications = [], closeWindow = () => {}, startBackend = async () => {}, stopBackend = async () => {}, confirm = async () => false }) {
   const st = { lang: DEFAULT_LANGUAGE, enabled: true, connected: false, sessions: new Map(), notified: new Map(), pending: new Map(), tray: null, client: null, menuKey: null, stopped: false, busy: null, lastError: null, migration: null, migrationNoted: false };
 
@@ -189,6 +191,8 @@ export function startTray({ cfg, log, hasWindow, showNode, quit, notifications =
     st.pending.delete(key);
     const s = st.sessions.get(sessionId);
     if (st.stopped || !s || notifyKey(s) !== key || !st.enabled || hasWindow()) return; // 그새 풀렸거나 창이 열렸다(창이 정한다)
+    // P47: 다른 기기(웹 화면 등)가 최근에 쓰는 중이면 그쪽에서 띄운다. 백엔드가 트레이를 고르거나 아무도 고르지 못했을 때만 띄운다
+    if (st.peers && st.peers.notify && st.peers.notify !== TRAY_ID) { st.notified.set(key, Date.now()); log(`tray notification skipped ${sessionId} (client ${st.peers.notify} is active)`); return; }
     st.notified.set(key, Date.now());
     if (!Notification.isSupported()) return log('tray notification unsupported');
     const ask = s.ask ? (s.ask.summary || (s.ask.questions && s.ask.questions[0] && s.ask.questions[0].question) || s.ask.kind) : '';
@@ -219,6 +223,7 @@ export function startTray({ cfg, log, hasWindow, showNode, quit, notifications =
     if (st.stopped) return;
     if (ev === 'settings.updated') return apply(d);
     if (ev === 'backend.migration') return noteMigration(d);
+    if (ev === 'clients.updated') { st.peers = d; return; } // P47
     if (ev === 'session.updated') st.sessions.set(d.sessionId, d);
     else if (ev === 'session.state' && d.summary) st.sessions.set(d.sessionId, d.summary);
     else if (ev === 'session.removed') st.sessions.delete(d.sessionId);
@@ -244,8 +249,11 @@ export function startTray({ cfg, log, hasWindow, showNode, quit, notifications =
       if (!current()) { c.close(); return; }
       c.on((ev, d) => { if (current()) onEvent(ev, d); });
       c.ws.on('close', () => { if (!current()) return; st.connected = false; st.client = null; clearPending(); refreshTray(); retry(); });
+      await c.call('client.hello', { client: TRAY_ID, name: 'tray', kind: 'tray' }).catch(() => {});
+      if (!current()) return;
       const sub = await c.call('events.subscribe');
       if (!current()) return;
+      st.peers = sub.clients || null;
       st.sessions = new Map(sub.sessions.map((s) => [s.sessionId, s]));
       // 붙기 전에 이미 기다리던 대기는 창이 정했다고 본다(같은 대기에 다시 띄우지 않는다)
       for (const s of st.sessions.values()) { const k = notifyKey(s); if (k) st.notified.set(k, Date.now()); }

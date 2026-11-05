@@ -6,11 +6,11 @@
 //   이웃과 맞닿은 테두리는 분할선이 그 자리를 맡는다.
 // - P23: 2 × 2처럼 분할선이 엇갈리는 점에 손잡이(가로·세로 분할선을 같이 옮긴다, 두 번 누르면 모두 반반).
 // - 덩어리 오른쪽 아래 모서리 손잡이를 끌면 바깥 크기가 바뀌고 비율대로 나눈다(잎마다 최소 크기, dock-tree.mjs LEAF_MIN).
-// - P23: 덩어리 안 세션끼리의 연결은 분할선 위 표시 대신 두 노드 가운데 점을 잇는 선으로 세션 위에 겹쳐 그린다(DockLinks).
-//   누르면 오간 기록. 그 덩어리 안에 연결이 있을 때만 그린다(점은 SessionNode의 가운데 잇기 손잡이, 잇기 모드에서도 보인다).
-//   P26: 어두운 테두리를 두른 색 선. 초점 세션 쪽 끝은 그 세션의 테두리 가운데다.
+// - P30: 덩어리 안 세션끼리의 연결은 터미널 위를 지나지 않는다. 맞닿은 칸은 경계 위 다리, 같은 바깥 변에 닿는 칸은 괄호, 그 밖은 둘레 길,
+//   둘레에 닿지 않는 칸은 칩(DockLinks). 누르면 오간 기록. 그 덩어리 안에 연결이 있을 때만 그린다.
+//   잇기는 지금처럼 잇기 모드에서 가운데 점(SessionNode의 가운데 잇기 손잡이)끼리 끈다. 점은 잇기 모드에서만 보인다.
 // - herdr 레이아웃과 패널 크기는 바꾸지 않는다. 제어기는 지금처럼 노드 크기로 화면을 받는다.
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore as useFlowStore } from '@xyflow/react';
 import { api } from './api.js';
 import { useStore, getState, setNodesLocal, setDockLocal, openDialog, toast, loadBoard, beginLayoutEdit } from './store.js';
@@ -19,7 +19,8 @@ import { dt } from './lib/dock-text.js';
 import { moveDivider, layout as layoutTree, minSize, dragEdge, moveJunction, evenDivider } from '../../../backend/src/dock-tree.mjs';
 import { bbox } from '../../../backend/src/canvas.mjs';
 import { useT, t, errText } from './lib/i18n.js';
-import { linkEnds, dockFocus, placeLabels } from './lib/dock-links.js'; // P26: 초점 세션의 선은 테두리 가운데에서
+import { dockFocus, dockRoutes, roundedPath, arrowHead, linkActive, touches, fitDockLabel, labelSpot, dockLabelParts } from './lib/dock-links.js'; // P30: 다리·괄호·둘레 길, P46: 배율별 글
+import { Pill } from './Links.jsx';
 
 export const HIT = 8; // 분할선·테두리를 잡는 폭(화면 px)
 const zoomSel = (s) => s.transform[2];
@@ -173,9 +174,17 @@ function DockGripInner({ data }) {
 }
 export const DockGrip = memo(DockGripInner);
 
-// P23: 덩어리 안 연결(두 세션 노드 가운데를 잇는 선). data.rects: 구성 노드 자리(덩어리 바깥 왼쪽 위 기준)
-// P26: 선은 어두운 테두리(외곽선)를 두른 색 선이라 터미널 글 위에서도 보인다. 색은 선 색 체계(역할 파랑, 띄움 초록, 알아챈 지시 초록 점선: 일반 선과 같다).
-//   덩어리 안 한 세션이 초점(고름, 눌러 들어감, 화면 가운데에서 보는 중)이면 그 세션에 닿는 선은 그 세션의 테두리 가운데(상대 쪽)에서 나간다(lib/dock-links.js).
+// P30: 덩어리 안 연결은 터미널 위로 선을 긋지 않는다(lib/dock-links.js dockRoutes). data.rects: 구성 노드 자리(덩어리 바깥 왼쪽 위 기준)
+// - 맞닿은 두 칸: 경계선 위 작은 알약(다리). 화살표는 시키는 쪽 → 받는 쪽, 마우스를 올리면 역할 이름이 펼쳐진다.
+// - 같은 바깥 변에 닿는 두 칸: 그 변 바깥에 ] 모양 괄호. 그 밖: 덩어리 둘레를 도는 ㄱ자 길. 바깥 길은 차선을 나눠 겹치지 않는다.
+// - 둘레에 닿지 않는 칸이 낀 연결: 그 칸 머리줄 위 작은 칩(← 시킨 쪽, → 받는 쪽).
+// - 색은 받는 쪽 상태(선 이름표와 같다), 일이 오가면(Links.jsx와 같은 조건) 화살표가 흐른다. 누르면 오간 기록(LinkPanel).
+// - 덩어리 안 한 칸에 마우스를 올리거나 초점(고름 > 눌러 들어감)이 있으면 그 칸에 닿는 것만 진하게, 나머지는 옅게.
+// - P46: 배율이 0.4보다 작을 때만 화살표 블록(mini). 0.4부터 역할 이름(short), 0.8부터 @시킨 쪽 → @받는 쪽 · 역할 · 받는 쪽 상태 알약(full).
+//   글은 선을 따라 놓는다(세로 경계·세로 선분이면 세운다). 자리가 모자라면 한 단계 내리고, 그래도 넘치면 줄임표. 마우스를 올리면 다 펼친다.
+//   말과 모양은 덩어리 밖 선 글(Links.jsx)과 같다: 역할 이름, 띄움 꼬리표(mt-edge-tag), 상태 알약(Pill).
+const ARROW = { right: '→', left: '←', down: '↓', up: '↑' };
+const FLOW = { right: [1, 0], left: [-1, 0], down: [0, 1], up: [0, -1] };
 function DockLinksInner({ data, positionAbsoluteX = 0, positionAbsoluteY = 0 }) {
   const { dockId, rects } = data;
   useT();
@@ -184,57 +193,128 @@ function DockLinksInner({ data, positionAbsoluteX = 0, positionAbsoluteY = 0 }) 
   const sessions = useStore((st) => st.sessions);
   const selected = useStore((st) => st.selected);
   const focusId = useStore((st) => st.focusId);
-  // 화면에 보이는 판 사각형(덩어리 기준 좌표)으로 초점 세션을 고른다. 고른 세션 ID만 돌려주므로 화면을 옮길 때마다 다시 그리지 않는다
+  const [hoverCell, setHoverCell] = useState(null);
+  const [hoverLink, setHoverLink] = useState(null);
+  // 마우스가 이 덩어리의 어느 칸 위인가(노드 DOM의 data-dock, data-session)
+  useEffect(() => {
+    const over = (e) => {
+      const el = e.target && e.target.closest ? e.target.closest('.mt-node') : null;
+      setHoverCell(el && el.dataset.dock === dockId ? el.dataset.session : null);
+    };
+    document.addEventListener('pointerover', over);
+    return () => document.removeEventListener('pointerover', over);
+  }, [dockId]);
   const focus = useFlowStore((s) => {
     const [tx, ty, z] = s.transform;
     const view = s.width && s.height ? { x: -tx / z - positionAbsoluteX, y: -ty / z - positionAbsoluteY, w: s.width / z, h: s.height / z } : null;
-    return dockFocus({ rects, selected, focusId, view });
+    return dockFocus({ rects, selected, focusId, view, center: false });
   });
   const z = Math.max(zoom, 0.02);
-  const inside = [...links.values()].filter((l) => rects[l.from] && rects[l.to]);
-  const ends = new Map(inside.map((l) => [l.linkId, linkEnds(rects[l.from], rects[l.to], focus === l.from ? 'from' : focus === l.to ? 'to' : null)]));
+  const inside = useMemo(() => [...links.values()].filter((l) => rects[l.from] && rects[l.to]), [links, rects]);
+  const res = useMemo(() => dockRoutes(rects, inside, { gap: 16 / z, step: 11 / z }), [rects, inside, z]);
+  const byId = new Map(inside.map((l) => [l.linkId, l]));
+  const hot = hoverLink ? null : hoverCell || focus; // 연결 하나에 올렸으면 그것만
+  const look = (l) => {
+    const to = sessions.get(l.to);
+    const on = hoverLink ? hoverLink === l.linkId : hot ? touches(l, hot) : null;
+    return `st-${to ? to.state : 'exited'}${linkActive(l, to) ? ' active' : ''}${on === true ? ' hot' : on === false ? ' dim' : ''}${l.role ? ' role' : ''}`;
+  };
+  const nameOf = (id) => (sessions.get(id) || {}).name || '?';
+  const names = Object.fromEntries(Object.keys(rects).map((id) => [id, nameOf(id)]));
+  const words = { spawned: t('links.spawned'), directed: t('docks.directed') };
+  const roleText = (l) => dockLabelParts(l, names, words).role;
+  const titleOf = (l) => {
+    const to = sessions.get(l.to);
+    return t('dockLinks.title', { a: nameOf(l.from), b: nameOf(l.to), role: t('dockLinks.role', { role: roleText(l) }) })
+      + (to ? t('dockLinks.state', { b: to.name, state: STATE_LABEL[to.state] || to.state }) : '')
+      + (linkActive(l, to) ? t('dockLabel.activeTitle') : '')
+      + (l.lastText ? t('docks.markLast', { text: l.lastText }) : '') + t('docks.markClick');
+  };
+  // P46: 펼친 글(short: 역할, full: @a → @b · 역할 · 상태). noDir: 칩처럼 앞에 이미 상대 이름이 있으면 방향 글을 뺀다
+  const body = (l, level, noDir = false) => {
+    if (level === 'mini') return <span className="mt-dl-role">{roleText(l)}</span>;
+    const p = dockLabelParts(l, names, words);
+    const to = sessions.get(l.to);
+    return (
+      <span className="mt-dl-text" data-role="dock-label">
+        {linkActive(l, to) && <i className="mt-dl-live" title={t('dockLabel.active')} />}
+        {p.spawnTag && <span className="mt-edge-tag">{t('links.spawned')}</span>}
+        {level === 'full' && !noDir && <span className="mt-dl-dir">{p.dir}</span>}
+        <span className="mt-dl-role">{p.role}</span>
+        {level === 'full' && to && <Pill s={to} />}
+      </span>
+    );
+  };
+  const open = (id) => (e) => { e.stopPropagation(); openDialog({ kind: 'link', linkId: id }); };
+  const hov = (id) => ({ onMouseEnter: () => setHoverLink(id), onMouseLeave: () => setHoverLink((h) => (h === id ? null : h)) });
   const fs = Math.max(10, Math.min(160, 11 / z));
-  const kindOfLink = (l) => (l.role && !l.spawned ? 'role' : l.observed ? 'observed' : 'spawned'); // 일반 선(Links.jsx)과 같은 구분
-  const labelText = (l) => l.role || (l.spawned && !l.observed ? t('links.spawned') : t('docks.directed'));
-  const stateText = (l) => { const to = sessions.get(l.to); return to ? STATE_LABEL[to.state] || to.state : ''; };
-  // 글은 선 가운데를 피해 시키는 쪽 가까이 둔다(가운데는 분할선·엇갈리는 점 자리). P26: 글끼리 겹치면 선을 따라 옮긴다(선이 엇갈릴 때)
-  const em = (str) => [...str].reduce((acc, ch) => acc + (ch.codePointAt(0) > 0x2e80 ? 1 : 0.6), 0);
-  const labelAt = placeLabels(inside.map((l) => ({ ...ends.get(l.linkId), w: fs * (em(labelText(l)) + em(stateText(l)) * 0.85 + 2.6), h: fs * 1.8 })));
+  const tip = hoverLink && res.routes.find((r) => r.linkId === hoverLink);
+  const tipSpot = tip ? labelSpot(tip.points) : null;
+  const tipAt = tip && byId.get(tip.linkId) && fitDockLabel(zoom, tipSpot.len).level === 'mini' ? tipSpot : null; // 펼친 글이 있으면 따로 띄우지 않는다
   return (
-    <div className="mt-docklinks" data-role="dock-links" data-dock={dockId} data-focus={focus || undefined}>
+    <div className="mt-docklinks" data-role="dock-links" data-dock={dockId} data-focus={hot || undefined} data-level={fitDockLabel(zoom, 1e9).level}>
       <svg className="mt-docklinks-svg" width="100%" height="100%" style={{ overflow: 'visible' }}>
-        {inside.map((l) => {
-          const { a, b, anchored } = ends.get(l.linkId);
-          const both = inside.some((o) => o.from === l.to && o.to === l.from);
-          const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-          const off = both ? 7 / z : 0; // 서로 시키면 두 선을 조금 벌린다
-          const nx = (-(b.y - a.y) / len) * off, ny = ((b.x - a.x) / len) * off;
-          const p = { x1: a.x + nx, y1: a.y + ny, x2: b.x + nx, y2: b.y + ny };
-          const start = anchored === 'from' ? a : anchored === 'to' ? b : null;
+        {res.routes.map((r) => {
+          const l = byId.get(r.linkId);
+          if (!l) return null;
+          const d = roundedPath(r.points, 10 / z);
+          const head = arrowHead(r.points, 9 / z).map((p) => `${p.x},${p.y}`).join(' ');
           return (
-            <g key={l.linkId} className={`mt-dl ${kindOfLink(l)}${l.spawned ? ' spawn' : ''}${anchored ? ' anchored' : ''}`} data-link={l.linkId} data-anchored={anchored || undefined}
-              data-ax={Math.round(p.x1)} data-ay={Math.round(p.y1)} data-bx={Math.round(p.x2)} data-by={Math.round(p.y2)} onClick={(e) => { e.stopPropagation(); openDialog({ kind: 'link', linkId: l.linkId }); }}>
-              <line className="mt-dl-hit" {...p} strokeWidth={12 / z} />
-              <line className="mt-dl-casing" {...p} strokeWidth={6 / z} />
-              <line className="mt-dl-line" {...p} strokeWidth={2.6 / z} strokeDasharray={l.observed ? `${7 / z} ${5 / z}` : undefined} />
-              {start && <circle className="mt-dl-start" cx={start.x + nx} cy={start.y + ny} r={4.5 / z} strokeWidth={2 / z} />}
-              <circle className="mt-dl-end" cx={b.x + nx} cy={b.y + ny} r={5.5 / z} strokeWidth={2 / z} />
+            <g key={r.linkId} className={`mt-dl ${r.kind} ${look(l)}`} data-link={r.linkId} data-kind={r.kind} data-lane={r.lane} data-sides={r.sides.join(',')} data-from={l.from} data-to={l.to}
+              style={{ '--dash': `${8 / z}px ${6 / z}px`, '--dash-off': `${-14 / z}px` }} onClick={open(r.linkId)} {...hov(r.linkId)}>
+              <title>{titleOf(l)}</title>
+              <path className="mt-dl-hit" d={d} strokeWidth={14 / z} />
+              <path className="mt-dl-casing" d={d} strokeWidth={5.5 / z} />
+              <path className="mt-dl-line" d={d} strokeWidth={2.4 / z} />
+              <polygon className="mt-dl-head" points={head} strokeWidth={1.5 / z} />
             </g>
           );
         })}
       </svg>
-      {inside.map((l, i) => {
-        const to = sessions.get(l.to);
-        const at = labelAt[i];
+      {/* P46: 바깥 길 위 글(가장 긴 바깥 선분 가운데, 그 선분 방향으로) */}
+      {res.routes.map((r) => {
+        const l = byId.get(r.linkId);
+        if (!l) return null;
+        const spot = labelSpot(r.points);
+        const fit = fitDockLabel(zoom, spot.len);
+        if (fit.level === 'mini') return null;
         return (
-          <button key={l.linkId} className={`mt-dl-label ${kindOfLink(l)} nodrag nopan`} data-link={l.linkId} data-k={at.k} style={{ left: at.x, top: at.y, fontSize: fs }}
-            title={`@${(sessions.get(l.from) || {}).name} → @${(to || {}).name}${l.lastText ? t('docks.markLast', { text: l.lastText }) : ''}${t('docks.markClick')}`}
-            onClick={(e) => { e.stopPropagation(); openDialog({ kind: 'link', linkId: l.linkId }); }}>
-            {labelText(l)}
-            {to && <span className={`mt-pill st-${to.state}`}>{stateText(l)}</span>}
+          <button key={`t:${r.linkId}`} className={`mt-dl-rlabel lv-${fit.level}${spot.vertical ? ' vert' : ''} ${look(l)} nodrag nopan`} data-link={r.linkId} data-kind="route-label" data-level={fit.level}
+            style={{ left: spot.x, top: spot.y, fontSize: fs, '--max': `${fit.max}px` }} title={titleOf(l)} onClick={open(r.linkId)} {...hov(r.linkId)}>
+            {body(l, fit.level)}
           </button>
         );
       })}
+      {res.bridges.map((b) => {
+        const l = byId.get(b.linkId);
+        if (!l) return null;
+        const [fx, fy] = FLOW[b.arrow];
+        const fit = fitDockLabel(zoom, b.span);
+        const vert = b.axis === 'v' && fit.level !== 'mini';
+        return (
+          <button key={b.linkId} className={`mt-dl-bridge axis-${b.axis} lv-${fit.level}${vert ? ' vert' : ''} ${look(l)} nodrag nopan`} data-link={b.linkId} data-kind="bridge" data-arrow={b.arrow} data-from={l.from} data-to={l.to} data-level={fit.level}
+            style={{ left: b.x, top: b.y, fontSize: fs, '--fx': fx, '--fy': fy, '--max': `${fit.max}px` }} title={titleOf(l)} onClick={open(b.linkId)} {...hov(b.linkId)}>
+            <span className="mt-dl-arrowbox"><span className="mt-dl-arrow">{ARROW[b.arrow]}</span></span>
+            {body(l, fit.level)}
+          </button>
+        );
+      })}
+      {res.chips.map((c) => {
+        const l = byId.get(c.linkId);
+        const r = rects[c.cell];
+        if (!l || !r) return null;
+        const mine = res.chips.filter((x) => x.cell === c.cell);
+        const i = mine.indexOf(c);
+        const fit = fitDockLabel(zoom, r.w / mine.length);
+        return (
+          <button key={c.linkId} className={`mt-dl-chip lv-${fit.level} ${look(l)} nodrag nopan`} data-link={c.linkId} data-kind="chip" data-cell={c.cell} data-dir={c.dir} data-level={fit.level}
+            style={{ left: r.x + r.w / 2, top: r.y, fontSize: fs, '--i': i, '--max': `${fit.max}px` }} title={titleOf(l)} onClick={open(c.linkId)} {...hov(c.linkId)}>
+            <span className="mt-dl-chipname">{t(c.dir === 'in' ? 'dockLinks.chipIn' : 'dockLinks.chipOut', { name: nameOf(c.dir === 'in' ? l.from : l.to) })}</span>
+            {fit.level !== 'mini' && body(l, fit.level, true)}
+          </button>
+        );
+      })}
+      {tipAt && <div className="mt-dl-tip" style={{ left: tipAt.x, top: tipAt.y, fontSize: fs }}>{roleText(byId.get(tip.linkId))}</div>}
     </div>
   );
 }

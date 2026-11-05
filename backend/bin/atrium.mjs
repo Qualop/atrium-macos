@@ -4,16 +4,22 @@
 import path from 'node:path';
 import { loadConfig } from '../src/config.mjs';
 import { connect as connectTo, startBackend as startBackendFor, stopBackend as stopBackendFor } from '../src/client.mjs';
+import { remoteCommand } from './atrium-remote.mjs'; // P49(R3): 원격 접속(Tailscale)
 import { FEATURES_HELP, FEATURE_BOOL_FLAGS, featureCommand, featureEvent } from './atrium-features.mjs'; // P6b
 
 const HELP = `atrium [--dev] [--json] <명령>
   backend start|stop|status         백엔드 띄우기(없으면 herdr 서버도 띄움), 끄기, 상태
   status                            백엔드와 판 전용 herdr 상태(버전, 프로토콜, 기능)
+  devices [code|rm <id>]            웹 화면에 짝 맺은 기기 목록, 짝 맺기 코드 만들기, 끊기(P48)
+  remote status|guide               원격 접속(Tailscale) 진단과 따라 할 단계(P49). 읽기만 한다
+  remote enable|disable [--yes] [--https-port n]   tailscale serve로 판을 tailnet에 켜고 끈다(--yes가 있을 때만 실행, funnel은 쓰지 않음)
   herdr start|stop|restart [--yes]  판 전용 herdr 서버 켜기, 끄기, 다시 띄우기
-  spawn <폴더> [--name n] [--prompt 글] [--model m] [--effort e] [--mode 권한모드] [--kind 종류|shell] [--args "인자"] [--allow-herdr]
+  herdr status|rediscover           herdr 진단(고른 실행 파일, 본 후보, 버전 경고), 다시 찾기(P40)
+  spawn <폴더> [--launcher 호출자] [--name n] [--prompt 글] [--model m] [--effort e] [--mode 권한모드] [--kind 종류|shell] [--args "인자"] [--allow-herdr]   --launcher면 그 호출자로 띄우고 준 값이 덮는다(P33)
+  launchers                         호출자 목록(즐겨찾기 순서, 하네스, 명령 미리보기, P33)
   ls [--ws 워크스페이스]            세션 목록과 상태(워크스페이스별)
   ws                                리포지토리 워크스페이스 목록과 세는 값(세션, 작업 중, 내 차례, 검토 대기)
-  ws open <폴더> | ws close <이름|키> [--yes] | ws select <이름|키>   빈 워크스페이스 만들기, 빈 것 닫기, 지금 워크스페이스 고르기
+  ws open <폴더> | ws close <이름|키> [--yes] [--after archive|delete] | ws select <이름|키>   빈 워크스페이스 만들기, 판에서 지우기(세션이 있으면 --after로 모두 보관·삭제), 지금 워크스페이스 고르기
   get <이름>                        세션 상세(묻는 내용, 마지막 답, 화면 꼬리, git, 전달)
   watch [--seconds n]               상태 변화, hook, 전달을 실시간으로
   send @이름 [@이름...] <글> [--wait] [--ws 워크스페이스]   글 보내기. @all은 캔버스 전체의 에이전트 세션(--ws면 그 워크스페이스만). --wait면 확인까지 기다림
@@ -48,6 +54,7 @@ const HELP = `atrium [--dev] [--json] <명령>
   dock layout <틀> <A> <B> ...   고른 노드를 배치 틀로 한 덩어리로 짠다(P17). 틀: main-left, grid, row, col 등(P26: dock-tree.mjs PRESETS)
   size <이름> large|normal|small|wide-large|...|tall-small [--dock]   노드 크기 단계(P6a). 가로·세로 크기와 --dock(덩어리 전체 바깥)은 P23
   arrange <워크스페이스> [--apply] [--undo]   연결을 따라 정리(미리 보기, 적용, 한 번 되돌리기)(P6a)
+  arrange --all [--apply] [--undo]          판 전체 정리: 영역마다 안을 정리하고 영역도 줄 맞춰 다시 놓는다(P31)
 ${FEATURES_HELP}
   closed [--ws 워크스페이스]        닫힌 세션(판에서 빠졌지만 다시 열 수 있다, P7)
   reopen <이름|ID> [--model m]      닫힌 세션을 판으로 다시 열기. claude는 같은 대화로 이어 간다(P7)
@@ -62,6 +69,8 @@ ${FEATURES_HELP}
   classify                          대화 기록의 분류별 수(판에 올림, 보관, missed, 도는 중, 데스크톱 등)
   missed                            missed(지울 대화): 폴더가 없어졌거나 이 앱의 시험 폴더인 대화를 폴더별로
   missed rm (--all | --folder <폴더> | <대화 ID>...) [--yes]   휴지통으로 보낸다(--yes 없이는 수와 크기만)
+  import-desktop --list             데스크톱 앱(Code 탭)에서 가져올 세션 후보: 리포별 상태, 기본 고름, 지금 도는지(P34)
+  import-desktop --all | <앱 세션 ID>...   기본 고름 전부(새것과 더 씀, 도는 것은 뺌) 또는 고른 것을 갈라 열어 잠든 판 세션으로 가져온다
   call <메서드> [JSON]              판 API를 그대로 부른다`;
 
 const argv = process.argv.slice(2);
@@ -156,6 +165,7 @@ async function main() {
     if (op === 'start') return out(await startBackend());
     if (op === 'stop') return out(await stopBackend());
   }
+  if (cmd === 'remote') return remoteCommand(cfg, rest, flags, connect); // P49: 백엔드가 없어도 된다
   const c = await connect();
   try {
     switch (cmd) {
@@ -165,8 +175,15 @@ async function main() {
         const h = st.herdr;
         console.log(`백엔드 pid=${st.pid} 포트=${st.port} 프로필=${st.profile} 데이터=${st.dataDir} 세션 ${st.sessions}개`);
         if (st.previousRun) console.log(`  이전 실행: ${st.previousRun.cleanShutdown ? '정상 종료' : '비정상 종료'}, 꺼져 있던 시간 ${(st.previousRun.downMs / 1000).toFixed(1)}초(그동안 세션 화면에 hook 연결 오류 글이 찍혔을 수 있다)`);
+        if (st.web) console.log(`  화면 주소=${st.web.url}${st.web.built ? '' : ' (app/dist 없음: cd app && npm run build)'} 짝 맺은 기기 ${st.web.devices}대`); // P48
         console.log(`herdr 세션=${h.session} 실행=${h.running} 연결=${h.connected} 서버 pid=${h.serverPid} CLI=${h.cliVersion}`);
         if (h.compat) console.log(`  version=${h.compat.version} protocol=${h.compat.protocol} 호환=${h.compat.ok}${h.compat.problems.length ? ' 문제: ' + h.compat.problems.join('; ') : ''}\n  capabilities=${JSON.stringify(h.compat.capabilities)}`);
+        // P40: 고른 실행 파일과 까닭, 본 후보, 경고
+        const ch = h.find && h.find.chosen;
+        console.log(`  실행 파일=${h.path || '(못 찾음)'}${ch ? ` (${ch.reason})` : ''}${h.find && h.find.note ? ` [${h.find.note}]` : ''}`);
+        if (h.missing || !ch) for (const t of (h.find && h.find.tried) || []) console.log(`    ${t.ok ? 'ok ' : '-- '}${t.source.padEnd(9)} ${t.path}${t.ok ? ` ${t.version}` : ` (${t.error})`}`);
+        if (h.warning) console.log(`  경고: ${h.warning}`);
+        if (h.update) console.log(`  알림: ${h.update.message}`);
         if (st.relay.length) console.log(`  붙은 제어기: ${JSON.stringify(st.relay)}`);
         return;
       }
@@ -178,9 +195,21 @@ async function main() {
       }
       case 'spawn': {
         if (!rest[0]) throw new Error('폴더를 준다');
-        const r = await c.call('session.spawn', { cwd: path.resolve(rest[0]), name: flags.name, prompt: flags.prompt, model: flags.model, effort: flags.effort, permissionMode: flags.mode, kind: flags.kind, args: flags.args, allowHerdr: flags['allow-herdr'] ? true : undefined });
+        const r = await c.call('session.spawn', { cwd: path.resolve(rest[0]), launcher: flags.launcher, name: flags.name, prompt: flags.prompt, model: flags.model, effort: flags.effort, permissionMode: flags.mode, kind: flags.kind, args: flags.args, allowHerdr: flags['allow-herdr'] ? true : undefined });
         if (JSONOUT) return out(r);
-        console.log(`시작: ${r.name} (${r.kind}, ${r.sessionId}) 패널 ${r.paneId}\n  신뢰 대화상자 예상: ${r.trust.needsTrust == null ? '예상하지 않음' : r.trust.needsTrust ? '뜬다' : `안 뜬다(신뢰한 폴더 ${r.trust.trustedBy})`}\n  실행: ${(r.argv || []).join(' ')}${r.resumeArgv ? `\n  이어 가기 등록: ${r.resumeArgv.join(' ')}` : ''}`);
+        console.log(`시작: ${r.name} (${r.kind}${r.flavor ? `/${r.flavor}` : ''}, ${r.sessionId}) 패널 ${r.paneId}${r.command ? `
+  친 명령: ${r.command}` : ''}\n  신뢰 대화상자 예상: ${r.trust.needsTrust == null ? '예상하지 않음' : r.trust.needsTrust ? '뜬다' : `안 뜬다(신뢰한 폴더 ${r.trust.trustedBy})`}\n  실행: ${(r.argv || []).join(' ')}${r.resumeArgv ? `\n  이어 가기 등록: ${r.resumeArgv.join(' ')}` : ''}`);
+        return;
+      }
+      case 'launchers': {
+        const r = await c.call('launcher.list');
+        if (JSONOUT) return out(r);
+        const fav = r.favorites;
+        const rows = [...r.launchers].sort((a, b) => (fav.includes(a.id) ? fav.indexOf(a.id) : 1e3) - (fav.includes(b.id) ? fav.indexOf(b.id) : 1e3));
+        for (const l of rows) {
+          const pv = l.preview || {};
+          console.log(`${l.favorite ? `★${fav.indexOf(l.id) + 1}` : '  '} ${l.name.padEnd(16)} ${l.id.padEnd(10)} ${l.harness.padEnd(8)} ${pv.shell ? '(셸)' : pv.line}${pv.env && pv.env.length ? `  [env ${pv.env.join(', ')}]` : ''}`);
+        }
         return;
       }
       case 'ls': {
@@ -203,7 +232,7 @@ async function main() {
         const op = rest[0];
         if (op === 'open') return out(await c.call('workspace.open', { path: path.resolve(rest[1] || '.') }));
         if (op === 'select') return out(await c.call('workspace.select', { workspace: rest[1] }));
-        if (op === 'close') { const r = await c.call('workspace.close', { workspace: rest[1], confirm: !!flags.yes }); if (r.needsConfirm) { console.log(`확인 필요: ${r.message}\n계속하려면 --yes`); process.exitCode = 2; return; } return out(r); }
+        if (op === 'close') { const r = await c.call('workspace.close', { workspace: rest[1], confirm: !!flags.yes, ...(flags.after ? { after: flags.after } : {}) }); if (r.needsConfirm) { console.log(`확인 필요: ${r.message}\n계속하려면 --yes`); process.exitCode = 2; return; } return out(r); }
         const r = await c.call('workspace.list');
         if (JSONOUT) return out(r);
         if (!r.workspaces.length) console.log('(워크스페이스 없음)');
@@ -268,6 +297,15 @@ async function main() {
         return out(isWs ? await c.call('workspace.wake', { workspace: rest[0] }) : await c.call('session.wake', { session: rest[0] }));
       }
       case 'sleep-status': return out(await c.call('sleep.status'));
+      case 'devices': { // P48: 웹 화면에 짝 맺은 기기
+        if (rest[0] === 'code') { const r = await c.call('device.code'); if (JSONOUT) return out(r); console.log(`짝 맺기 코드 ${r.code} (${new Date(r.expiresAt).toLocaleTimeString()}까지, 한 번만)`); return; }
+        if (rest[0] === 'rm') return out(await c.call('device.revoke', { id: rest[1] }));
+        const r = await c.call('device.list'); if (JSONOUT) return out(r);
+        for (const d of r.devices) console.log(`${d.id}  ${d.name.padEnd(20)}  짝 맺음 ${ts(d.createdAt)}  마지막 ${d.lastSeenAt ? ts(d.lastSeenAt) : '-'}`);
+        for (const q of r.requests) console.log(`허락 요청 ${q.id} ${q.name} 확인 ${q.check}`);
+        if (!r.devices.length && !r.requests.length) console.log('짝 맺은 기기가 없다');
+        return;
+      }
       case 'clients': return out(await c.call('herdr.clients'));
       // P4: 세션끼리 연결, 에이전트 종류
       case 'links': {
@@ -348,11 +386,32 @@ async function main() {
         }
         return;
       }
+      // P34: 데스크톱 앱 세션 가져오기
+      case 'import-desktop': {
+        const LABEL = { new: '새것', imported: '이미 옮김', more: '옮긴 뒤 더 씀', onBoard: '이미 판 세션', noTranscript: '기록 없음', noFolder: '폴더 없음' };
+        const one = (t) => String(t || '').replace(/\s+/g, ' ').slice(0, 50);
+        if (flags.all || rest.length) {
+          const r = await c.call('desktop.import', flags.all ? { all: true } : { ids: rest });
+          if (JSONOUT) return out(r);
+          console.log(`가져옴 ${r.imported.length}, 건너뜀 ${r.skipped.length} (고른 것 ${r.total})`);
+          for (const x of r.imported) console.log(`  + @${x.name}  ${x.gen}세대  ${x.folder === 'repo' ? '저장소 폴더에서 ' : ''}${x.cwd}  ${one(x.title)}${x.running ? '  (앱에서 도는 중: 진행 중인 턴은 빠질 수 있다)' : ''}${x.replaced.length ? `  [호출자 값으로: ${x.replaced.join(', ')}]` : ''}`);
+          for (const x of r.skipped) console.log(`  - ${x.appSessionId}  ${x.reason}${x.message ? ` (${x.message})` : ''}  ${one(x.title)}`);
+          return;
+        }
+        const r = await c.call('desktop.list');
+        if (JSONOUT) return out(r);
+        console.log(`데스크톱 앱 세션 ${r.total}개(보관 제외), 기본 고름 ${r.picked}, 지금 도는 것 ${r.running}`);
+        for (const g of r.repos) {
+          console.log(`${g.name || '(폴더 모름)'}  ${g.root || ''}`);
+          for (const x of g.items) console.log(`  ${x.pick ? '[x]' : '[ ]'} ${x.appSessionId}  ${(LABEL[x.status] || x.status).padEnd(8)} ${x.running ? '도는 중 ' : ''}${ts(x.lastActivityAt)}  ${one(x.title)}${x.folder === 'repo' ? '  (워크트리 없음 → 저장소 폴더)' : ''}${x.more ? `  (+지시 ${x.more.prompts}, 답 ${x.more.answers})` : ''}`);
+        }
+        return;
+      }
       // P8: 가지 펼치기의 나무
       case 'tree': {
         const r = await c.call('branch.tree');
         if (JSONOUT) return out(r);
-        console.log(`하위 세션 ${r.total}/${r.limits.branchMaxTotal} · 세션마다 ${r.limits.branchMaxChildren} · 깊이 ${r.limits.branchMaxDepth}단계`);
+        console.log(`하위 세션 ${r.total}개(상한 없음, P36)`);
         const kids = (id) => r.rows.filter((x) => x.parentSessionId === id);
         const walk = (x, ind) => { console.log(`${'  '.repeat(ind)}@${x.name} ${x.depth}단계 ${x.state}${x.role ? ` "${x.role}"` : x.parentSessionId ? ' (판에 올림)' : ''}`); for (const k of kids(x.sessionId)) walk(k, ind + 1); };
         for (const x of r.rows.filter((y) => !y.parentSessionId || !r.rows.some((z) => z.sessionId === y.parentSessionId))) walk(x, 0);
@@ -373,6 +432,13 @@ async function main() {
       }
       case 'size': return out(await c.call('board.setSize', { session: rest[0], size: rest[1], scope: flags.dock ? 'dock' : undefined }));
       case 'arrange': {
+        if (flags.all) { // P31: 판 전체(영역도 다시 놓는다)
+          const r = await c.call('board.arrange', { all: true, apply: !!flags.apply, undo: !!flags.undo });
+          if (JSONOUT || r.undone) return out(r);
+          for (const g of r.regions) console.log(`영역 ${g.key.padEnd(40)} (${g.from.x},${g.from.y}) → (${g.to.x},${g.to.y}) ${g.to.w}x${g.to.h}`);
+          console.log(r.applied ? '적용했다(arrange --all --undo로 한 번 되돌린다)' : '미리 보기(--apply로 적용)');
+          return;
+        }
         const ws = (await c.call('workspace.list')).workspaces.find((w) => w.key === rest[0] || w.name.toLowerCase() === String(rest[0] || '').toLowerCase());
         if (!ws) throw new Error(`없는 워크스페이스: ${rest[0]}`);
         const r = await c.call('board.arrange', { workspace: ws.key, apply: !!flags.apply, undo: !!flags.undo });

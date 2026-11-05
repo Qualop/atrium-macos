@@ -1,6 +1,7 @@
 // 검색(ARCH 4절 H2, P6a)과 고른 노드 막대(H6·H7)
 // - 검색(Ctrl+F): 세션 이름, 워크스페이스 이름, 기다리는 질문, 요청, 답, 메모, 지난 지시에서 찾는다(백엔드 search.query, 판 기록만).
 //   위아래 화살표로 오가고 Enter로 그 노드(워크스페이스면 그 영역)로 간다. Esc로 닫는다.
+//   P43: 위 가운데(위 크롬 아래)에 뜨고 결과는 아래로 펼친다. 판에서 ↑ 키로도 연다. 바깥을 누르면 닫는다(누르기는 판에 그대로 간다)
 //   P6c: 출력(hook 없는 세션의 화면 답), 메모 노드, 칸반(제목, 열, 카드)도 나온다. 고르면 그 메모·칸반 노드로 간다(카드는 빛난다).
 // - 고른 노드 막대: Ctrl+누르기나 Shift+끌기로 노드를 고르면 뜬다. 크기(P26: 가로|세로 토글과 크게·보통·작게, 지금 크기 단계에 불), 배치 틀(P17 붙여 묶기, P23: 도형 단추,
 //   P26: 고른 세션 수에 맞는 틀만), 고름 풀기. P26: 위 알약 묶음과 같은 맨 위 줄 가운데에 두고, 자리가 모자라면 그 아래 줄로 접는다.
@@ -22,7 +23,15 @@ export function SearchBox() {
   const res = result.query === q.trim() ? result.items : [];
   const [pick, setPick] = useState(0);
   const inRef = useRef(null);
+  const boxRef = useRef(null);
   useEffect(() => { if (!open) return; const timer = setTimeout(() => inRef.current?.select(), 0); return () => clearTimeout(timer); }, [open]);
+  // P43: 찾기 바 바깥을 한 번 누르면 닫는다. 누르기는 막지 않아 판에 그대로 간다(노드를 눌렀으면 노드도 골라진다)
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setSearchOpen(false); };
+    window.addEventListener('pointerdown', onDown, true);
+    return () => window.removeEventListener('pointerdown', onDown, true);
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const query = q.trim();
@@ -53,7 +62,7 @@ export function SearchBox() {
     return <>{text.slice(0, i)}<mark>{text.slice(i, i + q.trim().length)}</mark>{text.slice(i + q.trim().length)}</>;
   };
   return (
-    <div className="mt-search" data-role="search">
+    <div className="mt-search" data-role="search" ref={boxRef}>
       <input ref={inRef} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} placeholder={t('search.placeholder')} data-field="search" spellCheck={false} />
       <div className="mt-search-list">
         {res.map((r, i) => (
@@ -144,8 +153,8 @@ export function SelectionBar() {
   const resize = async (size) => {
     for (const x of sizeTargets(getState().selected, [...getState().docks.values()])) await call('board.setSize', { session: x.id, size, scope: x.dockId ? 'dock' : undefined });
   };
-  // P26: 토글을 바꾸면 불이 들어온 단계를 다른 쪽의 같은 단계로 바꾼다(불이 없으면 쪽만 바꾼다)
-  const flip = (d) => { setDirPick(d); const k = flipStep(lit, d); if (k) resize(k); };
+  // P26: 토글을 바꾸면 불이 들어온 단계를 다른 쪽의 같은 단계로 바꾼다. P30: 불이 없으면 누른 쪽에서 지금 크기와 가장 가까운 단계로(덩어리 하나나 노드 하나를 골랐을 때)
+  const flip = (d) => { setDirPick(d); const k = flipStep(lit, d, rects.length === 1 ? rects[0] : null); if (k) resize(k); }; // P30: 불이 없으면 가장 가까운 단계로
   const sizeTitle = (k) => t('selection.sizeTitle', { w: SIZE_STEPS[k].w, h: SIZE_STEPS[k].h });
   const style = !place ? { visibility: 'hidden' } : place.row === 'top' ? { left: place.x, width: place.w } : undefined;
   return (
@@ -159,7 +168,7 @@ export function SelectionBar() {
       <div className="mt-sel-sizes" data-role="size-buttons" data-dir={dir} data-lit={lit || undefined}>
         {BAR_SIZES[dir].map((k, i) => <button key={k} className={`mt-btn small ghost mt-sel-size${lit === k ? ' on' : ''}`} data-size={k} aria-pressed={lit === k} title={sizeTitle(k)} onClick={() => resize(k)}>{t(`selection.${SIZE_LEVELS[i]}`)}</button>)}
       </div>
-      {/* P17: 배치 틀. 고른 순서대로 칸을 채워 한 덩어리로 짠다(고른 노드가 든 덩어리는 통째로). P23: 글 대신 도형. P26: 세션 수에 맞는 틀만 */}
+      {/* P17: 배치 틀. 고른 순서대로 칸을 채워 한 덩어리로 짠다(고른 노드가 든 덩어리는 통째로). P23: 글 대신 도형. P26: 세션 수에 맞는 틀만. P30: 누른 뒤에도 고름을 풀지 않는다(이어서 다른 틀·크기를 바로 고른다) */}
       <span className="mt-sel-sep" />
       <button className={`mt-btn small ghost mt-sel-layout${layoutOpen ? ' on' : ''}`} data-action="layout-more" aria-expanded={layoutOpen} title={dt('layoutLabel')} onClick={() => setLayoutOpen((o) => !o)}>{presets[0] && <PresetIcon id={presets[0]} n={n} />}<span className="mt-sel-caret">▾</span></button>
       <div className={`mt-sel-presets${layoutOpen ? ' open' : ''}`} data-role="presets" data-count={n}>
@@ -168,7 +177,7 @@ export function SelectionBar() {
           const label = dt(b.label, { n });
           return (
             <button key={id} className="mt-btn small ghost mt-preset" data-preset={id} disabled={ws.size !== 1} aria-label={label} title={ws.size !== 1 ? dt('layoutMixed') : `${label}: ${dt(b.title, { n })}\n${dt('layoutTitle')}`}
-              onClick={() => call('dock.layout', { members: selected, preset: id }, () => dt('layoutDone', { name: label })).then(() => { setLayoutOpen(false); clear(); })}><PresetIcon id={id} n={n} /></button>
+              onClick={() => call('dock.layout', { members: selected, preset: id }, () => dt('layoutDone', { name: label })).then(() => setLayoutOpen(false))}><PresetIcon id={id} n={n} /></button>
           );
         })}
       </div>

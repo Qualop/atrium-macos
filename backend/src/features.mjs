@@ -3,10 +3,10 @@
 // 백엔드가 이 파일에 알리는 것(b.bus): 'session'(요약을 보낼 때마다), 'closed'(세션이 판에서 빠짐), 'screenAnswer'(hook이 없는 세션의 턴 끝 화면 답)
 import fs from 'node:fs';
 import { deriveState } from './state.mjs';
-import { readMessages } from './transcript.mjs';
+import { readMessages, readCodexMessages } from './transcript.mjs';
 import { transcriptPathFor } from './launch.mjs';
 import { clip } from './text.mjs';
-import { Outputs, isLongAnswer } from './outputs.mjs';
+import { Outputs, isLongAnswer, turnsFromMessages } from './outputs.mjs';
 import { ThreadLog } from './thread.mjs';
 import { Memos } from './memos.mjs';
 import { Kanbans } from './kanban.mjs';
@@ -14,6 +14,7 @@ import { LoopEngine, normalizeTrigger, normalizeStop, describeLoop, describeLoop
 import { confirmResult, keyed } from './msg.mjs'; // P16: 화면 글 열쇠
 import { missionGraph } from './mission.mjs';
 import { Settings } from './settings.mjs';
+import { Launchers } from './launchers.mjs'; // P33: 호출자
 import { placeItem } from './canvas-ops.mjs';
 
 const SHELL = 'shell';
@@ -24,7 +25,7 @@ export function attachFeatures(b, { timers = true } = {}) {
   const broadcast = (ev, data) => b.api && b.api.broadcast(ev, data);
   const wsName = (key) => { if (!key) return null; const w = b.workspaceList().find((x) => x.key === key); return w ? w.name : null; };
   const transcriptOf = (s) => {
-    if (b.hooked(s)) return s.rt.transcriptPath || transcriptPathFor(b.cfg.claudeProjects, s.cwd, s.sessionId);
+    if (b.hooked(s)) return s.rt.transcriptPath || transcriptPathFor(b.cfg.claudeProjects, s.cwd, s.rt.claudeSessionId || s.sessionId);
     // 판이 띄우지 않은 Claude Code(셸에서 띄움, 판에 올림)는 herdr가 아는 대화 ID로 대화 기록을 찾아 본다
     const id = s.rt.herdr && s.rt.herdr.agentSessionId;
     const f = s.kind === 'claude' && id ? transcriptPathFor(b.cfg.claudeProjects, s.rt.cwd || s.cwd, id) : null;
@@ -40,7 +41,20 @@ export function attachFeatures(b, { timers = true } = {}) {
 
   const f = {};
   f.settings = new Settings({ store, broadcast });
+  f.launchers = new Launchers({ store, broadcast, gateway: { healthUrl: b.cfg.ocxHealthUrl, baseUrl: b.cfg.ocxBaseUrl } }); // 처음 켤 때 옛 새 세션 기본값을 옮긴다
+  if (f.launchers.migrated) b.log(`launchers created (${f.launchers.migrated.oldBoard ? 'from old settings' : 'new board'}): favorites ${f.launchers.migrated.favorites.join(',')}`);
   f.outputs = new Outputs({ cfg: b.cfg, store, resolve: (r) => b.resolve(r), hooked: (s) => b.hooked(s), transcriptOf, readMessages, workspaceName: wsName, apiError });
+  // Native history is fetched only for explicit output.get/output.save calls.
+  const outputAction = async (action, p) => {
+    const s = b.resolve(p.session);
+    if (s.kind !== 'codex' || !s.rt.codexSessionId || !b.desktopImport?.codex) return f.outputs[action](p);
+    const rt = s.rt, threadId = rt.codexSessionId;
+    const r = await readCodexMessages(b.desktopImport.codex, threadId, { limit: 2000 });
+    if (b.sessions.get(s.sessionId) !== s || s.rt !== rt || rt.codexSessionId !== threadId) throw apiError('closed', 'Session changed while reading output');
+    const scoped = new Outputs(f.outputs.ctx);
+    scoped.turnsOf = () => ({ source: 'transcript', file: null, turns: turnsFromMessages(r.messages) });
+    return scoped[action](p);
+  };
   f.thread = new ThreadLog({
     store, broadcast,
     runtimeOf: (sessionId) => { const s = b.sessions.get(sessionId); if (!s) return null; const d = deriveState(s.rt); return { state: d.state, turn: s.rt.turn, lastAnswer: s.rt.lastAnswer, error: d.error || s.rt.lastError, answerSource: s.rt.answerSource || null }; },
@@ -101,8 +115,8 @@ export function attachFeatures(b, { timers = true } = {}) {
 
   f.handlers = {
     // I1 출력 보기
-    'output.get': (p) => f.outputs.get(p),
-    'output.save': (p) => f.outputs.save(p),
+    'output.get': (p) => outputAction('get', p),
+    'output.save': (p) => outputAction('save', p),
     // I2 Thread
     'thread.list': (p) => f.thread.list(p),
     // I3 메모 노드
@@ -126,6 +140,14 @@ export function attachFeatures(b, { timers = true } = {}) {
     // I7 설정(트레이 상주)
     'settings.get': () => ({ settings: f.settings.get(), schema: f.settings.describe() }),
     'settings.set': (p) => ({ settings: f.settings.set(p) }),
+    // P33 호출자
+    'launcher.list': () => f.launchers.list(),
+    'launcher.create': (p) => f.launchers.create(p),
+    'launcher.update': (p) => f.launchers.update(p),
+    'launcher.delete': (p) => f.launchers.delete(p),
+    'launcher.favorite': (p) => f.launchers.favorite(p),
+    'launcher.order': (p) => f.launchers.order(p),
+    'launcher.preview': (p) => f.launchers.preview(p),
   };
   // 세션 요약에 덧붙이는 값: 긴 답인지(출력 보기), 켜진 루프 수(노드 배지)
   f.summaryExtra = (s) => ({ output: { long: isLongAnswer(s.rt.lastAnswer), chars: typeof s.rt.lastAnswer === 'string' ? s.rt.lastAnswer.length : 0 }, loops: f.loops.activeCount(s.sessionId) });

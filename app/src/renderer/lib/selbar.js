@@ -36,10 +36,20 @@ export function autoDir(rects, lit = litStep(rects)) {
   return r && r.h > r.w ? 'tall' : 'wide';
 }
 
-// 토글을 바꿀 때 쓸 크기: 불이 들어온 단계가 있으면 다른 쪽의 같은 단계(보통 → 보통), 없으면 null(쪽만 바꾼다)
-export function flipStep(lit, dir) {
+// 사각형 크기와 가장 가까운 dir 쪽 단계(넓이 비의 로그 거리가 가장 작은 것: 모양은 쪽이 정하고 크기 수준만 맞춘다)
+export function nearestStep(r, dir) {
+  if (!r || !(r.w > 0) || !(r.h > 0) || !BAR_SIZES[dir]) return null;
+  const far = (k) => Math.abs(Math.log((SIZE_STEPS[k].w * SIZE_STEPS[k].h) / (r.w * r.h)));
+  return BAR_SIZES[dir].reduce((best, k) => (far(k) < far(best) ? k : best));
+}
+
+// 토글을 누를 때 쓸 크기: 불이 들어온 단계가 있으면 다른 쪽의 같은 단계(보통 → 보통, 같은 쪽이면 null로 그대로).
+// P30: 불이 없으면(붙여 막 만든 덩어리처럼 여섯 단계 어디에도 맞지 않으면) 누른 쪽에서 지금 크기(rect)와 가장 가까운 단계.
+//      전에는 쪽만 바꿔서 토글이 아무 일도 하지 않는 것처럼 보였다. rect가 없으면 null(쪽만 바꾼다)
+export function flipStep(lit, dir, rect = null) {
   const p = lit && stepPlace(lit);
-  return p && p.dir !== dir ? BAR_SIZES[dir][p.i] : null;
+  if (p) return p.dir !== dir ? BAR_SIZES[dir][p.i] : null;
+  return nearestStep(rect, dir);
 }
 
 // 고른 노드 → 크기를 쓸 대상들(덩어리 안 노드는 그 덩어리 하나로). docks: [{ dockId, members }]

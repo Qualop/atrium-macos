@@ -70,7 +70,7 @@ test('resume registration reports the current Claude conversation ID',async(t)=>
 });
 for(const kind of ['codex','gemini','agy'])test(`${kind} explicit default model is not stored as the literal null string`,async(t)=>{
  const{b}=fixture(t,kind);const cwd=b.cfg.logDir;let model;
- b.adapter.agentKinds=async()=>[];b.ensureWorkspace=()=>{};b.geminiSettings=b.agySettings=()=>({settingsPath:'fixture',env:{}});
+ b.adapter.agentKinds=async()=>[];b.ensureWorkspace=()=>{};b.geminiSettings=b.agySettings=()=>({settingsPath:'fixture',env:{}});b.codexSettings=(_id,opts)=>({args:opts.args,env:{},hookToken:'fixture',settingsPath:'',runtime:{}});
  b.withNewPane=async(_create,register)=>register({paneId:'p',workspaceId:'w'});
  b.store={insertSession(s){model=s.model;throw Error('fixture captured before launch');}};
  await assert.rejects(b.spawnReserved({model:null,args:'--model old'},{name:'test',cwd,kind,shell:false}),/fixture captured/);

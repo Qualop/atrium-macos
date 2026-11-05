@@ -14,6 +14,7 @@ import { deriveState } from './state.mjs';
 import { readProcessTable, descendants, mb } from './resources.mjs';
 import { workspaceNames } from './workspaces.mjs';
 import { m, keyed } from './msg.mjs';
+import { wakeCodexSession } from './codex-session.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function apiError(code, message) { return Object.assign(new Error(message), { code }); }
@@ -52,6 +53,7 @@ export function sleepTarget(x) {
   if (!x.convKnown) return 'no_convo';
   if (x.waking) return 'waking';
   if (x.closing) return 'closing';
+  if (x.gated) return 'not_ready';
   if (x.state !== 'ready' && x.state !== 'error') return 'not_ready'; // 오류로 끝난 턴도 쉬는 중이다(안 본 답은 검토 대기로 남는다)
   return null;
 }
@@ -62,7 +64,7 @@ export function sleepTarget(x) {
 export function sessionActivity(x, { mode = 'auto' } = {}) {
   if (x.waking) return 'waking';
   if (x.state === 'working' || x.state === 'starting') return 'working';
-  if (x.state === 'waiting' || x.state === 'trust_wait') return 'needs_you';
+  if (x.gated || x.state === 'waiting' || x.state === 'trust_wait') return 'needs_you';
   if (x.draft && x.kind === 'claude') return 'draft'; // 손으로 잠재울 때도: /exit가 초안 뒤에 붙어 제출된다
   if (x.delivering) return 'delivering';
   if (x.loops) return 'loop';
@@ -163,10 +165,10 @@ export class Sleeper {
     const b = this.b;
     const kids = [...b.sessions.values()].filter((x) => x.parentSessionId === s.sessionId);
     const parent = s.parentSessionId ? b.sessions.get(s.parentSessionId) : null;
-    const busy = (x) => BUSY.has(deriveState(x.rt).state) || this.wakes.has(x.sessionId) || (b.queue && b.queue.pending(x.sessionId) > 0);
+    const busy = (x) => b.branch?.holds?.(x.sessionId) || BUSY.has(deriveState(x.rt).state) || this.wakes.has(x.sessionId) || (b.queue && b.queue.pending(x.sessionId) > 0);
     return {
       name: s.name, kind: s.kind || 'claude', hooked: b.hooked(s), convKnown: s.kind === 'claude' && b.hooked(s) && convoOf(s, b.cfg.claudeProjects).exists,
-      state: deriveState(s.rt).state, sleeping: !!s.rt.sleep, waking: this.wakes.has(s.sessionId), closing: b.killing.has(s.sessionId) || this.going.has(s.sessionId),
+      state: deriveState(s.rt).state, gated: !!b.branch?.holds?.(s.sessionId), sleeping: !!s.rt.sleep, waking: this.wakes.has(s.sessionId), closing: b.killing.has(s.sessionId) || this.going.has(s.sessionId),
       draft: !!s.draft, delivering: b.queue ? b.queue.pending(s.sessionId) : 0, loops: b.features ? b.features.loops.activeCount(s.sessionId) : 0,
       childBusy: kids.some(busy), parentBusy: !!(parent && busy(parent)), viewed: this.viewed(s.sessionId), idleSince: idleSince(s),
     };
@@ -282,6 +284,11 @@ export class Sleeper {
   // 노드를 누를 때(session.wake): 그 세션의 리포를 깨우고 그 세션이 준비될 때까지 기다린다
   async wakeOne(p) {
     const s = this.b.resolve(p.session);
+    if (s.kind === 'codex') {
+      const job = this.wakeFor(s, p.why || 'hand');
+      if (p.wait === false) { job.catch(() => {}); return { waking: this.wakes.has(s.sessionId), name: s.name }; }
+      return job;
+    }
     const key = wsOf(s);
     const others = this.members(key).filter((x) => this.isAsleep(x));
     if (!others.length) return { awake: true, name: s.name, state: deriveState(s.rt).state };
@@ -293,14 +300,18 @@ export class Sleeper {
   }
 
   // 리포 key에서 잠든 세션을 모두 깨운다. first(부른 세션)를 먼저, 나머지는 staggerMs 간격으로. → [{ name, job }]
+  // P34: 데스크톱 앱에서 가져와 아직 한 번도 깨지 않은 세션(sleep.by import)은 리포를 깨울 때 함께 깨우지 않는다(수십 개가 한꺼번에 뜨지 않게). 그 노드를 누르거나 글을 보낼 때만 깬다
   wakeRepo(key, first, why) {
-    const asleep = this.members(key).filter((s) => this.isAsleep(s));
+    const asleep = this.members(key).filter((s) => this.isAsleep(s) && (s === first || !(s.rt.sleep && s.rt.sleep.by === 'import')));
     const order = first && asleep.includes(first) ? [first, ...asleep.filter((x) => x !== first)] : asleep;
     this.busyAt.set(key, Date.now());
     return order.map((s, i) => ({ name: s.name, sessionId: s.sessionId, job: this.wake(s, i === 0 ? why : `repo:${why}`, i * this.staggerMs) }));
   }
   // 세션 s의 리포를 깨우고 s의 깨우기(Promise)를 돌려준다. s가 깨어 있으면 리포의 나머지만 깨운다
   wakeFor(s, why) {
+    // Imported Codex copies wake individually through their saved native UUID.
+    // This does not expand sleep eligibility beyond managed Claude sessions.
+    if (s.kind === 'codex') return this.wake(s, why);
     const jobs = this.wakeRepo(wsOf(s), s, why);
     let mine = null;
     for (const j of jobs) { if (j.sessionId === s.sessionId) mine = j.job; else j.job.catch(() => {}); }
@@ -385,6 +396,7 @@ export class Sleeper {
     const b = this.b;
     if (this.going.has(s.sessionId)) await this.going.get(s.sessionId).catch(() => {});
     if (!s.rt.sleep || !b.sessions.has(s.sessionId)) { if (s.waking) { s.waking = null; if (b.sessions.has(s.sessionId)) b.broadcastSession(s, { cause: `wake:${why}` }); } return { awake: true, name: s.name, state: deriveState(s.rt).state }; }
+    if (s.kind === 'codex') return wakeCodexSession(b, s, { why });
     const t0 = Date.now();
     const z = { ...s.rt.sleep, error: undefined };
     s.waking = { at: t0, why };
@@ -404,7 +416,8 @@ export class Sleeper {
       });
       await b.adapter.refreshSubscription();
       b.broadcastSession(s, { cause: `wake:${why}` });
-      await b.adapter.waitShellReady(s.paneId, 8000);
+      if (await b.adapter.waitShellReady(s.paneId, 8000) !== true) throw apiError('timeout', '패널 셸이 준비되지 않았다');
+      if (b.sessions.get(s.sessionId) !== s || s.paneId !== created.paneId || b.killing.has(s.sessionId)) throw apiError('not_on_board', '깨우던 패널이 닫혔다');
       const st = await b.adapter.startAgent({ name: s.agentName, paneId: s.paneId, args });
       if (st.agent && st.agent.launchPending !== undefined) s.rt.herdr.launchPending = st.agent.launchPending;
       b.registerResume(s);

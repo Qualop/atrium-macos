@@ -30,12 +30,14 @@ export function writeSessionSettings({ file, hookUrl, token, sessionId, timeoutS
 // 처음 띄울 때와 이어 갈 때가 같은 설정을 쓰도록 공통 인자를 한곳에서 만든다
 // P4: herdr 스킬을 쥐여 준다. Claude Code는 ~/.agents/skills를 읽지 않으므로 실행마다 --plugin-dir로 넘긴다(사용자 설정은 고치지 않는다).
 //     짧은 안내(--append-system-prompt-file)는 판의 연결 알림을 알아듣게 한다.
-function commonArgs({ settingsPath, permissionMode, model, effort, pluginDir, systemPromptFile }) {
+// P33: extraArgs는 호출자의 추가 인자(판이 정하는 인자는 호출자 검사가 막는다). 끝에 붙인다
+function commonArgs({ settingsPath, permissionMode, model, effort, pluginDir, systemPromptFile, extraArgs = [] }) {
   const a = ['--no-chrome', '--permission-mode', permissionMode, '--settings', settingsPath];
   if (model) a.push('--model', model);
   if (effort) a.push('--effort', effort);
   if (pluginDir) a.push('--plugin-dir', pluginDir);
   if (systemPromptFile) a.push('--append-system-prompt-file', systemPromptFile);
+  if (extraArgs && extraArgs.length) a.push(...extraArgs);
   return a;
 }
 
@@ -47,7 +49,7 @@ export const BOARD_SYSTEM_PROMPT = [
   '다른 에이전트에게 일을 시키거나, 답을 받아 오거나, 새 에이전트를 띄우라는 말을 들으면 herdr 스킬(atrium-herdr:herdr)로 한다.',
   'herdr 명령에 --session, --machine, --remote를 붙이지 않는다. 패널의 herdr 명령은 이미 이 판의 herdr 세션에 붙는다.',
   '"[Atrium 판]"으로 시작하는 글은 판이 알려 주는 연결(어느 에이전트가 너의 무슨 역할인지)이다. 이 판의 예전 이름으로 시작하는 지난 알림도 같다.',
-  '워커·하위 세션을 만들어 일을 나누라는 말을 들으면 delegate 스킬(atrium-herdr:delegate)대로 `atrium child`로 만들고 herdr로 시킨다. 예전 이름 mtask도 같은 명령이다.', // P8(K2)
+  '일이 서로 기다리지 않는 조각 여럿으로 나뉘거나 사용자가 워커·하위 세션·병렬·워크트리를 말하면 atrium 스킬(atrium-herdr:atrium, 옛 이름 delegate)대로 `atrium child`로 워커를 만들어 맡긴다. 설정의 워커 수·깊이·전체 상한을 지킨다. 워커의 모델을 말로 들으면 `atrium models`에서 골라 띄운다. 예전 이름 mtask도 같은 명령이다.', // P8(K2), P36, P41
   '판은 오래 쉬는 리포의 세션을 모두 잠재운다(sleeping, herdr에 없다). herdr 명령이 판의 세션 이름을 찾지 못하면 `atrium wake <이름>`으로 그 리포를 깨운 뒤 다시 한다.', // P21·P24(D4)
 ].join('\n');
 // P8(K2): skills는 herdr 옆에 더할 스킬 { 이름: SKILL.md 글 }, bin은 Bash 도구 PATH에 오르는 명령 { 파일 이름: 글 }(플러그인 bin/)
@@ -104,13 +106,18 @@ export function recoveryPlan({ paneExists, agentPresent, argv = null, settingsPa
 // 3절 trust_wait 예상: ~/.claude.json의 projects에서 폴더와 모든 상위 폴더의 hasTrustDialogAccepted(E10). 읽기만 한다.
 // P1에서 더한 규칙: 폴더가 git 저장소 안이면 그 저장소 루트까지만 올라간다. 루트보다 위의 신뢰는 물려받지 않았다
 // (저장소 폴더 C:/Workspace/multitask를 신뢰했는데 그 아래 따로 git init한 폴더에서 대화상자가 떴다. docs/log/p1-backend.md).
+// P36(Claude Code 2.1.318 실험): 커밋이 하나도 없는 저장소는 git이 아닌 폴더처럼 상위 폴더의 신뢰를 물려받아 대화상자가 뜨지 않았다. 첫 커밋 뒤에는 떴다.
+//   그래서 루트에서 멈추는 것은 커밋이 있는 저장소만이다. claude -w는 둘 다 "Workspace trust not yet accepted"로 거부했다(대화상자를 띄우지 않고 바로 끝난다)
 export function predictTrust(cwd, claudeJsonPath) {
   let projects = {};
   try { projects = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8')).projects || {}; } catch { return { needsTrust: null, reason: 'claude.json unreadable' }; }
-  let gitRoot = null;
-  try { gitRoot = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }).trim() || null; } catch {}
-  return predictTrustFrom(cwd, projects, gitRoot);
+  const gitRoot = gitTop(cwd);
+  return predictTrustFrom(cwd, projects, gitRoot && repoHasCommit(cwd) ? gitRoot : null);
 }
+const gitOut = (cwd, args) => { try { return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }).trim(); } catch { return null; } };
+export function gitTop(cwd) { return gitOut(cwd, ['rev-parse', '--show-toplevel']) || null; }
+// P36: 저장소에 커밋이 하나라도 있는가(HEAD가 가리키는 커밋). 없으면 claude -w가 워크트리를 만들 곳이 없다
+export function repoHasCommit(cwd) { return !!gitOut(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD']); }
 export function predictTrustFrom(cwd, projects, gitRoot = null) {
   const win = windowsPath(cwd);
   const keyOf = (p) => { const c = canonicalPath(p).replace(/\/$/, ''); return win ? c.toLowerCase() : c; };

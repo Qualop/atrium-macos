@@ -3,14 +3,35 @@
 import fs from 'node:fs';
 import { unwrapPasted, clip } from './text.mjs';
 
+// Parent's session.transcript handler can await this for a Codex native ID.
+// This adapter reads supported app-server history, never local DB/JSONL files.
+export async function readCodexMessages(history, threadId, { afterSeq = -1, limit = 500 } = {}) {
+  const turns = await history.turns(threadId), messages = [];
+  let seq = -1;
+  for (const turn of turns) for (const item of turn.items || []) {
+    seq++;
+    if (seq <= afterSeq) continue;
+    const at = item.completedAtMs ?? item.startedAtMs ?? (Number.isFinite(turn.startedAt) ? turn.startedAt * 1000 : null);
+    if (item.type === 'userMessage') {
+      const text = (item.content || []).filter((c) => c?.type === 'text').map((c) => c.text).join('\n');
+      if (text) messages.push({ seq, at, role: 'user', text });
+    } else if (item.type === 'agentMessage' && typeof item.text === 'string') messages.push({ seq, at, role: 'assistant', text: item.text });
+    // Reasoning, tool arguments and environment/config items are not surfaced.
+  }
+  const bounded = Math.min(2000, Math.max(1, Number.isInteger(limit) ? limit : 500));
+  return { exists: true, messages: messages.slice(-bounded), lastSeq: seq };
+}
+
 function readLines(file) {
   try { return fs.readFileSync(file, 'utf8').split('\n'); } catch { return null; }
 }
 
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
 function textOf(content) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
-  return content.filter((c) => c && c.type === 'text').map((c) => c.text).join('\n');
+  return content.filter((c) => isObj(c) && c.type === 'text').map((c) => c.text).join('\n');
 }
 
 export function readMessages(file, { afterSeq = -1, limit = 500 } = {}) {
@@ -18,29 +39,31 @@ export function readMessages(file, { afterSeq = -1, limit = 500 } = {}) {
   if (!lines) return { exists: false, messages: [], lastSeq: -1 };
   const out = [];
   let lastSeq = -1;
+  const tail = lines.length - 1; // 줄바꿈으로 끝나지 않은 마지막 조각(파일이 줄바꿈으로 끝나면 빈 문자열)
   lines.forEach((line, seq) => {
     if (!line.trim()) return;
-    if (seq <= afterSeq) { lastSeq = seq; return; }
-    let o;
-    try { o = JSON.parse(line); }
-    catch { if (seq < lines.length - 1) lastSeq = seq; return; }
+    if (seq <= afterSeq) { lastSeq = seq; return; } // 이미 본 줄은 다시 파싱하지 않는다
+    let o; try { o = JSON.parse(line); } catch {
+      // 아직 쓰는 중인 마지막 조각은 lastSeq에 넣지 않는다. 다 쓰인 뒤 다음 읽기에서 읽는다(이슈 #1-4)
+      if (seq !== tail) lastSeq = seq;
+      return;
+    }
     lastSeq = seq;
-    if (!o || typeof o !== 'object') return;
-    if (o.isSidechain || o.isMeta) return;
+    if (!isObj(o) || o.isSidechain || o.isMeta) return; // null이나 객체가 아닌 줄은 건너뛴다(이슈 #1-5)
     const at = o.timestamp ? Date.parse(o.timestamp) : null;
-    if (o.type === 'user' && o.message) {
+    if (o.type === 'user' && isObj(o.message)) {
       const c = o.message.content;
       if (typeof c === 'string') out.push({ seq, at, role: 'user', text: unwrapPasted(c) });
       else if (Array.isArray(c)) {
         for (const part of c) {
-          if (!part || typeof part !== 'object') continue;
+          if (!isObj(part)) continue;
           if (part.type === 'tool_result') out.push({ seq, at, role: 'tool_result', toolUseId: part.tool_use_id, isError: !!part.is_error, text: clip(typeof part.content === 'string' ? part.content : textOf(part.content), 2000) });
           else if (part.type === 'text') out.push({ seq, at, role: 'user', text: unwrapPasted(part.text) });
         }
       }
-    } else if (o.type === 'assistant' && o.message && Array.isArray(o.message.content)) {
+    } else if (o.type === 'assistant' && isObj(o.message) && Array.isArray(o.message.content)) {
       for (const part of o.message.content) {
-        if (!part || typeof part !== 'object') continue;
+        if (!isObj(part)) continue;
         if (part.type === 'text' && part.text) out.push({ seq, at, role: 'assistant', text: part.text });
         else if (part.type === 'tool_use') out.push({ seq, at, role: 'tool_use', tool: part.name, toolUseId: part.id, input: part.input });
       }
@@ -53,6 +76,7 @@ export function readMessages(file, { afterSeq = -1, limit = 500 } = {}) {
 export const isSyntheticUserText = (t) => /^\s*(\[Request interrupted|\[Tool call interrupted|<(local-command|command-name|command-message|command-args|system-reminder)\b)/.test(String(t || ''));
 
 // C2(백엔드 재시작)에서 놓친 hook을 메운다: 마지막 지시, 마지막 답, 마지막 턴이 끝났는지. E2 브리핑도 쓴다
+// 복구·확인용이라 개수 제한 없이 본다(이슈 #1-6). 화면용 제한(session.messages 등)은 그대로다
 export function lastExchange(file) {
   const { exists, messages } = readMessages(file, { limit: Infinity });
   if (!exists) return { exists: false };

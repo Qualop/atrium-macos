@@ -20,9 +20,22 @@ import { LinkPanel } from '../../src/renderer/Links.jsx';
 
 window.mt = { log() {} };
 const calls = [], held = new Set();
-const settings = { language: 'en', tray: true, claudeModel: 'old', claudePermissionMode: 'manual', sleepAfterMin: 30, archiveDays: 14 };
+const settings = { language: 'en', tray: true, herdrPath: '', claudePermissionMode: 'manual', sleepAfterMin: 30, archiveDays: 14, branchMaxChildren: 4, branchMaxDepth: 3, branchMaxTotal: 16 };
+const launchers = {
+  launchers: ['claude', 'codex', 'gemini', 'shell'].map((id) => ({
+    id, name: id === 'gemini' ? 'Gemini' : id, harness: id === 'gemini' ? 'agy' : id,
+    icon: '', model: '', args: '', env: {}, favorite: true, permissionMode: 'manual',
+    preview: { line: id === 'gemini' ? 'agy' : id, env: [], shell: id === 'shell' },
+  })),
+  favorites: ['claude', 'codex', 'gemini', 'shell'],
+  harnesses: [
+    { id: 'claude', fields: ['model', 'effort', 'permissionMode', 'allowHerdr', 'args', 'env', 'checkUrl'], models: [] },
+    ...['codex', 'gemini', 'agy'].map((id) => ({ id, fields: ['model', 'args', 'env'], models: [] })),
+    { id: 'shell', fields: [], models: [] }, { id: 'command', fields: ['command', 'env'], models: [] },
+  ],
+};
 const st = store.getState();
-Object.assign(st, { conn: 'open', settings, currentWs: 'fixture', workspaces: [{ key: 'fixture', name: 'Fixture', root: '/tmp/atrium-fixture', x: 0, y: 0 }], boardLoaded: true, viewport: { x: 0, y: 0, zoom: 0.5 } });
+Object.assign(st, { conn: 'open', settings, launchers, currentWs: 'fixture', workspaces: [{ key: 'fixture', name: 'Fixture', root: '/tmp/atrium-fixture', x: 0, y: 0 }], boardLoaded: true, viewport: { x: 0, y: 0, zoom: 0.5 } });
 for (const [i, id] of ['a', 'b'].entries()) {
   st.sessions.set(id, { sessionId: id, name: id, kind: 'shell', state: 'idle', workspaceKey: 'fixture', createdAt: 1 });
   st.nodes.set(id, { x: i * 500, y: 0, w: 500, h: 400 });
@@ -36,7 +49,13 @@ api.call = (method, params = {}) => {
     : method === 'agent.models' ? { models: [], source: 'fixture' }
     : method === 'trust.predict' ? { needsTrust: true }
     : method === 'settings.get' ? { settings, schema: {} }
-    : method === 'terminal.attach' ? { controllerPid: 10 }
+    : method === 'launcher.list' ? launchers
+    : method === 'launcher.preview' ? { preview: { line: `${params.launcher.harness} ${params.launcher.model || ''}`, env: [] } }
+    : method === 'terminal.attach' ? { controllerPid: 10, attachmentId: params.attachmentId }
+    : method === 'terminal.history' ? { text: '' }
+    : method === 'web.status' ? { enabled: false, built: true, devices: [], requests: [] }
+    : method === 'device.list' ? { enabled: false, devices: [], requests: [] }
+    : method === 'remote.status' ? { enabled: false, ready: false, checks: [] }
     : method === 'search.query' ? { results: [] } : {});
   return promise;
 };
@@ -54,6 +73,10 @@ function render(which, props = {}) {
     : null));
 }
 window.audit = { api, store, render, terms, quickSpawn, held, calls, get closeCount() { return closeCount; },
-  resolve(method, result, index = 0) { calls.filter((c) => c.method === method)[index].resolve(result); },
+  attachment(index = -1) { return calls.filter((c) => c.method === 'terminal.attach').at(index).params.attachmentId; },
+  resolve(method, result, index = 0) {
+    const call = calls.filter((c) => c.method === method)[index];
+    call.resolve(method === 'terminal.attach' ? { attachmentId: call.params.attachmentId, ...result } : result);
+  },
   reject(method, index = 0) { calls.filter((c) => c.method === method)[index].reject(new Error('fixture failure')); },
 };

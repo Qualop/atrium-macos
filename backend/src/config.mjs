@@ -11,8 +11,13 @@ import { appDataDir, defaultHerdrPath, canonicalPath } from './platform.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const BACKEND_ROOT = path.resolve(HERE, '..');
 
-export const HERDR_VERSION = '0.9.5';
-export const HERDR_PROTOCOL = 22;
+// P40: herdr 버전 정책. 프로토콜이 이 목록에 있으면 붙는다. 시험한 버전이 아니면 붙되 경고한다(herdr/discover.mjs herdrCompat).
+// 시험 판은 ATRIUM_HERDR_PROTOCOLS·ATRIUM_HERDR_TESTED(쉼표로 여럿)로 바꿔 본다
+export const HERDR_VERSION = '0.9.5'; // bundled/tested distribution
+export const HERDR_PROTOCOL = 22; // legacy callers
+export const HERDR_PROTOCOLS = [HERDR_PROTOCOL];
+export const HERDR_TESTED = ['0.9.5'];
+const listOf = (v, num) => String(v).split(',').map((x) => x.trim()).filter(Boolean).map((x) => (num ? Number(x) : x)).filter((x) => (num ? Number.isInteger(x) : true));
 
 export const APP_NAME = 'Atrium'; // 보이는 이름(창 제목, 트레이, 알림, 바로가기)
 export const APP_ID = 'atrium'; // 식별자(herdr 세션, 데이터 폴더, 창 프로필, Windows 앱 ID)
@@ -53,7 +58,18 @@ export function loadConfig({ argv = process.argv.slice(2), env = process.env } =
     port: Number(E('PORT') || base.port),
     dataDir: path.resolve(E('DATA_DIR') || base.dataDir),
     herdrPath: E('HERDR') || (process.platform === 'darwin' && fs.existsSync(bundledHerdr) ? bundledHerdr : defaultHerdrPath(HERDR_VERSION, { env })),
+    herdrEnvPath: E('HERDR') || '',
+    bundledHerdrPath: process.platform === 'darwin' && fs.existsSync(bundledHerdr) ? bundledHerdr : null,
+    herdrProtocols: E('HERDR_PROTOCOLS') ? listOf(E('HERDR_PROTOCOLS'), true) : HERDR_PROTOCOLS,
+    herdrTested: E('HERDR_TESTED') ? listOf(E('HERDR_TESTED'), false) : HERDR_TESTED,
+    herdrUpdateMs: Number(E('HERDR_UPDATE_MS') || 30 * 60 * 1000),
+    remoteEnabled: E('REMOTE_ENABLED') === '1',
+    remoteExplicit: E('REMOTE_ENABLED') !== undefined,
     claudeCommand: 'claude',
+    codexHome: path.resolve(E('CODEX_HOME') || env.CODEX_HOME || path.join(os.homedir(), '.codex')),
+    codexHomeExplicit: !!E('CODEX_HOME'),
+    codexHistory: E('CODEX_HISTORY') !== '0',
+    codexCommand: E('CODEX_COMMAND') || null,
     ocxHealthUrl: E('OCX_HEALTH') || DEEPSEEK_HEALTH_URL, // P25: DeepSeek 세션 전에 opencodex 프록시가 도는지 보는 주소(`ocx status`의 Health)
     ocxBaseUrl: E('OCX_BASE_URL') || null, // P25: DeepSeek 세션의 ANTHROPIC_BASE_URL. 비우면 health 주소의 origin(deepseek.mjs baseUrlOf)
     claudeJson: E('CLAUDE_JSON') || path.join(os.homedir(), '.claude.json'),
@@ -63,6 +79,7 @@ export function loadConfig({ argv = process.argv.slice(2), env = process.env } =
     convoRoots: (E('CLAUDE_PROJECTS') || path.join(os.homedir(), '.claude', 'projects')).split(';').filter(Boolean).map((p) => path.resolve(p)),
     claudeSessionsDir: path.resolve(E('CLAUDE_SESSIONS') || path.join(os.homedir(), '.claude', 'sessions')),
     desktopSessionsDir: E('CLAUDE_DESKTOP') === 'none' ? null : path.resolve(E('CLAUDE_DESKTOP') || path.join(localAppData(), process.platform === 'darwin' ? 'Claude' : 'Claude-Data')),
+    desktopExplicit: !!E('CLAUDE_DESKTOP') && E('CLAUDE_DESKTOP') !== 'none',
     convoScanMs: Number(E('CONVO_SCAN_MS') || 15000),
     // P13(BRIEF "판 밖 대화"): missed로 보는 이 앱의 시험 폴더. 판 코드 저장소(이 코드가 있는 저장소와 그 본 저장소)의 backend/.dev·experiments, OS 임시 폴더, 이름 접두어.
     // 시험 판은 고정 자료 폴더 이름(mtask-p13-*)이 접두어에 걸리지 않게 ATRIUM_TEST_PREFIX로 바꾼다(빈 글이면 접두어 규칙을 끈다).

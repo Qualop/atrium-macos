@@ -4,6 +4,11 @@
 //   묻는 내용은 화면(pane.read)에서 읽고, 승인 카드는 "터미널에서 답하기"로 보낸다.
 import { unwrapPasted, clip } from './text.mjs';
 
+// P41: Claude Code가 고른 모델을 쓰지 못할 때의 글("There's an issue with the selected model (x). It may not exist or you may not have access to it.")과 오류 종류
+// 답 글로 볼 때는 그 글로 시작하는 것만(답 안에서 그 글을 인용한 것은 오류가 아니다)
+export const MODEL_ERROR_ANSWER_RE = /^\s*There's an issue with the selected model\b/;
+export const isModelError = (e) => !!e && (/model_not_found|invalid_model/i.test(String(e.type || '')) || /issue with the selected model|model_not_found|model not found/i.test(String(e.message || '')));
+
 export const STATES = ['starting', 'trust_wait', 'ready', 'working', 'waiting', 'error', 'exited', 'shell_idle', 'shell_running', 'sleeping']; // 셸 상태 둘은 P5(G2), 잠듦은 P21(D4)
 const ASK_TOOLS = { AskUserQuestion: 'question', ExitPlanMode: 'plan' };
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']); // 같은 부류로 다룬다(E2 3절)
@@ -87,13 +92,15 @@ export function applyHook(rt, body, now = Date.now()) {
       if (rt.pendingAsk && (!rt.pendingAsk.toolUseId || rt.pendingAsk.toolUseId === body.tool_use_id)) resolveAsk(rt, ev, now);
       break;
     case 'Stop':
+      // P41: 모델 오류는 Stop으로 와도(답 글이 Claude Code의 오류 글) 오류로 본다
+      if (MODEL_ERROR_ANSWER_RE.test(String(body.last_assistant_message || ''))) rt.lastError = { type: 'model_not_found', message: clip(body.last_assistant_message, 400), at: now };
       rt.lastAnswer = body.last_assistant_message ?? rt.lastAnswer;
       rt.lastAnswerAt = now;
       rt.turn.endedAt = now;
       if (rt.pendingAsk) resolveAsk(rt, 'Stop', now);
       break;
     case 'StopFailure':
-      rt.lastError = { type: body.error || body.error_type || 'unknown', message: body.message || body.error_message || null, at: now };
+      rt.lastError = { type: body.error || body.error_type || 'unknown', message: body.message || body.error_message || body.error_details || null, at: now };
       rt.turn.endedAt = now;
       break;
     case 'SessionEnd':

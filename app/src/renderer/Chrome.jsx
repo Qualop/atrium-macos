@@ -8,13 +8,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, getState, openDialog, toast, wsName, setMissionOpen, setSearchOpen, selectWorkspace } from './store.js';
 import { quickSpawn } from './SpawnDialog.jsx';
+import { favoriteLaunchers, launcherIcon, launcherMark, launcherTooltip } from './lib/launchers.js'; // P33: 레일 = 즐겨찾기 호출자
 import { api } from './api.js';
 import { createItem } from './Memo.jsx';
-import { arrangeWorkspace } from './Regions.jsx';
+import { arrangeBoard, BOARD_ARRANGED } from './Regions.jsx'; // P31: 칩의 정리는 판 전체
 import { toggleSidebar, openArchiveBox, useSide } from './Sidebar.jsx';
 import { LoopList } from './Loops.jsx';
+import { useDialog } from './dialog.js'; // P52
 import { useInbox } from './InboxBar.jsx';
 import { KindIcon } from './SessionNode.jsx';
+import { DevicesPill } from './Peers.jsx'; // P47: 다른 기기 n
 import { Icon } from './lib/icons.jsx';
 import { STATE_LABEL, EXIT_LABEL, ago, askLine } from './lib/labels.js';
 import { useT, errText, fmtTime } from './lib/i18n.js';
@@ -84,7 +87,7 @@ export function TopLeft() {
       {/* P9: 개발용 판이면 표시한다. 실제 판에는 없다 */}
       {api.info && api.info.profile === 'dev' && <span className="mt-dev-badge" data-role="dev-badge" title={t('top.devBadge', { session: api.info.herdrSession, port: api.info.port })}>dev</span>}
       <WorkspaceTabs />
-      <button className="mt-cp" data-action="search" title={t('top.searchTitle')} onClick={() => setSearchOpen(true)}>
+      <button className="mt-cp" data-action="search" title={`${t('top.searchTitle')}\n${t('boardKeys.search')}`} onClick={() => setSearchOpen(true)}>
         <Icon name="search" /><span className="dim">{t('top.search')}</span><span className="mt-kbd">{shortcutText('Ctrl F')}</span>
       </button>
     </div>
@@ -155,16 +158,21 @@ function ConnPill() {
   const links = useStore((st) => st.links.size);
   const [starting, setStarting] = useState(false);
   const startHerdr = async () => { setStarting(true); try { await api.call('herdr.start'); toast(t('top.herdrStarted')); } catch (e) { toast(t('top.herdrStartFail', { error: errText(e) }), 'error'); } setStarting(false); };
-  const ok = conn === 'open' && herdr.connected;
+  const herdrBlocked = !!(herdr.missing || herdr.level === 'missing' || herdr.level === 'incompatible'); // P40: 띠가 까닭과 할 일을 보인다
+  const ok = conn === 'open' && herdr.connected && !herdrBlocked;
   const connWord = (c) => t(c === 'open' ? 'top.connected' : c === 'connecting' ? 'top.connecting' : 'top.disconnected');
-  const title = [t('top.connBackend', { state: connWord(conn) }), t('top.connHerdr', { session: herdr.session || '?', version: herdr.version ? ` (${herdr.version})` : '', state: connWord(herdr.connected ? 'open' : 'closed') }), t('top.connSessions', { n: count }), t('top.connLinks', { n: links })].join('\n');
+  // P32: 누르면 미션 맵을 열고(열려 있으면 닫고) 올리면 연결 풀이. 백엔드와 끊겨 있으면 맵을 읽을 수 없으므로 누르기를 받지 않는다(herdr만 끊긴 때는 판 데이터로 연다)
+  const mission = useStore((st) => st.missionOpen);
+  const canOpen = conn === 'open';
+  const title = [t('top.connBackend', { state: connWord(conn) }), t('top.connHerdr', { session: herdr.session || '?', version: herdr.version ? ` (${herdr.version})` : '', state: connWord(herdr.connected ? 'open' : 'closed') }), t('top.connSessions', { n: count }), t('top.connLinks', { n: links }), canOpen ? t(mission ? 'mmap.pillClose' : 'mmap.pillOpen') : null].filter(Boolean).join('\n');
+  const toggle = () => { if (canOpen || mission) setMissionOpen(!mission); };
   return <>
-    <span className={`mt-cp conn${ok ? '' : ' bad'}`} data-role="conn" title={title}>
+    <span className={`mt-cp conn${ok ? '' : ' bad'}${canOpen ? ' click' : ''}${mission ? ' on' : ''}`} data-role="conn" data-action="conn-mission" title={title} role={canOpen ? 'button' : undefined} tabIndex={canOpen ? 0 : undefined} aria-pressed={canOpen ? mission : undefined} onClick={toggle} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}>
       <span className={`mt-dot ${ok ? 'ok' : 'bad'}`} />
-      {conn !== 'open' ? t('top.backendState', { state: connWord(conn) }) : herdr.connected === false ? t('top.herdrDown') : <><span className="mono">{count}</span><span className="dim">{t('top.sessions', { n: count })}</span></>}
+      {conn !== 'open' ? t('top.backendState', { state: connWord(conn) }) : herdrBlocked ? t(herdr.level === 'incompatible' ? 'top.herdrIncompatible' : 'top.herdrMissing') : herdr.connected === false ? t('top.herdrDown') : <><span className="mono">{count}</span><span className="dim">{t('top.sessions', { n: count })}</span></>}
       <span hidden data-role="links">{links}</span>
     </span>
-    {conn === 'open' && herdr.connected === false && <button className="mt-cp accent" disabled={starting} onClick={startHerdr} data-action="herdr-start">{t('top.herdrStart')}</button>}
+    {conn === 'open' && herdr.connected === false && !herdrBlocked && <button className="mt-cp accent" disabled={starting} onClick={startHerdr} data-action="herdr-start">{t('top.herdrStart')}</button>}
   </>;
 }
 
@@ -234,6 +242,7 @@ export function TopRight({ maxControllers }) {
       <ListPill list={review} label={t('top.review')} cls="review" role="review" line={(s) => (s.lastAnswer || '').replace(/\s+/g, ' ').slice(0, 120)} empty={t('top.reviewEmpty')} />
       {problems.length > 0 && <ListPill list={problems} label={t('top.issues')} cls="problem" role="problems" line={(s) => (s.state === 'exited' ? EXIT_LABEL[s.exit && s.exit.kind] : STATE_LABEL[s.state]) || ''} empty={t('top.issuesEmpty')} />}
       <ConnPill />
+      <DevicesPill />
       <ResourcePill maxControllers={maxControllers} />
       <button className="mt-cp round" title={t('top.changes')} onClick={() => getState().showChanges && getState().showChanges(60)} data-action="changes"><Icon name="history" /></button>
       <button className="mt-cp round" onClick={() => openDialog({ kind: 'settings' })} data-action="settings-open" title={t('top.settings')}><Icon name="gear" /></button>
@@ -250,23 +259,36 @@ function Tool({ icon, kind, label, on, onClick, action }) {
   );
 }
 const Sep = () => <span className="mt-rail-sep" />;
-const spawn = (agentKind) => openDialog({ kind: 'spawn', agentKind });
-// 누르면 지금 워크스페이스에 설정의 기본값으로 바로 띄운다. Shift+누르기는 폴더, 이름, 첫 지시를 고르는 대화상자
-const spawnNow = (agentKind) => (e) => (e && e.shiftKey ? spawn(agentKind) : quickSpawn(agentKind));
+// P33: 즐겨찾기 호출자 하나. 누르면 지금 워크스페이스에 그 호출자로 바로 띄운다. Shift+누르기는 그 호출자를 채운 새 세션 창.
+// 아이콘은 하네스 로고(고른 아이콘이 먼저), 셸은 터미널, 직접 명령은 터미널 위에 이름 첫 글자. 마우스를 올리면 이름과 명령 미리보기
+function LauncherTool({ l }) {
+  const t = useT();
+  const kind = launcherIcon(l);
+  const tip = launcherTooltip(l, { shellText: t('launchers.shellPreview'), envText: t('launchers.envShort') });
+  const go = (e) => (e && e.shiftKey ? openDialog({ kind: 'spawn', launcher: l.id }) : quickSpawn(l.id));
+  return (
+    <button className="mt-tool" title={tip} aria-label={l.name} data-action="launch" data-launcher={l.id} data-name={l.name} onClick={go}>
+      {kind === 'shell' ? <Icon name="terminal" /> : kind ? <KindIcon kind={kind} title={tip} badge /> : <span className="mt-tool-mark" data-role="launcher-mark">{launcherMark(l)}</span>}
+    </button>
+  );
+}
+// 즐겨찾기가 많으면 이 칸만 위아래로 넘긴다(레일은 창 높이를 넘지 않는다)
+function Favorites() {
+  const data = useStore((st) => st.launchers);
+  const favs = favoriteLaunchers(data);
+  if (!favs.length) return null;
+  return <div className="mt-rail-favs" data-role="rail-favorites">{favs.map((l) => <LauncherTool key={l.id} l={l} />)}</div>;
+}
 
 export function LeftRail({ linking, setLinking }) {
   const t = useT();
   return (
     <div className="mt-rail left" data-role="rail-left">
-      <Tool icon="pointer" on={!linking} label={t('rail.select')} action="tool-select" onClick={() => { setLinking(false); getState().clearSelection && getState().clearSelection(); }} />
-      {/* 손으로 잇기는 선택과 서로 바뀌는 모드라 바로 아래에 둔다 */}
-      <Tool icon="link" on={linking} label={t('rail.link')} action="link-mode" onClick={() => setLinking(!linking)} />
+      <Tool icon="pointer" on={!linking} label={`${t('rail.select')}\n${t('boardKeys.tool')}`} action="tool-select" onClick={() => { setLinking(false); getState().clearSelection && getState().clearSelection(); }} />
+      {/* 손으로 잇기는 선택과 서로 바뀌는 모드라 바로 아래에 둔다. P43: 판에서 ← 키로도 바꾼다(main.jsx) */}
+      <Tool icon="link" on={linking} label={`${t('rail.link')}\n${t('boardKeys.tool')}`} action="link-mode" onClick={() => setLinking(!linking)} />
       <Sep />
-      <Tool kind="claude" label={t('rail.claude')} action="spawn" onClick={spawnNow('claude')} />
-      <Tool kind="codex" label={t('rail.codex')} action="spawn-codex" onClick={spawnNow('codex')} />
-      <Tool kind="agy" label={t('rail.agy')} action="spawn-agy" onClick={spawnNow('agy')} />
-      <Tool kind="deepseek" label={t('rail.deepseek')} action="spawn-deepseek" onClick={spawnNow('deepseek')} />
-      <Tool icon="terminal" label={t('rail.shell')} action="spawn-shell" onClick={spawnNow('shell')} />
+      <Favorites />
       <Sep />
       <Tool icon="note" label={t('rail.memo')} action="memo-new" onClick={() => createItem('memo')} />
       <Tool icon="kanban" label={t('rail.kanban')} action="kanban-new" onClick={() => createItem('kanban')} />
@@ -299,24 +321,28 @@ export function LoopsPanel({ onClose }) {
   const loops = useStore((st) => st.loops);
   const now = useNow();
   const list = [...loops.values()];
-  if (!list.length) return <div className="mt-loops-panel"><div className="mt-loop-list" data-role="loop-list"><div className="mt-card-head"><span className="mt-card-title">{t('loops.title')}</span><button className="mt-card-min" onClick={onClose}><Icon name="x" /></button></div><div className="dim">{t('loops.panelEmpty')}</div></div></div>;
-  return <div className="mt-loops-panel"><LoopList loops={list} now={now} onClose={onClose} /></div>;
+  const box = useDialog(onClose, { modal: false }); // P52: 떠 있는 창. Esc로 닫는다
+  if (!list.length) return <div ref={box} className="mt-loops-panel"><div className="mt-loop-list" data-role="loop-list"><div className="mt-card-head"><span className="mt-card-title">{t('loops.title')}</span><button className="mt-card-min" onClick={onClose}><Icon name="x" /></button></div><div className="dim">{t('loops.panelEmpty')}</div></div></div>;
+  return <div ref={box} className="mt-loops-panel"><LoopList loops={list} now={now} onClose={onClose} /></div>;
 }
 
 // ---------- 아래 ----------
 // 빠른 동작 칩. 칩마다 테두리 색이 다르다(tokens.css --chip-ring-n)
 export function ChipRow() {
   const t = useT();
-  const currentWs = useStore((st) => st.currentWs);
+  const boardArranged = useStore((st) => st.arranged.has(BOARD_ARRANGED));
+  const shown = useStore((st) => st.bottomShown); // P43: 명령 바와 함께 숨고 나타난다(CommandBar.jsx useAutoHide)
   const chips = [
-    [t('chips.spawn'), 'chip-spawn', t('chips.spawnTitle'), () => spawn('claude')],
-    [t('chips.arrange'), 'chip-arrange', currentWs ? t('chips.arrangeTitle', { ws: wsName(currentWs) }) : t('chips.arrangeNoWs'), () => (currentWs ? arrangeWorkspace(currentWs) : toast(t('chips.arrangeNoWsToast'), 'error'))],
+    [t('chips.spawn'), 'chip-spawn', t('chips.spawnTitle'), () => openDialog({ kind: 'spawn' })],
+    // P31: 칩의 정리는 판 전체(영역도 다시 놓는다). 영역 이름표의 정리는 그 영역 안만
+    [t('chips.arrange'), 'chip-arrange', t('arrangeAll.title'), () => arrangeBoard()],
+    ...(boardArranged ? [[t('arrangeAll.undo'), 'chip-arrange-undo', t('arrangeAll.undoTitle'), () => arrangeBoard(true)]] : []),
     [t('chips.mission'), 'chip-mission', t('chips.missionTitle'), () => setMissionOpen(true)],
     [t('chips.changes'), 'chip-changes', t('chips.changesTitle'), () => getState().showChanges && getState().showChanges(60)],
     [t('chips.fit'), 'chip-fit', t('chips.fitTitle'), () => getState().fitAll && getState().fitAll(250)],
   ];
   return (
-    <div className="mt-chips" data-role="chips">
+    <div className="mt-chips" data-role="chips" data-hidden={shown ? undefined : '1'}>
       {chips.map(([label, action, title, fn], i) => <button key={action} className="mt-qchip" style={{ '--chip-ring': `var(--chip-ring-${(i % 7) + 1})` }} data-action={action} title={title} onClick={fn}>{label}</button>)}
     </div>
   );

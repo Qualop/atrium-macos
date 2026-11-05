@@ -113,7 +113,8 @@ try {
     assert.equal(sessions.length, 9);
     console.log('PASS concurrent spawn: duplicate rejected, automatic names unique');
     for (const [i, s] of sessions.entries()) await client.call('board.setNode', { session: s.sessionId, x: (i % 3) * 440, y: Math.floor(i / 3) * 240, w: 420, h: 220, z: i });
-    await client.call('board.setViewport', { x: 30, y: 90, zoom: 1 });
+    // Viewports are now per client: update the window's own persisted viewport.
+    await page.evaluate(() => window.__mt.api.call('board.setViewport', { x: 30, y: 90, zoom: 1 }));
     await page.reload(); await page.locator('.mt-splash').waitFor({ state: 'hidden' });
     await until(async () => (await client.call('backend.status')).relay.length === 8, 'eight visible terminal controllers');
     assert.ok(await page.evaluate(() => window.__mt.budget.used <= 8));

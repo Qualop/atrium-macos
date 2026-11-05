@@ -11,25 +11,32 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { workspaceOf } from './git.mjs';
 import { writeSessionSettings, buildStartArgs, buildResumeArgs, buildResumeArgv, predictTrust, transcriptPathFor, slash } from './launch.mjs';
-import { FLAVOR as DEEPSEEK, proxyEnv as deepseekEnv, baseUrlOf } from './deepseek.mjs'; // P25
+import { FLAVOR as DEEPSEEK, proxyEnv as deepseekEnv, baseUrlOf, checkCommand } from './deepseek.mjs'; // P25
 import { newRuntime } from './state.mjs';
 import { withGeminiModel } from './gemini-args.mjs';
 import { withAgyModel } from './agy.mjs';
 import { modelFromArgs, withCodexModel } from './codex-args.mjs';
+import { codexRecovery, codexResumeArgs, prepareCodexSession, verifyCodexResume } from './codex-session.mjs';
 import { canvasItems, slotFor, settleRegions, regions as areaRegions } from './canvas-ops.mjs';
 import { areaKey, parseArea } from './worktree-areas.mjs'; // P27: 워크트리 영역
 import { NODE, SIZE_STEPS, overlaps, regionRect, regionsOf, slotInRegion } from './canvas.mjs';
 import { pathKey, normPath, workspaceNames } from './workspaces.mjs';
 import { clip } from './text.mjs';
 import { archiveState, isOld, discoverable, itemKey, DISCOVER_DAYS, OLD_DAYS } from './archive.mjs';
-import { CONVO_PARSER, listTranscriptFiles, readTranscriptSummary, readLiveSessions, readDesktopSessions, claudeProcesses, parseClaudeCmdlines, bindingOf, inWorkspace, convoView, readSpawns, mergeSpawns, countSubagents, listSubagents } from './convos.mjs';
+import { CONVO_PARSER, listTranscriptFiles, readTranscriptSummary, readLiveSessions, readDesktopSessions, claudeProcesses, parseClaudeCmdlines, bindingOf, inWorkspace, convoView, readSpawns, mergeSpawns, countSubagents, listSubagents, branchName } from './convos.mjs';
 import { matchSpawns } from './spawns.mjs';
 import { classifyConvo, testDirKind, trashPlan, trashPaths, removeEmptyProjectDirs, REFUSE_LABEL } from './missed.mjs';
 import { CONVO_CAP, placeCards } from './convo-canvas.mjs';
 import { m, keyed } from './msg.mjs'; // P16: 화면 글 열쇠
 
 const SHELL = 'shell';
-const NATIVE_KINDS = new Set(['gemini', 'agy']);
+const NATIVE_KINDS = new Set(['gemini', 'agy', 'codex']);
+const isNativeRow = (row) => {
+  if (!NATIVE_KINDS.has(row?.kind)) return false;
+  if (row.kind !== 'codex') return true;
+  const rt = row.rt || row.runtime || {};
+  return !!(rt.codexManaged || rt.codexIntegration || rt.codexSessionId);
+};
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BINDING_MS = 5000; // 세션 파일과 데스크톱 앱 목록을 다시 읽는 간격(파일 몇 개, 1ms 안팎)
@@ -45,11 +52,13 @@ function apiError(code, message, extra = {}) { return Object.assign(new Error(me
 function managedNative(row) {
   const rt = row?.rt || row?.runtime;
   if (!rt || (row.origin || 'board') !== 'board') return false;
+  if (row.kind === 'codex') return !!codexRecovery(row);
   return row.kind === 'gemini' ? !!rt.geminiIntegration : row.kind === 'agy' && rt.hooked === false && typeof row.hookToken === 'string' && !!row.hookToken;
 }
 
 // Gemini·agy는 인증된 hook의 ID·기록 경로만 쓴다. 다른 대화나 'latest'를 찾아 이어 가지 않는다.
 function nativeRecovery(row) {
+  if (row?.kind === 'codex') return codexRecovery(row);
   const rt = row?.rt || row?.runtime;
   if (!rt || !NATIVE_KINDS.has(row.kind) || (row.origin || 'board') !== 'board' || (row.kind === 'agy' && !managedNative(row))) return null;
   const kind = row.kind, id = rt[`${kind}SessionId`], file = rt[`${kind}TranscriptPath`];
@@ -65,17 +74,19 @@ function nativeRuntime(row, recovery) {
   const prev = row.rt || row.runtime || {};
   const kind = row.kind, rt = newRuntime({ kind, hooked: false });
   // 지난 턴의 증거를 남겨 다음 복구에서도 새 대화로 잘못 바뀌지 않게 한다.
-  for (const key of ['cwd', 'lastPrompt', 'lastPromptAt', 'lastAnswer', 'lastAnswerAt', 'lastActivityAt', 'turn', 'interruptedTurn', 'answerSource']) {
+  for (const key of ['cwd', 'lastPrompt', 'lastPromptAt', 'lastAnswer', 'lastAnswerAt', 'lastActivityAt', 'turn', 'interruptedTurn', 'answerSource', 'launcherEnv', 'extraArgs', 'codexIntegration', 'codexContext', 'codexBriefed']) {
     if (prev[key] !== undefined) rt[key] = prev[key];
   }
   if (kind === 'gemini') Object.assign(rt, { geminiIntegration: true, geminiReady: false });
   if (kind === 'agy') rt.agyComposer = 'starting';
+  if (kind === 'codex') Object.assign(rt, { codexManaged: true, codexImportedFrom: prev.codexImportedFrom || null });
   Object.assign(rt, { [`${kind}TurnActive`]: false, [`${kind}SessionId`]: recovery.resume ? recovery.id : null,
     [`${kind}TranscriptPath`]: recovery.file, [`${kind}Resumed`]: recovery.resume });
   return rt;
 }
 
 function nativeArgs(kind, args, recovery, model) {
+  if (kind === 'codex') return codexResumeArgs({ threadId: recovery.id, model, args });
   const kept = [];
   // 저장된 시작 인자에 남은 선택자를 지우고, 정확히 하나의 대화 ID와 현재 모델만 준다.
   for (let i = 0; i < args.length; i++) {
@@ -368,7 +379,7 @@ export class Recall {
     const conv = convOf(row);
     const idx = conv ? this.store.getConvoById(conv) : null;
     const bind = conv ? this.bindingFor(conv, idx, { strict: false }) : { bound: false };
-    const native = NATIVE_KINDS.has(row.kind);
+    const native = isNativeRow(row);
     // closedSessions의 요약에는 토큰이 없다. agy 관리 여부는 완전한 저장 행으로 확인한다.
     const recovery = native ? nativeRecovery(row.kind === 'agy' ? this.store.getSession(row.sessionId) || row : row) : null;
     return {
@@ -596,7 +607,7 @@ export class Recall {
       const parentNode = r ? nodeIdOf(r.parent) : null;
       return {
         convId: n.convId, workspaceKey: n.workspaceKey, wsName: names.get(n.workspaceKey) || null, x: n.x, y: n.y, w: n.w, h: n.h,
-        block: x && !x.area ? this.blockOf(c, x.w) : '', area: n.area || '', cwd: c.cwd ? normPath(c.cwd) : null, branch: c.branch || null, // P27: area(놓인 워크트리 영역)
+        block: x && !x.area ? this.blockOf(c, x.w) : '', area: n.area || '', cwd: c.cwd ? normPath(c.cwd) : null, branch: branchName(c.branch), // P27: area(놓인 워크트리 영역)
         title: c.title || null, firstPrompt: c.firstPrompt || null, lastPrompt: c.lastPrompt || null, lastAnswer: c.lastAnswer || null, lastAt: c.lastAt || c.mtime || null, prompts: c.prompts || 0,
         subagents: c.subagents || 0, binding: bind, canOpen: !bind.bound, children: kids.get(n.convId) || 0,
         spawnedBy: r ? { via: r.via, name: r.name, at: r.at, onCanvas: !!parentNode, label: parentNode ? null : this.parentLabel(r.parent, byId.get(r.parent), boardConvs, marks), labelMsg: parentNode ? null : this.parentLabelMsg(r.parent, byId.get(r.parent), boardConvs, marks) } : null,
@@ -787,12 +798,13 @@ export class Recall {
   placeFor(id, wsKey, prev, near = null, area = '') {
     const size = prev ? { w: prev.w, h: prev.h } : NODE;
     const fits = (rect) => {
-      const all = canvasItems(this.b).filter((i) => i.id !== id && i.id !== `convo:${id}`);
-      const regs = areaRegions(this.b, all);
+      const all0 = canvasItems(this.b).filter((i) => i.id !== id && i.id !== `convo:${id}`);
+      const regs = areaRegions(this.b, all0);
       const ak = area && regs.has(areaKey(wsKey, area)) ? areaKey(wsKey, area) : wsKey;
+      const all = all0.filter((i) => i.box !== ak); // P35: 워크트리 상자 안이면 그 상자 자신은 피하지 않는다
       // P9: 그 자리로 커진 영역이 다른 영역과 겹치면 마지막 자리를 쓰지 않는다(닫힌 동안 다른 영역이 그 자리로 왔다)
       const reg = regionRect([...all.filter((i) => i.ws === ak), rect]);
-      const others = [...regs].filter(([k]) => k !== ak).map(([, r]) => r);
+      const others = [...regs].filter(([k]) => parseArea(k).ws !== wsKey).map(([, r]) => r); // P35: 같은 리포의 리포 영역과 상자는 빼고(상자 겹침은 settleRegions가 민다)
       return !all.some((i) => overlaps(rect, i)) && !others.some((r) => overlaps(reg, r, -1));
     };
     if (prev) { const rect = { x: prev.x, y: prev.y, w: prev.w, h: prev.h }; if (fits(rect)) return { ...rect, kept: true }; }
@@ -812,12 +824,12 @@ export class Recall {
     const name = this.freeName(spec.name, spec.kind === SHELL ? 'sh' : 's');
     const archive = this.store.archiveMarks().get(itemKey('session', spec.id));
     const node = this.store.nodeOf(spec.id);
-    let created = null;
+    let created = null, createdPane = null, createdRuntime = null;
     b.spawningNames ||= new Set();
     this.opening.add(spec.id); b.spawningNames.add(name);
-    try { return await this.bringReserved(spec, name, (s) => { created = s; }); }
+    try { return await this.bringReserved(spec, name, (s) => { created = s; createdPane = s.paneId; createdRuntime = s.rt; }); }
     catch (e) {
-      if (created && b.sessions.get(spec.id) === created && !b.killing.has(spec.id)) await this.bringFailed(created, spec, archive, node, e);
+      if (created && b.sessions.get(spec.id) === created && created.paneId === createdPane && created.rt === createdRuntime && !b.killing.has(spec.id)) await this.bringFailed(created, spec, archive, node, e);
       throw e;
     }
     finally { this.opening.delete(spec.id); b.spawningNames.delete(name); }
@@ -859,25 +871,35 @@ export class Recall {
     const id = spec.id;
     if (b.sessions.has(id)) throw apiError('already_open', '이미 판에 있는 세션이다');
     const kind = spec.kind || 'claude';
-    const shell = kind === SHELL, claude = kind === 'claude', native = NATIVE_KINDS.has(kind);
+    const shell = kind === SHELL, claude = kind === 'claude', native = isNativeRow({ ...spec.reuseRow, kind });
+    const command = shell && spec.launcherCommand ? String(spec.launcherCommand) : null;
+    if (command && (!checkCommand(command) || command.trim() === '[command]')) throw apiError('command_unavailable', 'Saved command is unavailable');
     const ws = await workspaceOf(cwd);
     const permissionMode = spec.permissionMode || 'manual';
     let hookToken = '', settingsPath = '', paneEnv, recovery, resumeArgv = null, args = [], trust = { needsTrust: null, reason: `${kind}: 예상하지 않음` };
+    if (!claude && !native && spec.env) paneEnv = { ...spec.env };
     if (native) {
       recovery = nativeRecovery(spec.reuseRow);
       if (!recovery) throw apiError('not_resumable', `${kind}의 정확한 대화 ID와 기록을 찾지 못해 이어 갈 수 없다`);
       spec.resume = recovery.resume;
       args = nativeArgs(kind, spec.args || [], recovery, spec.model);
-      hookToken = crypto.randomBytes(24).toString('hex');
-      ({ settingsPath, env: paneEnv } = b[`${kind}Settings`](id, hookToken));
+      if (kind === 'codex') {
+        await verifyCodexResume(b, spec.reuseRow);
+        ({ hookToken, settingsPath, env: paneEnv } = prepareCodexSession(b, { sessionId: id, threadId: recovery.id, model: spec.model, args: spec.args || [], env: spec.env || {} }));
+      } else {
+        hookToken = crypto.randomBytes(24).toString('hex');
+        ({ settingsPath, env: paneEnv } = b[`${kind}Settings`](id, hookToken));
+        paneEnv = { ...(spec.env || {}), ...paneEnv };
+      }
     }
     if (claude) {
       hookToken = crypto.randomBytes(24).toString('hex');
       const extra = b.branch ? b.branch.settingsExtra(id) : {}; // P8: 다시 연 세션도 하위 세션 명령을 쓴다
-      if (spec.flavor === DEEPSEEK) extra.env = { ...(extra.env || {}), ...deepseekEnv(baseUrlOf({ baseUrl: cfg.ocxBaseUrl, healthUrl: cfg.ocxHealthUrl })) }; // P25: DeepSeek는 프록시 주소에 붙인다
+      if (spec.env && Object.keys(spec.env).length) extra.env = { ...spec.env, ...(extra.env || {}) }; // P33: 띄울 때의 호출자 환경 변수
+      else if (spec.flavor === DEEPSEEK) extra.env = { ...(extra.env || {}), ...deepseekEnv(baseUrlOf({ baseUrl: cfg.ocxBaseUrl, healthUrl: cfg.ocxHealthUrl })) }; // P25: DeepSeek는 프록시 주소에 붙인다
       settingsPath = writeSessionSettings({ file: path.join(cfg.sessionsDir, `${id}.json`), hookUrl: b.hookUrl, token: hookToken, sessionId: id, timeoutSec: cfg.hookTimeoutSec, allowHerdr: !!spec.allowHerdr, ...extra });
       trust = predictTrust(cwd, cfg.claudeJson);
-      const launch = { sessionId: id, settingsPath, permissionMode, model: spec.model || null, effort: spec.effort || null, ...b.plugin };
+      const launch = { sessionId: id, settingsPath, permissionMode, model: spec.model || null, effort: spec.effort || null, extraArgs: spec.extraArgs || [], ...b.plugin };
       args = spec.resume ? buildResumeArgs({ ...launch, sessionId: spec.convId || id }) : buildStartArgs(launch);
       resumeArgv = buildResumeArgv({ claudeCommand: cfg.claudeCommand, ...launch, sessionId: spec.resume ? spec.convId || id : id });
     } else if (!shell && !native) args = (spec.args || []).map(String);
@@ -887,6 +909,10 @@ export class Recall {
     const area = b.worktrees ? b.worktrees.areaOf(ws.key, cwd) : ''; // P27: 워크트리 폴더의 세션은 그 워크트리 영역
     const at = this.placeFor(id, ws.key, prev && (prev.area || '') === area ? prev : null, spec.near || null, area);
     const rt = native ? nativeRuntime(spec.reuseRow, recovery) : newRuntime({ trustPredicted: !!trust.needsTrust, kind, hooked: claude });
+    rt.launcherEnv = spec.env || {};
+    if (command) rt.launcherCommand = command;
+    rt.extraArgs = claude ? spec.extraArgs || [] : spec.args || [];
+    if (kind === 'codex' && native) rt.codexIntegration = true;
     if (claude && spec.resume) {
       const prev = spec.reuseRow?.runtime || {};
       for (const key of ['lastPrompt', 'lastPromptAt', 'lastAnswer', 'lastAnswerAt', 'lastActivityAt', 'turn', 'interruptedTurn']) if (prev[key] !== undefined) rt[key] = prev[key];
@@ -897,7 +923,7 @@ export class Recall {
     let s;
     const hw = await b.withNewPane(() => b.adapter.createWorkspace({ cwd, label: name, ...(paneEnv ? { env: paneEnv } : {}) }), (r) => {
       const now = Date.now();
-      s = { sessionId: id, name, cwd, paneId: r.paneId, herdrWorkspaceId: r.workspaceId, agentName: shell ? r.paneId : name, model: kind === 'codex' ? modelFromArgs(args) || null : claude || native ? spec.model || null : null, effort: claude ? spec.effort || null : null, permissionMode, settingsPath, hookToken, resumeArgv, resumeVerified: false, createdAt: spec.createdAt || now, closedAt: null, seenAt: null, touchedAt: now, rt, lastState: null, kind, origin: 'board', parentSessionId: null, workspaceKey: ws.key, flavor: spec.flavor || null }; // P25: flavor(deepseek)는 다시 열어도 남는다
+      s = { sessionId: id, name, cwd, paneId: r.paneId, herdrWorkspaceId: r.workspaceId, agentName: shell ? r.paneId : name, model: kind === 'codex' ? modelFromArgs(args) || null : claude || native ? spec.model || null : null, effort: claude ? spec.effort || null : null, permissionMode, settingsPath, hookToken, resumeArgv, resumeVerified: false, createdAt: spec.createdAt || now, closedAt: null, seenAt: null, touchedAt: now, rt, lastState: null, kind, origin: 'board', parentSessionId: null, workspaceKey: ws.key, flavor: spec.flavor || null, extraArgs: claude ? spec.extraArgs || [] : [] }; // P25: flavor(deepseek)는 다시 열어도 남는다
       if (spec.reuseRow) {
         this.store.reopenRow(id, { name, cwd, paneId: r.paneId, herdrWorkspaceId: r.workspaceId, agentName: s.agentName, settingsPath, hookToken, resumeArgv, resumeVerified: false, runtime: rt, kind, origin: 'board', workspaceKey: ws.key, permissionMode, model: s.model, effort: s.effort, touchedAt: now, parentSessionId: null });
         if (spec.reuseRow.name !== name) this.store.addEvent(id, 'renamed', { from: spec.reuseRow.name, to: name, why: 'name taken on reopen' });
@@ -915,6 +941,18 @@ export class Recall {
     b.probeGit(s, cwd);
     this.changed().catch(() => {});
     const out = { sessionId: id, name, kind, paneId: hw.paneId, workspaceKey: ws.key, resume: !!spec.resume, trust, place: at.kept ? 'last' : 'slot' };
+    if (command) {
+      const current = () => !b.stopping && b.sessions.get(id) === s && s.rt === rt && s.paneId === hw.paneId && !b.killing.has(id);
+      const ready = await b.adapter.waitShellReady(hw.paneId);
+      if (!ready) throw apiError('shell_not_ready', 'Shell is not ready for the saved command');
+      if (!current()) throw apiError('closed', 'Session changed while reopening');
+      await b.adapter.sendText(hw.paneId, command);
+      await sleep(150);
+      if (!current()) throw apiError('closed', 'Session changed before command submission');
+      await b.adapter.paneKeys(hw.paneId, ['enter']);
+      this.store.addEvent(id, 'command_typed', { command: '[command]', shellReady: true, reopened: true });
+      return { ...out, argv: null, command: '[command]' };
+    }
     if (shell) return out;
     await b.adapter.waitShellReady(hw.paneId);
     try { const st = await b.adapter.startAgent({ name, paneId: hw.paneId, args, kind }); out.argv = st.argv; rt.herdr.launchPending = st.agent ? st.agent.launchPending : true; }
@@ -937,7 +975,9 @@ export class Recall {
     if (row.reopenedAs) throw apiError('moved', `이 세션은 이미 다른 세션(${row.reopenedAs})으로 다시 열었다`);
     const kind = row.kind || 'claude';
     const info = this.store.spawnInfo(row.sessionId) || {};
-    const base = { cwd: row.cwd, name: row.name, kind, permissionMode: p.permissionMode || row.permissionMode, model: p.model !== undefined ? p.model : row.model, effort: p.effort !== undefined ? p.effort : row.effort, allowHerdr: !!info.allowHerdr, createdAt: row.createdAt, flavor: row.flavor || null };
+    const launcherCommand = row.runtime?.launcherCommand ?? info.command ?? null;
+    if (kind === SHELL && launcherCommand === '[command]') throw apiError('command_unavailable', 'The original command was not retained');
+    const base = { cwd: row.cwd, name: row.name, kind, permissionMode: p.permissionMode || row.permissionMode, model: p.model !== undefined ? p.model : row.model, effort: p.effort !== undefined ? p.effort : row.effort, allowHerdr: !!info.allowHerdr, createdAt: row.createdAt, flavor: row.flavor || null, launcherCommand, env: row.runtime?.launcherEnv ?? info.env ?? null, extraArgs: row.runtime?.extraArgs ?? (row.extraArgs && row.extraArgs.length ? row.extraArgs : info.extraArgs || []) }; // Private runtime is authoritative, including empty overrides.
     if (kind === 'claude') {
       const conv = convOf(row);
       if (conv) {
@@ -959,7 +999,7 @@ export class Recall {
       this.changed().catch(() => {});
       return out;
     }
-    const args = kind === SHELL ? [] : Array.isArray(info.args) ? info.args : [];
+    const args = kind === SHELL ? [] : row.runtime?.extraArgs ?? (Array.isArray(info.args) ? info.args : []);
     if (kind === 'codex' && p.model === undefined && row.model == null) base.model = undefined; // 옛 행에는 모델 열 없이 실행 인자만 남아 있다.
     return this.bring({ ...base, id: row.sessionId, reuseRow: row, from: 'closed', args });
   }
@@ -1056,7 +1096,7 @@ export class Recall {
   restorable(s) {
     if (!s.cwd || !fs.existsSync(s.cwd)) return false;
     if (s.kind === SHELL) return true;
-    if (NATIVE_KINDS.has(s.kind)) return managedNative(s) && !!nativeRecovery(s);
+    if (isNativeRow(s)) return managedNative(s) && !!nativeRecovery(s);
     if (s.kind === 'claude' && !this.b.hooked(s)) { const conv = convOf(s); return !!conv && this.transcriptExists(conv, s.rt.cwd || s.cwd); }
     return false;
   }
@@ -1071,7 +1111,7 @@ export class Recall {
     }
   }
   async restoreInNewPane(s) {
-    if (NATIVE_KINDS.has(s.kind)) return this.restoreNativeAgent(s);
+    if (isNativeRow(s)) return this.restoreNativeAgent(s);
     const b = this.b;
     const r = await b.withNewPane(() => b.adapter.createWorkspace({ cwd: s.rt.cwd && fs.existsSync(s.rt.cwd) ? s.rt.cwd : s.cwd, label: s.name }), (x) => b.setPane(s, x.paneId, x.workspaceId, 'restored after herdr restart'));
     if (s.kind === SHELL) {
@@ -1108,9 +1148,11 @@ export class Recall {
         return;
       }
       const info = this.store.spawnInfo(id) || {};
-      const args = nativeArgs(kind, Array.isArray(info.args) ? info.args : [], recovery, s.model);
+      const args = nativeArgs(kind, s.rt.extraArgs ?? (Array.isArray(info.args) ? info.args : []), recovery, s.model);
+      if (kind === 'codex') await verifyCodexResume(b, s);
       const hookToken = crypto.randomBytes(24).toString('hex');
-      const { settingsPath, env } = b[`${kind}Settings`](id, hookToken);
+      const integration = kind === 'codex' ? prepareCodexSession(b, { sessionId: id, threadId: recovery.id, model: s.model, args: s.rt.extraArgs ?? info.args ?? [], hookToken, env: s.rt.launcherEnv ?? info.env ?? {} }) : b[`${kind}Settings`](id, hookToken);
+      const settingsPath = integration.settingsPath || '', env = { ...(s.rt.launcherEnv ?? info.env ?? {}), ...integration.env };
       const rt = nativeRuntime(s, recovery);
       if (replacePane) {
         b.killing.add(id);
@@ -1178,7 +1220,7 @@ export class Recall {
     for (const s of list) {
       if (!down(s) || !b.adapter.connected) continue;
       try {
-        if (NATIVE_KINDS.has(s.kind)) await this.restoreNativeAgent(s, { replacePane: true });
+        if (isNativeRow(s)) await this.restoreNativeAgent(s, { replacePane: true });
         else if (s.kind === 'claude' && convOf(s) && this.transcriptExists(convOf(s), s.rt.cwd || s.cwd)) await this.resumeHookless(s, 'resume_same_pane');
         else if (s.origin === 'adopted' || s.rt.shellBase) b.demoteToShell(s, 'not resumed after herdr restart');
         else await this.closeUnresumed(s);

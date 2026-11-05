@@ -3,6 +3,13 @@
 // - 붙여넣기는 괄호 붙여넣기로 감싸고, 휠은 SGR 마우스 시퀀스로 바꾼다. ctrl+g(외부 편집기)는 막는다.
 // - WebGL 렌더러는 예산(기본 8) 안에서만 쓰고, 넘거나 컨텍스트를 잃으면 DOM으로 그린다(BRIEF 위험 2).
 // - P6a(H4): 노드를 눌러 들어간 뒤 붙기 전에 친 글(store.pendingInput)은 붙자마자 넣고 초점을 준다.
+// - P38: 판 배율 아래에서도 끌어 고르기가 마우스 밑 글자를 따라가게 xterm의 마우스 → 칸 계산에 확대·축소 전 자리를 넘긴다(unscalePoint).
+//   고르는 동안 포인터는 글 고르기 모양. 복사는 줄 끝 빈칸을 뺀다.
+// - P42: 글 고르기는 웹처럼 한다(term-selection.js). 선택은 글에 붙어 휠·가장자리 자동 스크롤·새 프레임에 함께 움직이고 풀리지 않는다.
+//   claude 등은 프레임을 이어 붙인 문서로, 셸은 herdr 기록과 밀려난 줄을 xterm scrollback에 넣어(판 안에서 스크롤) 화면 밖 글까지 고르고 복사한다.
+// - P45: 글자 크기 = TERM_FONT_SIZE × 터미널 글자 배율(설정 일반 탭, store.termScale). 바꾸면 곧바로 글자를 바꾸고 줄·칸 수를 다시 재 패널 크기를 맞춘다.
+// - P47: 창(클라이언트) 여럿이 한 패널을 함께 본다. 패널 크기는 마지막으로 입력했거나 초점을 준 창이 정하고(terminal.owner),
+//   다른 창은 같은 열×행을 노드 크기에 맞춰 비율로 그린다(fitScale). 다른 기기가 방금 친 터미널에는 짧게 표시한다(잠그지 않는다).
 import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -10,11 +17,17 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { FitAddon } from '@xterm/addon-fit';
 import { api } from './api.js';
 import { useStore, getState, takePendingInput, pendingFor } from './store.js';
-import { wrapPaste, wheelToSgr, keyAction, frameBytes } from './lib/term-input.js';
+import { wrapPaste, wheelToSgr, shellWheelLines, sgrWheel, keyAction, frameBytes, unscalePoint, clearsSelection, copyText } from './lib/term-input.js';
+import { findShift, bigChange, historyAbove, historyPrefill, scrollUpSeq, serializeScreen, stripAnsi } from './lib/term-select.js';
+import { TermSelection } from './term-selection.js';
 import { RendererBudget, DEFAULT_WEBGL_BUDGET } from './lib/faces.js';
 import { onFrame, onWritten, markInput, setTerminal, perfLog } from './perf.js';
 import { termTheme, TERM_FONT, TERM_FONT_SIZE, TERM_LINE_HEIGHT } from './lib/tokens.js';
+import { termFontSize } from './lib/scale.js'; // P45
 import { useT, errText } from './lib/i18n.js';
+import { fitScale, inputByLabel } from './lib/multiclient.js'; // P47: 창 여럿이 같은 패널을 볼 때
+import { isWeb, uploadFiles } from './web.js'; // P48: 웹 화면의 파일 붙여넣기·끌어 놓기
+import { pathsText, filesOf, hasFiles } from './lib/upload.js';
 
 function readNumber(key, dflt) {
   const q = new URLSearchParams(location.search).get(key);
@@ -25,6 +38,20 @@ function readNumber(key, dflt) {
 }
 export const budget = new RendererBudget(readNumber('webglBudget', DEFAULT_WEBGL_BUDGET));
 export const terms = new Map(); // sessionId → Terminal (시험과 E6에서 읽는다)
+const SHELL_SCROLLBACK = 5000; // P42: 셸 노드의 판 안 기록 줄 수
+const HISTORY_WAIT = 1500; // P42: 셸 기록을 첫 프레임 앞에 넣으려고 기다리는 시간(넘으면 기록 없이 그린다)
+
+// P38: xterm은 마우스 위치를 칸으로 바꿀 때 판의 CSS 확대·축소를 모른다(화면 px를 확대·축소 전 칸 크기로 나눈다).
+// 마우스 서비스(선택, 링크, 마우스 보고가 함께 쓴다)에 확대·축소 전 자리를 넘긴다. xterm 6.0.0의 내부(_core._mouseService)라
+// 판 올릴 때 확인한다. 없으면 기록만 남기고 그대로 둔다(배율 1에서는 그대로 맞는다)
+function fixMouseScale(term, sessionId) {
+  const ms = term._core && term._core._mouseService;
+  if (!ms || typeof ms.getCoords !== 'function' || typeof ms.getMouseReportCoords !== 'function') { window.mt.log(`xterm mouse service not found ${sessionId}: selection may drift when zoomed`); return; }
+  const unscale = (ev, el) => unscalePoint({ clientX: ev.clientX, clientY: ev.clientY, rect: el.getBoundingClientRect(), width: el.offsetWidth, height: el.offsetHeight });
+  const getCoords = ms.getCoords.bind(ms), getReport = ms.getMouseReportCoords.bind(ms);
+  ms.getCoords = (ev, el, ...rest) => getCoords(unscale(ev, el), el, ...rest);
+  ms.getMouseReportCoords = (ev, el) => getReport(unscale(ev, el), el);
+}
 
 // P11: 색은 tokens.css --term-…, 글꼴은 앱에 넣은 JetBrains Mono(한글 Nanum Gothic Coding). 글 크기와 줄 높이는 lib/tokens.js
 
@@ -33,20 +60,26 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
   const t = useT();
   const onInputRef = useRef(onInput);
   onInputRef.current = onInput;
+  const onActivateRef = useRef(onActivate);
+  onActivateRef.current = onActivate;
   const hostRef = useRef(null);
   const ref = useRef({});
   const restoreFocus = useRef(false);
   const [status, setStatus] = useState({ kind: 'attaching' });
   const [hint, setHint] = useState(null);
   const [retry, setRetry] = useState(0);
+  const [share, setShare] = useState({ shared: 1, ownerIsMe: true, ownerName: null }); // P47
+  const [typing, setTyping] = useState(null); // P47: 다른 기기가 방금 입력
 
   useEffect(() => {
     const host = hostRef.current;
-    const st = ref.current = { pid: null, alive: true, disconnected: false, acc: 0, lastSize: null };
+    const st = ref.current = { pid: null, alive: true, disconnected: false, acc: 0, lastSize: null, shared: 1, scale: 1, ownerIsMe: true, attachmentId: crypto.randomUUID() };
     const generation = api.generation;
     const current = () => st.alive && !st.disconnected && generation === api.generation && api.status === 'open';
     const early = []; // 응답보다 먼저 온 프레임·종료는 controllerPid를 안 뒤에 가린다
-    const term = new Terminal({ allowProposedApi: true, fontFamily: TERM_FONT, fontSize: TERM_FONT_SIZE, lineHeight: TERM_LINE_HEIGHT, fontWeight: 500, fontWeightBold: 700, scrollback: 0, cursorBlink: false, theme: termTheme(), drawBoldTextInBrightColors: false });
+    // P42: 셸은 앱이 스스로 스크롤하지 않아(PowerShell은 SGR 휠을 무시) 지난 출력을 xterm scrollback에 두고 판 안에서 스크롤한다
+    const shell = (getState().sessions.get(sessionId) || {}).kind === 'shell';
+    const term = new Terminal({ allowProposedApi: true, fontFamily: TERM_FONT, fontSize: termFontSize(TERM_FONT_SIZE, getState().termScale), lineHeight: TERM_LINE_HEIGHT, fontWeight: 500, fontWeightBold: 700, scrollback: shell ? SHELL_SCROLLBACK : 0, cursorBlink: false, theme: termTheme(), drawBoldTextInBrightColors: false });
     const u11 = new Unicode11Addon();
     term.options.disableStdin = true;
     term.loadAddon(u11);
@@ -55,6 +88,21 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
     term.loadAddon(fit);
     term.open(host);
     terms.set(sessionId, term);
+    // P47: 다른 창이 정한 패널 크기를 내 노드에 맞춰 비율로 그린다. 혼자 볼 때와 내가 크기를 가졌을 때는 늘 1(예전과 같다)
+    st.applyScale = () => {
+      const el = term.element, screen = el && el.querySelector('.xterm-screen');
+      if (!el || !screen) return;
+      const s = st.shared > 1 && !st.ownerIsMe ? fitScale({ termW: screen.offsetWidth, termH: screen.offsetHeight, boxW: host.clientWidth, boxH: host.clientHeight }) : 1;
+      if (s === st.scale) return;
+      st.scale = s;
+      el.style.transformOrigin = '0 0';
+      el.style.transform = s === 1 ? '' : `scale(${s})`;
+      host.dataset.scale = String(+s.toFixed(3));
+    };
+    // P47: 터미널에 초점을 주면 이 창이 패널 크기를 가져간다
+    const onFocusIn = () => { if (st.pid != null && current()) api.call('terminal.focus', { session: sessionId, controllerPid: st.pid, attachmentId: st.attachmentId }).catch(() => {}); };
+    if (term.textarea) term.textarea.addEventListener('focus', onFocusIn);
+    fixMouseScale(term, sessionId);
 
     let renderer = budget.acquire(sessionId);
     perfLog('term_mount', { sessionId, renderer, used: budget.used });
@@ -78,43 +126,152 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
       if (!st.pid || api.status !== 'open' || term.options.disableStdin) { flash(t('terminal.attaching')); return; }
       markInput(sessionId);
       if (onInputRef.current) onInputRef.current();
-      api.call('terminal.input', { session: sessionId, controllerPid: st.pid, data }).catch((e) => setHint(t('terminal.inputFail', { error: errText(e) })));
+      api.call('terminal.input', { session: sessionId, controllerPid: st.pid, attachmentId: st.attachmentId, data }).catch((e) => setHint(t('terminal.inputFail', { error: errText(e) })));
     };
     st.send = send;
     const flash = (t) => { setHint(t); clearTimeout(st.hintTimer); st.hintTimer = setTimeout(() => setHint(null), 2500); };
 
-    term.onData(send);
+    // P42: 글 고르기(웹처럼). xterm 자체 선택 대신 문서 줄에 붙은 선택을 쓴다. 판(Canvas)과 시험이 보는 hasSelection·getSelection도 이것으로 답한다
+    const sel = new TermSelection({
+      term, host, mode: shell ? 'buffer' : 'live',
+      sendWheel: (steps, c) => send(sgrWheel(steps, c.cell + 1, c.row + 1, term.cols, term.rows)),
+      onActivate: () => { if (onActivateRef.current) onActivateRef.current(); },
+      log: (name, d) => perfLog(name, { sessionId, ...d }),
+    });
+    st.sel = sel;
+    term._mtSel = sel; // 시험이 선택 기록(trace)을 읽는다
+    term.hasSelection = () => sel.has();
+    term.getSelection = () => sel.text();
+    term.onData((d) => { if (clearsSelection('input', { hasSelection: sel.has() })) sel.clear('input'); send(d); });
     term.attachCustomKeyEventHandler((e) => {
-      const a = keyAction(e, term.hasSelection());
+      const a = keyAction(e, sel.has());
       if (a === 'block-ctrl-g') { e.preventDefault(); flash(t('terminal.ctrlG')); return false; }
       if (a === 'paste') return false; // 브라우저 붙여넣기 이벤트로 넘긴다(아래에서 감싼다)
-      if (a === 'copy') { const sel = term.getSelection(); navigator.clipboard.writeText(sel).catch(() => {}); e.preventDefault(); flash(t('terminal.copied')); return false; }
+      if (a === 'clear-selection') { e.preventDefault(); sel.clear('escape'); return false; } // P42: Esc는 선택만 끝낸다
+      if (a === 'copy') {
+        // P42: 화면 밖으로 나간 부분까지 고른 글 전체. 일하는 중에도 프레임이 선택을 지우지 않는다
+        const text = copyText(sel.text());
+        navigator.clipboard.writeText(text).then(() => perfLog('term_copy', { sessionId, chars: text.length }), (err) => { window.mt.log(`clipboard write failed ${sessionId}: ${err && err.message}`); flash(t('termSelect.copyFail')); });
+        if (clearsSelection('copy', { hasSelection: sel.has() })) sel.clear('copy');
+        e.preventDefault(); flash(t('terminal.copied')); return false;
+      }
       return true;
     });
     term.attachCustomWheelEventHandler((ev) => {
+      if (shell) return false; // 셸은 아래 onShellWheel이 먼저 받는다
       const screen = host.querySelector('.xterm-screen') || host;
       const r = wheelToSgr({ deltaY: ev.deltaY, deltaMode: ev.deltaMode, clientX: ev.clientX, clientY: ev.clientY, rect: screen.getBoundingClientRect(), cols: term.cols, rows: term.rows, acc: st.acc });
       st.acc = r.acc;
-      send(r.seq);
+      send(r.seq); // P42: 선택은 지우지 않는다. 다음 프레임에서 글과 함께 움직인다(끄는 중이면 늘어난다)
       ev.preventDefault();
       return false;
     });
+    // P42: 셸은 판 안 기록을 스크롤한다(선택은 버퍼 줄에 붙어 onScroll로 함께 움직인다).
+    // P51(#7): xterm 6의 기록 스크롤(안쪽 스크롤 요소)은 한 칸에 약 2줄, 작은 값마다 한 줄이라, 캡처 단계에서 먼저 받아 모은 뒤 100px에 3줄로 굴린다.
+    // 사용자 휠 처리기(attachCustomWheelEventHandler)는 안쪽 스크롤 요소보다 늦게 불려 막지 못한다
+    const onShellWheel = (ev) => {
+      if (!ev.deltaY) return;
+      ev.preventDefault(); ev.stopPropagation();
+      const r = shellWheelLines({ deltaY: ev.deltaY, deltaMode: ev.deltaMode, rows: term.rows, acc: st.acc });
+      st.acc = r.acc;
+      if (r.lines) term.scrollLines(r.lines);
+    };
+    if (shell) host.addEventListener('wheel', onShellWheel, { capture: true, passive: false });
     // 붙여넣기: xterm보다 먼저(캡처 단계) 받아 괄호 붙여넣기로 감싼다. 감싸지 않으면 줄마다 따로 제출된다(E4 2.5).
+    // P48: 웹 화면은 붙여 넣거나 끌어 놓은 파일(그림 등)을 백엔드로 올리고 그 PC 경로를 넣는다
+    const uploadInto = (files) => {
+      flash(t('upload.uploading', { n: files.length }));
+      uploadFiles(files).then((paths) => { send(wrapPaste(pathsText(paths))); flash(t('upload.done', { n: paths.length })); perfLog('term_upload', { sessionId, n: paths.length }); },
+        (err) => { flash(t('upload.failed', { error: err.message })); window.mt.log(`upload failed ${sessionId}: ${err.message}`); });
+    };
     const onPaste = (e) => {
       e.preventDefault(); e.stopPropagation();
+      const files = isWeb ? filesOf(e.clipboardData) : [];
+      if (clearsSelection('paste', { hasSelection: sel.has() })) sel.clear('paste');
+      if (files.length) return uploadInto(files);
       const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
-      send(wrapPaste(text));
+      // P51(#3): 셸 노드는 줄바꿈을 Shift+Enter로 보내 여러 줄이 입력줄에 쌓이게 한다(지금 종류로 본다. 셸 안에서 띄운 에이전트로 바뀔 수 있다)
+      send(wrapPaste(text, { shell: (getState().sessions.get(sessionId) || {}).kind === 'shell', platform: api.info?.platform || window.mt.platform }));
     };
     host.addEventListener('paste', onPaste, true);
+    const onDragOver = (e) => { if (isWeb && hasFiles(e.dataTransfer)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } };
+    const onDrop = (e) => { const files = isWeb ? filesOf(e.dataTransfer) : []; if (!files.length) return; e.preventDefault(); e.stopPropagation(); uploadInto(files); };
+    host.addEventListener('dragover', onDragOver, true);
+    host.addEventListener('drop', onDrop, true);
+
+    // P42: 셸은 그림자 터미널(herdr 화면과 같은 scrollback 0 화면)에 먼저 써서 새 출력으로 화면이 몇 줄 밀렸는지 보고,
+    // 프레임을 쓰기 전에 그만큼 xterm 영역을 올려 밀려난 줄을 scrollback으로 보낸다. 첫 프레임 앞에는 herdr 기록(지난 출력)을 넣는다
+    let shadow = null, chain = Promise.resolve(), history = 'wait';
+    const writeP = (tm, data) => new Promise((res) => tm.write(data, res));
+    const rowsOf = (tm) => { const b = tm.buffer.active, out = []; for (let r = 0; r < tm.rows; r++) { const l = b.getLine(b.viewportY + r); out.push(l ? l.translateToString(true) : ''); } return out; };
+    if (shell) { shadow = new Terminal({ allowProposedApi: true, scrollback: 0, cols: 80, rows: 24 }); const su = new Unicode11Addon(); shadow.loadAddon(su); shadow.unicode.activeVersion = '11'; }
+    // herdr 기록 가운데 지금 화면 위의 줄(ANSI). 맞는 자리가 없으면 null
+    const readHistory = async (screen) => {
+      const r = await Promise.race([api.call('terminal.history', { session: sessionId }).catch(() => null), new Promise((res) => setTimeout(() => res(null), HISTORY_WAIT))]);
+      const ansi = r && r.text ? r.text.split(/\r?\n/) : [];
+      const above = ansi.length ? historyAbove(ansi.map(stripAnsi), screen) : -1;
+      return { lines: ansi.length, above, ansi: above >= 0 ? ansi.slice(0, above) : null };
+    };
+    const prefill = async (screen) => {
+      const h = await readHistory(screen);
+      perfLog('term_history', { sessionId, lines: h.lines, above: h.above });
+      if (h.above > 0 && current()) term.write(historyPrefill(h.ansi, term.rows));
+    };
+    // 빠른 출력이 한 프레임에 지나가거나(화면에 한 번도 안 보인 줄), cls·크기 바뀜으로 판 안 기록이 herdr 기록과 어긋났다.
+    // 출력이 멈추면(그리고 고르는 중이나 위로 올려 보는 중이 아니면) herdr 기록으로 다시 맞춘다: 지금 화면을 칸 그대로 적어 두고 reset 뒤 기록 + 화면
+    const resync = async () => {
+      if (!current()) return;
+      st.stale = false;
+      const h = await readHistory(rowsOf(shadow));
+      if (!current() || !h.ansi) { perfLog('term_history_resync', { sessionId, lines: h.lines, above: h.above, skipped: true }); return; }
+      const b = term.buffer.active;
+      if (sel.has() || sel.dragging || b.viewportY < b.baseY) { markStale(); return; }
+      const screen = serializeScreen(b, { base: b.baseY, rows: term.rows, cols: term.cols, cursorX: b.cursorX, cursorY: b.cursorY, cell: b.getNullCell() });
+      term.reset();
+      term.write(historyPrefill(h.ansi, term.rows) + screen);
+      perfLog('term_history_resync', { sessionId, lines: h.lines, above: h.above });
+    };
+    const trySync = () => {
+      if (!current() || !st.stale) return;
+      const b = term.buffer.active;
+      if (sel.has() || sel.dragging || b.viewportY < b.baseY) { clearTimeout(st.syncTimer); st.syncTimer = setTimeout(trySync, 1000); return; }
+      chain = chain.then(resync).catch((e) => window.mt.log(`shell resync ${sessionId}: ${e.stack || e.message}`));
+    };
+    const markStale = () => { st.stale = true; clearTimeout(st.syncTimer); st.syncTimer = setTimeout(trySync, 500); };
+    const shellFrame = async (f, bytes, t0) => {
+      if (!current() || term.options.disableStdin) return;
+      let resized = false;
+      if (f.width && f.height && (f.width !== shadow.cols || f.height !== shadow.rows)) { shadow.resize(f.width, f.height); resized = true; }
+      const before = resized ? null : rowsOf(shadow);
+      await writeP(shadow, bytes);
+      if (!current()) return;
+      const after = rowsOf(shadow);
+      if (f.width && f.height && (f.width !== term.cols || f.height !== term.rows)) { term.resize(f.width, f.height); st.applyScale(); }
+      if (history === 'wait') { history = 'done'; await prefill(after); if (!current()) return; }
+      else if (!before) markStale();
+      else {
+        const s = findShift(before, after);
+        // 영역을 올려 밀려난 줄을 scrollback으로 보낸 뒤, 화면은 그림자(herdr의 새 화면)를 칸 그대로 다시 쓴다.
+        // herdr 프레임은 herdr 앞 화면에서 바뀐 칸만 쓰므로, 올린 화면에 그대로 쓰면 글이 깨진다. 그 뒤 프레임을 써도 같은 칸을 같은 글로 쓸 뿐이다
+        if (s.d > 0) { const sb = shadow.buffer.active; term.write(scrollUpSeq(s.d, s.hi, term.rows) + serializeScreen(sb, { base: sb.baseY, rows: shadow.rows, cols: shadow.cols, cursorX: sb.cursorX, cursorY: sb.cursorY, cell: sb.getNullCell() })); }
+        else if (bigChange(before, after)) markStale();
+      }
+      term.write(bytes, () => onWritten(t0));
+      if (st.stale) { clearTimeout(st.syncTimer); st.syncTimer = setTimeout(trySync, 500); } // 출력이 이어지는 동안은 미룬다
+    };
 
     const frame = (f) => {
-      if (f.sessionId !== sessionId || !current()) return;
+      if (f.sessionId !== sessionId || !current() || f.attachmentId !== st.attachmentId) return;
       if (st.pid === null) { if (early.length < 32) early.push(['frame', f]); return; }
       if (f.controllerPid !== st.pid || term.options.disableStdin) return;
       const bytes = frameBytes(f.bytes);
       const t0 = onFrame(sessionId, bytes.length, f.width, f.height);
-      if (f.width && f.height && (f.width !== term.cols || f.height !== term.rows)) term.resize(f.width, f.height); // 쓰기 전에 크기 맞추기(E4)
-      term.write(bytes, () => onWritten(t0));
+      if (shell) { chain = chain.then(() => shellFrame(f, bytes, t0)).catch((e) => window.mt.log(`shell frame ${sessionId}: ${e.stack || e.message}`)); return; }
+      if (f.width && f.height && (f.width !== term.cols || f.height !== term.rows)) { term.resize(f.width, f.height); st.applyScale(); } // 쓰기 전에 크기 맞추기(E4)
+      term.write(bytes, () => {
+        onWritten(t0);
+        if (current()) sel.onFrame(); // P42: 고른 글이 있으면 화면이 움직인 만큼 선택을 옮긴다(지우지 않는다)
+      });
     };
     const offFrame = api.on('terminal.frame', frame);
     // 백엔드에 다시 붙으면(백엔드 재시작, C2) 옛 연결의 제어기는 이미 놓였다. 다시 붙는다.
@@ -127,8 +284,22 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
       setStatus({ kind: 'detached', reason: 'disconnected' });
     });
     const offOpen = api.on('$open', () => { if (st.alive) { restoreFocus.current ||= document.activeElement === term.textarea; perfLog('term_reattach_on_reconnect', { sessionId }); setStatus({ kind: 'attaching' }); setRetry((x) => x + 1); } });
+    // P47: 누가 패널 크기를 정하는지, 몇 창이 함께 보는지. 다른 기기가 방금 친 것
+    const offOwner = api.on('terminal.owner', (d) => {
+      if (d.sessionId !== sessionId || !current() || d.attachmentId !== st.attachmentId || (st.pid !== null && d.controllerPid !== st.pid)) return;
+      st.shared = d.shared || 1; st.ownerIsMe = !!d.ownerIsMe;
+      setShare({ shared: st.shared, ownerIsMe: !!d.ownerIsMe, ownerName: d.ownerName || d.owner || null });
+      perfLog('term_owner', { sessionId, shared: st.shared, ownerIsMe: !!d.ownerIsMe, cols: d.cols, rows: d.rows });
+      requestAnimationFrame(() => st.alive && st.applyScale());
+    });
+    const offInputBy = api.on('terminal.input_by', (d) => {
+      if (d.sessionId !== sessionId || !current() || d.attachmentId !== st.attachmentId || d.controllerPid !== st.pid) return;
+      const name = inputByLabel(d, api.clientId);
+      if (!name) return;
+      setTyping(name); clearTimeout(st.typingTimer); st.typingTimer = setTimeout(() => setTyping(null), 2000);
+    });
     const detached = (d) => {
-      if (d.sessionId !== sessionId || !current()) return;
+      if (d.sessionId !== sessionId || !current() || d.attachmentId !== st.attachmentId) return;
       if (st.pid === null) { if (early.length < 32) early.push(['detached', d]); return; }
       if (d.controllerPid !== st.pid) return;
       perfLog('term_detached', { sessionId, reason: d.reason });
@@ -143,15 +314,18 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
     term.resize(cols, rows);
     st.lastSize = `${cols}x${rows}`;
     setTerminal(sessionId, { renderer, cols, rows });
-    api.call('terminal.attach', { session: sessionId, cols, rows })
+    api.call('terminal.attach', { session: sessionId, cols, rows, attachmentId: st.attachmentId })
       .then((r) => {
         if (!current()) {
-          if (!st.disconnected && generation === api.generation) api.call('terminal.detach', { session: sessionId, controllerPid: r.controllerPid }).catch(() => {});
+          if (!st.disconnected && generation === api.generation) api.call('terminal.detach', { session: sessionId, controllerPid: r.controllerPid, attachmentId: st.attachmentId }).catch(() => {});
           return;
         }
         st.pid = r.controllerPid;
         term.options.disableStdin = false;
         setHint(null);
+        if (!current()) return;
+        st.shared = r.shared || 1; st.ownerIsMe = r.ownerIsMe !== false; // P47
+        if (r.shared > 1) { setShare({ shared: r.shared, ownerIsMe: !!r.ownerIsMe, ownerName: r.owner || null }); requestAnimationFrame(() => st.alive && st.applyScale()); }
         setStatus({ kind: 'attached', pid: r.controllerPid });
         for (const [type, event] of early.splice(0)) (type === 'frame' ? frame : detached)(event);
         if (term.options.disableStdin) return;
@@ -167,10 +341,18 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
     return () => {
       st.alive = false;
       perfLog('term_unmount', { sessionId });
-      offFrame(); offDetached(); offOpen(); offClose();
+      offFrame(); offDetached(); offOpen(); offClose(); offOwner(); offInputBy();
       clearTimeout(st.hintTimer);
+      if (term.textarea) term.textarea.removeEventListener('focus', onFocusIn);
+      clearTimeout(st.typingTimer);
       host.removeEventListener('paste', onPaste, true);
-      if (st.pid != null && !st.disconnected && generation === api.generation) api.call('terminal.detach', { session: sessionId, controllerPid: st.pid }).catch(() => {});
+      host.removeEventListener('dragover', onDragOver, true);
+      host.removeEventListener('drop', onDrop, true);
+      host.removeEventListener('wheel', onShellWheel, { capture: true });
+      sel.dispose();
+      clearTimeout(st.syncTimer);
+      if (shadow) shadow.dispose();
+      if (st.pid != null && !st.disconnected && generation === api.generation) api.call('terminal.detach', { session: sessionId, controllerPid: st.pid, attachmentId: st.attachmentId }).catch(() => {});
       budget.release(sessionId);
       terms.delete(sessionId);
       setTerminal(sessionId, null);
@@ -178,12 +360,22 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
     };
   }, [sessionId, retry]);
 
+  // P45: 터미널 글자 배율이 바뀌면 글자 크기를 바꾼다(아래 효과가 줄·칸 수를 다시 잰다)
+  const termScale = useStore((st) => st.termScale);
+  useEffect(() => {
+    const st = ref.current;
+    if (!st.term) return;
+    const size = termFontSize(TERM_FONT_SIZE, termScale);
+    if (st.term.options.fontSize !== size) { st.term.options.fontSize = size; perfLog('term_font', { sessionId, size }); }
+  }, [sessionId, termScale, retry]);
+
   // 노드 크기가 바뀌면 패널 크기를 맞춘다(노드 크기 = 패널 크기, ARCH 7.2). 돌아온 프레임의 w·h로 xterm 크기가 바뀐다.
   useEffect(() => {
     const st = ref.current;
     if (!st.fit) return;
     const refit = () => {
-      if (!st.fit || st.pid == null || st.disconnected) return;
+      if (!st.fit || st.pid == null || st.disconnected || !st.alive || api.status !== 'open') return;
+      if (st.applyScale) st.applyScale(); // P47: 노드 크기가 바뀌면 비율도 다시
       const d = st.fit.proposeDimensions();
       if (!d) return;
       const cols = Math.max(20, d.cols), rows = Math.max(8, d.rows);
@@ -191,12 +383,17 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
       if (key === st.lastSize) return;
       st.lastSize = key;
       setTerminal(sessionId, { cols, rows });
-      api.call('terminal.resize', { session: sessionId, controllerPid: st.pid, cols, rows }).catch(() => {});
+      api.call('terminal.resize', { session: sessionId, controllerPid: st.pid, attachmentId: st.attachmentId, cols, rows }).catch(() => {});
     };
     // P17: 덩어리 분할선·바깥 크기로 여러 노드 크기가 한꺼번에 바뀌면 120ms 때 아직 자리가 덜 잡혀 한 줄 모자라게 잴 때가 있다. 한 번 더 잰다
     const t = setTimeout(refit, 120), t2 = setTimeout(refit, 600);
-    return () => { clearTimeout(t); clearTimeout(t2); };
-  }, [sessionId, width, height, reserve]);
+    // P47: 노드 크기 말고 터미널 칸의 크기가 바뀌어도(승인 줄, 웹 화면의 다른 배치) 다시 잰다. 같은 크기면 refit이 아무것도 하지 않는다
+    let t3 = null;
+    const host = hostRef.current;
+    const ro = host && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { clearTimeout(t3); t3 = setTimeout(refit, 120); }) : null;
+    if (ro) ro.observe(host);
+    return () => { clearTimeout(t); clearTimeout(t2); clearTimeout(t3); if (ro) ro.disconnect(); };
+  }, [sessionId, width, height, reserve, termScale, retry]);
 
   useEffect(() => {
     const st = ref.current;
@@ -231,6 +428,8 @@ export function TerminalView({ sessionId, width, height, reserve = 0, onActivate
         </div>
       )}
       {hint && <div className="mt-term-hint">{hint}</div>}
+      {typing && <div className="mt-term-typing" data-role="term-typing">{t('peers.typing', { name: typing })}</div>}
+      {share.shared > 1 && !share.ownerIsMe && <div className="mt-term-sizeby" data-role="term-sizeby" title={t('peers.sizeBy', { name: share.ownerName || '?' })} />}
     </div>
   );
 }

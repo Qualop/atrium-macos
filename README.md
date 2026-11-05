@@ -11,21 +11,23 @@
   <b>English</b> · <a href="README.ko.md">한국어</a> · <a href="LICENSE">MIT</a>
 </p>
 
-Atrium lets you run several coding sessions, see which ones need your attention, and send instructions without switching between terminal windows. It manages the workspace; Claude Code, Codex, Gemini CLI and your shell do the actual work.
+Atrium keeps AI coding sessions, project folders, notes and delegated work on one canvas. Claude Code, Codex, Gemini CLI, Antigravity and your shell run inside herdr terminals; Atrium manages their layout, connections and message delivery.
 
-![Atrium on macOS: Korean UI with a session name and automatically discovered Codex model selector](docs/images/model-picker-macos.png)
+This source tree is **v0.3.0**. It integrates the approved upstream P30–P55 features while retaining the macOS port, provider integrations and worker limits. Removing worker limits and the unmerged P56–P59 remote-security proposals are outside this integration.
 
-*Actual macOS UI in an isolated test project. The displayed model catalog depends on your installed Codex and provider configuration.*
+![Atrium on macOS: Korean UI and Codex model selection](docs/images/model-picker-macos.png)
 
-## Download
+*Earlier macOS UI capture from an isolated project. Current model choices come from the installed provider tools and account configuration.*
 
-Get the **macOS Apple Silicon DMG or ZIP** from the [v0.2.0 release](https://github.com/Qualop/atrium-macos/releases/tag/v0.2.0). Requires macOS 13 or later. Node and herdr are included, so **you do not need to install Node separately**. Agent CLIs and sign-in remain separate.
+## Download and build status
 
-This build is ad-hoc signed and not Apple-notarized. macOS may require explicit permission to open it in System Settings → Privacy & Security.
+See the [release list](https://github.com/Qualop/atrium-macos/releases) for published artifacts. The manifest version and this README do not announce a published v0.3.0 release. Final integration evidence and release artifacts are recorded separately when ready.
+
+macOS packages target macOS 13 or later and include Node and herdr. Agent CLIs, credentials and sign-in remain separate. Local packages use an ad-hoc signature; this is not Apple notarization.
 
 ## Start on macOS
 
-You need **Node.js 22.13+ (22.x), 24.x or 26.x**, **Git**, and whichever agent CLI you want to use. Install and sign in to your chosen CLI separately; Google account users should use Antigravity CLI (see below). Plain terminals do not require an AI account.
+Source builds need **Node.js 22.13+ (22.x), 24.x or 26.x**, **Git**, and the agent CLIs you intend to use.
 
 ```sh
 git clone https://github.com/Qualop/atrium-macos.git
@@ -34,85 +36,92 @@ npm run setup:mac
 npm run mac
 ```
 
-`setup:mac` downloads **herdr TUI 0.9.5** for Apple Silicon or Intel, verifies its SHA-256, and installs the app and backend dependencies. Herdr stays inside the checkout under `.tools/`; the setup script does not install it globally or edit your shell configuration.
+`setup:mac` installs dependencies and downloads the architecture-specific herdr 0.9.5 binary with a SHA-256 check into the checkout's `.tools/` directory. It does not install herdr globally or edit your shell configuration. `npm run mac` starts the board again after setup.
 
-After setup, launch again with `npm run mac` from `app/`. To use another compatible herdr executable, set `ATRIUM_HERDR` to its path. This integration expects herdr **0.9.5 / protocol 22**.
+The board can open without herdr: stored layout, notes and history remain available, while terminal operations explain the missing engine. Set an executable in Settings or use `ATRIUM_HERDR`. Discovery considers explicit configuration, the bundled executable, PATH and known installation locations. Compatibility is checked by protocol and capabilities; the bundled baseline is herdr 0.9.5 / protocol 22.
 
-## Your first session
+## Start a session and save a preset
 
-1. Click **+** at the top left and choose a project folder.
-2. Click **New session…** at the bottom, or **Shift-click** an agent icon on the left.
-3. Enter an optional **session name**, such as `reviewer`. This is a nickname for the window, not a model name. Names accept ASCII letters, digits, `-` and `_`.
-4. Choose **Codex**, then select a model from the dropdown. Use **Refresh**, **Use Codex default settings**, or **Enter a model ID…** as needed. Extra CLI arguments are under **Advanced settings**.
-5. Start the session and complete any sign-in, folder trust or approval prompts in its terminal.
-6. Send an instruction from the bottom input:
+1. Open a project folder with **+**.
+2. Open **New session…**, or Shift-click a launcher in the left rail.
+3. Enter a session name such as `reviewer`. It identifies the session, independently of the model.
+4. Choose a launcher/provider and model, then start. Answer login, trust and approval prompts yourself in its terminal.
+5. Send an instruction from the bottom input:
 
    ```text
-   @reviewer Explain this project's structure. Do not change any files.
+   @reviewer Explain this project's structure. Do not change files.
    ```
 
-The model picker reads the installed Codex catalog using `model/list`; it does not start an inference turn. Being listed does **not** guarantee access to a model. The selected model takes precedence over model options in the additional arguments.
+A **launcher** is a named preset containing the CLI provider, model, supported options, extra arguments and environment variables, or a raw shell command. Settings lets you create, edit, preview, favorite and reorder them. Quoted arguments retain their boundaries. Command presets pass environment variables to the process separately; secret values are not typed into the terminal as an environment prefix.
 
-`Enter` sends and `Shift+Enter` adds a line. `⌘K` focuses the input and `⌘F` searches. `@all` targets agent sessions across the **entire board**, not just the current project. Shell commands must be entered directly in a terminal.
+New boards have four favorites: Claude Code, Codex, Gemini and Shell. Existing boards retain DeepSeek as a fifth favorite. There is **one default Gemini launcher**, using Antigravity (`agy`) with the Gemini logo and its actual provider label. Gemini CLI remains available as a separate provider choice. Preset migration preserves existing defaults and user favorite changes. Calls without a launcher continue to use the legacy session defaults.
 
-For the Korean interface, choose **Settings → Language → 한국어**.
+Model lists reflect the installed tools: **Codex `model/list`**, **Gemini CLI metadata**, and **Antigravity `agy models`**. Claude aliases and configured gateway catalogs supplement them. A gateway model can run through Claude Code even if its model name resembles another provider's model. A listed model does not guarantee account access. Manual model IDs remain available in session setup.
 
-### Collaborating with Gemini
+`Enter` sends; `Shift+Enter` adds a line. `⌘K` focuses the input and `⌘F` searches on macOS. `@all` targets agent sessions across the **whole board**. Enter shell commands in the terminal. Choose **Settings → Language → 한국어** for Korean.
 
-For a **personal Google account**, install [Antigravity CLI](https://antigravity.google/docs/getting-started), run `agy`, and sign in. Choose **Gemini (Antigravity)** in Atrium. The older Gemini CLI can reject personal Google sign-in even after OAuth succeeds; retrying the same login does not fix that service rejection.
+### Gemini and delegated workers
 
-For a **Gemini API key or supported enterprise authentication**, install `npm install -g @google/gemini-cli` and choose **Gemini CLI**. The sidebar has one Gemini icon for Google accounts. Shift-click it to choose the folder, session name and model; select Gemini CLI in the agent-type dropdown when using API or enterprise authentication. Gemini CLI models are read from installed metadata; Antigravity queries `agy models`. Catalog failures leave default and manual model entry available. A displayed model is not a guarantee of access.
+For Google-account work, use **Gemini (Antigravity)** after installing and signing in to `agy`. Gemini CLI remains available for its supported authentication modes. Both providers keep their native login and approval flows. The board never accepts trust or login dialogs for you.
 
-For example, connect a Claude session to a Gemini session with the **reviewer** role. Ask the working session to have its reviewer inspect the change, then address the findings. The role notice provides the delegation commands. Gemini can also delegate to Claude or Codex. Naming a session `reviewer` alone does not assign a role.
+Assign a role between sessions, then ask the working agent to delegate through Atrium. Managed Claude, Codex, Gemini CLI and agy sessions can use `atrium models` and `atrium child`. Child names should describe their task. For example, from a managed session:
 
-Gemini prompt submissions, completed answers and shell tool calls feed the board's collaboration records. Managed children inherit their parent's agent kind; use `--kind claude`, `--kind codex` or `--kind gemini` / `--kind agy` to change it. Answer login, trust and approval prompts in the terminal. Gemini CLI gets a separate settings profile referencing its existing login/history. Antigravity requires a named `atrium-board` entry in `~/.gemini/config/hooks.json`; existing hooks are preserved, and that entry only reports from Atrium-managed sessions. Antigravity hook payloads omit final response text, so Atrium reads completed responses from that session’s native transcript, with terminal snapshots as a fallback. If your settings disable hooks, detailed collaboration tracking is unavailable. Claude history auto-indexing and sleep controls do not apply to Gemini.
+```sh
+atrium models
+atrium child api-review --launcher Codex --prompt "Review the API change and report findings. Do not edit files."
+atrium child docs-review --model "haiku" --effort low --prompt "Review the documentation only."
+atrium children
+```
 
-## What is included
+Natural model names resolve against those catalogs. Unknown or ambiguous names return candidates instead of silently launching a different model. A child inherits its parent's provider and compatible model unless overridden. **Limits remain enabled:** by default, 4 direct children per session, depth 3 and 16 children across the board. Concurrent requests reserve capacity; only descendants can be killed through child commands.
 
-| Feature | What it does |
+Claude worktree workers require a repository with a commit. In an untrusted repository, Atrium first shows a trust prompt without `--worktree`, holds queued instructions, and restarts in the worktree only after human trust and pane readiness are confirmed. Use `atrium child-wait <name>` while this is pending. A timeout does not grant trust.
+
+Gemini CLI uses a separate managed profile. Antigravity uses the named `atrium-board` hook entry while preserving other hooks; an explicit hooks-disabled preference remains respected. Its completed answers come from the native transcript, with terminal text as a fallback. Automatic history indexing and sleep remain Claude-specific, apart from explicit imported-copy workflows below.
+
+## Bring selected desktop history onto the board
+
+The import dialog lists eligible **Claude and Codex** histories with nothing preselected. Import only the conversations you choose. The source stays outside the board; this is a copy workflow, not attachment to a live desktop terminal.
+
+- **Claude:** creates a separate conversation snapshot and board settings, then registers the copy as sleeping. Source files are not rewritten.
+- **Codex:** uses the native app-server's list/read/model and `thread/fork` operations. The board UUID and native copied-thread UUID are separate. Import does not submit a turn or resume, archive or terminate the source. A reported active source is refused; activity in every other client cannot be inferred from a private app-server.
+- Opening or messaging an imported Codex copy wakes that copy through `codex resume <copied-thread-id>`. Missing native identity is an error, not a fresh conversation fallback. Import alone does not start work, and waking a project does not launch all untouched imported copies.
+
+Development imports require explicitly isolated history locations. Existing Claude outside-history indexing and its bound-conversation checks remain separate from desktop import.
+
+## What v0.3 adds to the board
+
+| Area | Integrated behavior |
 |---|---|
-| Infinite canvas | Keeps projects, sessions and worktree areas together. Zoom in for a live terminal or out for a summary. |
-| Agent sessions | Runs Claude Code, Codex, Gemini CLI and shells. DeepSeek uses Claude Code through a separately configured opencodex gateway. |
-| Codex model picker | Discovers models, supports refresh and manual entry, and distinguishes the model from the session name. |
-| Attention and results | Shows requests waiting for your response and results you have not reviewed. Claude Code has richer status and approval integration. |
-| Split layouts | Arranges several session windows in one group with adjustable dividers. |
-| Agent relationships | Assigns roles between sessions and displays delegation in a relationship map. |
-| Notes and task boards | Places Markdown notes and kanban cards beside your work. |
-| Repeat tasks | Resends an instruction on an interval, when idle, or when a configured text condition matches. These requests can consume model tokens. |
-| History and recovery | Lists past Claude conversations and reconnects to sessions after window or backend restarts. |
-| Memory controls | Puts eligible idle Claude Code sessions into sleep mode and resumes their conversations when needed. |
-| Korean interface | Reworked labels, settings, errors and confirmations, including localized permission choices and Mac shortcut hints. |
+| Layout and relationships | Whole-board arrangement with undo, clearer dock/edge routing, a project-aware mission tree and drag controls at distant zoom levels. |
+| Project organization | Worktrees appear inside their repository as boxes. Folder-to-repository reclassification moves sessions, notes, boards and group membership together. Project groups organize the sidebar without creating session broadcast groups. |
+| Large sidebars | Virtualized rows, filters, keyboard navigation, width adjustment and attention counts for collapsed projects. Project archive/removal actions distinguish board records from conversation files. |
+| Terminals | Selection across scrollback, edge autoscroll and copying outside the visible viewport, with macOS copy/IME handling and provider-aware paste behavior. |
+| Reading and navigation | Session-filtered request history, copy/retry/edit-and-send, independent interface and terminal text scaling, bottom-bar visibility controls, focus-aware dialogs and arrow navigation. |
+| Startup and reliability | Engine discovery, operation readiness while the backend starts, shared concurrent start requests, model-error reporting and existing delivery/pane ownership guards. |
+| Existing tools | Markdown notes, kanban, output views, search, loops, attention indicators and session recovery remain on the same canvas. Loops can consume provider tokens. |
 
-Recent reliability fixes cover interrupted message delivery, partial conversation files, concurrent session creation and kanban updates, connection timeouts, and terminal selection when the connection budget is full.
+## Multiple clients and optional browser access
 
-## Build an application for Finder
+Desktop and browser clients can share a terminal controller while keeping their own viewport. Recent focus/input selects the sizing client; notification routing follows client activity. Reconnect handling keeps stale controller events from taking over a newer attachment.
 
-After setup, run from the **repository root**:
+**Browser and remote access are off by default.** Enable them deliberately from the local **Connected devices** settings. The backend still listens on loopback; a remote browser reaches it through explicitly configured Tailscale Serve. `atrium remote status` and `atrium remote guide` describe the setup. `atrium remote enable` previews changes; `--yes` authorizes the change. Disabling remote access closes device connections and stops new pairing.
+
+Pair through a one-time code or a request approved on the host. Device credentials are separate from the board API token. The default Tailscale policy allows the host's login and explicitly allowed logins. Connected browsers can use folder selection, file/image uploads, reconnect/latency indicators and an installable web view. These are capabilities of the host user's board, including terminal control; pairing is not a read-only share. Tailscale Funnel is not part of this flow. Passkeys and the unmerged P56–P59 proposals are not claimed as implemented.
+
+## Package for Finder
+
+After setup, from the repository root:
 
 ```sh
 node app/scripts/package-macos.mjs
 ```
 
-This creates `out/Atrium.app`. Move it into **Applications** with Finder, then open Atrium normally. The bundle includes Electron, Node 24.22.2, herdr and the required runtime dependencies. Agent CLIs and their accounts remain separate.
+The packaging path builds `out/Atrium.app` with Electron, the packaging Node runtime, herdr and runtime dependencies. Move the app with Finder. Bundled runtime paths are resolved relative to the installed bundle; CLI discovery runs on the recipient's Mac, without embedding the builder's home directory or PATH. The recipient still installs and authenticates the agent CLIs. Build for the target CPU architecture.
 
-- Build on the Mac where you intend to use it: the package records detected local CLI paths for Finder launches.
-- The package uses a **local ad-hoc signature**. It is not an Apple-notarized distribution or a downloadable DMG release.
-- Before rebuilding, move the existing `out/Atrium.app` aside. Packaging uses a temporary staging directory and publishes the bundle only after signing and verification succeed.
-- An installed app is a separate copy. Source edits require another build and installation to appear in that copy.
+Packaging uses staging, signing and verification before placing the output. Move an existing output aside before rebuilding. Source edits do not update an already installed app.
 
-## Closing the window does not stop the work
-
-Herdr owns the terminal processes, so sessions can continue after the window or app exits. The menu-bar icon provides separate controls for the app, backend and execution engine.
-
-To stop the sessions too, choose the menu item that stops **herdr and all sessions**. In Korean, this is **모든 작업과 실행 엔진 종료…**. The app-only and backend-only exit options leave sessions running.
-
-## Data and permissions
-
-- The app's control API binds to `127.0.0.1` and requires a token. This does not make the AI agents offline: their prompts and code may be sent to the configured model provider or gateway.
-- Atrium reads Claude conversation metadata and history under `~/.claude/projects`. It can automatically discover projects from previous CLI conversations. This behavior is configurable.
-- Session settings are generated separately; Atrium does not modify `~/.claude/settings.json`.
-- The default Claude permission mode is `manual`, but some session-control commands are allowlisted. Review permission and automatic-approval settings before running unattended work.
-- Archiving keeps conversation files. Supported conversation-deletion actions move the relevant files to Trash after confirmation.
+## Data, permissions and shutdown
 
 | macOS data | Default location |
 |---|---|
@@ -121,53 +130,24 @@ To stop the sessions too, choose the menu item that stops **herdr and all sessio
 | Herdr session | `~/.config/herdr/sessions/atrium` |
 | Development data | `backend/.dev/data` |
 
-`ATRIUM_DATA_DIR`, `ATRIUM_APP_USERDATA`, `ATRIUM_HERDR_SESSION` and `ATRIUM_PORT` override the corresponding defaults. Herdr also follows `XDG_CONFIG_HOME`.
+`ATRIUM_DATA_DIR`, `ATRIUM_APP_USERDATA`, `ATRIUM_HERDR_SESSION` and `ATRIUM_PORT` override defaults. Herdr also follows `XDG_CONFIG_HOME`. `ATRIUM_REMOTE_ENABLED=0` explicitly locks remote access off; an explicit environment setting overrides the saved switch.
 
-## Verification and platform status
+Preset environment values and private runtime data are stored locally; they are not an encrypted secrets vault. Managed credential files have restricted permissions. Public events omit environment values and redact raw commands. Atrium does not change `~/.claude/settings.json`. Providers can send prompts and code to their configured services or gateways.
 
-As of **2026-11-04**, local verification passed **459 backend tests and 96 UI tests**, plus the renderer build. Source compatibility is tested on the minimum and latest Node 22/24/26 versions. The macOS integration checks include nine concurrent sessions, model selection, Korean copy at 900×600, multiline paste, synthetic Korean IME events, WebGL context loss, backend crash recovery, and engine stop/start. Test groups were run separately; these are not a claim that every combination or platform has been tested.
+Closing the window does not stop herdr's work. The menu-bar icon offers separate app, backend and engine controls. To stop sessions as well, choose the action that stops **herdr and all sessions**. Archive keeps history; supported deletion actions require confirmation and move eligible files to Trash. Source desktop conversations are not deleted by importing a copy.
 
-| Environment | Status |
-|---|---|
-| Apple Silicon macOS | Source and installed-app workflows exercised locally. |
-| Intel herdr through Rosetta | Integration checks passed with ARM64 Node/Electron. This is not an Intel Mac hardware test. |
-| Intel Mac hardware | Not verified. |
-| Windows | Existing implementation retained and CI configured; native regression testing has not been performed locally. |
-
-Google model listing was also verified from the installed app. The actual Gemini CLI completed a turn and exact-ID resume against a local fake model server. A live Google worker/reviewer pair completed review → correction → re-review through board deliveries. Mixed-provider collaboration is covered separately by backend contract tests.
-
-Physical reboot recovery, real IME candidate windows and language switching, OS notification clicks, and authenticated model work across every provider still require manual validation. A passing test suite is not a security certification.
-
-The [full functional audit](docs/log/full-functional-audit.md) covers lifecycle, delegation, queues, loops, history, search, memos, kanban, layout, terminals and packaging. Another **19 browser interaction tests** passed, including a board with 100 synthetic sessions.
-
-## Development
-
-Run these commands from the repository root:
+## Development and validation
 
 ```sh
 npm --prefix backend test
 npm --prefix app test
 npm --prefix app run build
-npm --prefix app run test:mac
-npm --prefix app run test:mac:stress
 ```
 
-To include the installed Gemini CLI and Codex catalogs, Google provider UI, and Korean UI checks:
+Use `cd app && npm run mac -- --dev` for a separate development board. The [testing guide](docs/testing.md) describes isolated profiles and optional macOS integration commands. Final v0.3 test totals, native-platform checks, packaging results and release approval belong to the integration evidence; they are not asserted by this feature description. Windows behavior is retained, but retaining code is not a native Windows validation result.
 
-```sh
-ATRIUM_TEST_GEMINI=1 ATRIUM_TEST_MODELS=1 ATRIUM_TEST_COPY=1 npm --prefix app run test:mac
-```
-
-Start the development profile with `cd app && npm run mac -- --dev`. Integration tests create separate temporary profiles, folders and herdr sessions; they do not use the normal board's data.
-
-Architecture: **Electron / React / React Flow / xterm.js → local Node backend → herdr → agent CLIs**, with board state stored in SQLite.
-
-- [Testing guide](docs/testing.md)
-- [Architecture](docs/ARCH.md)
-- [Reliability validation](docs/log/resilience-validation.md)
-- [Model picker](docs/log/codex-model-picker.md)
-- [Korean UI revision](docs/log/korean-ui-rewrite.md)
+See the [architecture](docs/ARCH.md), [current decisions](docs/BRIEF.md) and [plan](docs/PLAN.md).
 
 ## License and third-party software
 
-[MIT](LICENSE). Dependency licenses and font notices are listed in [THIRD_PARTY_NOTICES](app/THIRD_PARTY_NOTICES.txt). Agent names and logos identify the corresponding tools; they do not imply affiliation or endorsement.
+[MIT](LICENSE). Dependency licenses and font notices are listed in [THIRD_PARTY_NOTICES](app/THIRD_PARTY_NOTICES.txt). Bundles retain the applicable Atrium, Electron/Chromium, Node, herdr, npm and font notices. Agent names and logos identify the corresponding tools; they do not imply affiliation or endorsement.

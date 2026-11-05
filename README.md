@@ -21,7 +21,7 @@ This source tree is **v0.3.0**. It integrates the approved upstream P30–P55 fe
 
 ## Download and build status
 
-See the [release list](https://github.com/Qualop/atrium-macos/releases) for published artifacts. The manifest version and this README do not announce a published v0.3.0 release. Final integration evidence and release artifacts are recorded separately when ready.
+Download the **macOS Apple Silicon DMG or ZIP** from the [v0.3.0 release](https://github.com/Qualop/atrium-macos/releases/tag/v0.3.0). SHA-256 checksums are included. Node 24.22.2 and herdr 0.9.5 are bundled; no separate Node installation is needed.
 
 macOS packages target macOS 13 or later and include Node and herdr. Agent CLIs, credentials and sign-in remain separate. Local packages use an ad-hoc signature; this is not Apple notarization.
 
@@ -87,7 +87,7 @@ The import dialog lists eligible **Claude and Codex** histories with nothing pre
 - **Codex:** uses the native app-server's list/read/model and `thread/fork` operations. The board UUID and native copied-thread UUID are separate. Import does not submit a turn or resume, archive or terminate the source. A reported active source is refused; activity in every other client cannot be inferred from a private app-server.
 - Opening or messaging an imported Codex copy wakes that copy through `codex resume <copied-thread-id>`. Missing native identity is an error, not a fresh conversation fallback. Import alone does not start work, and waking a project does not launch all untouched imported copies.
 
-Development imports require explicitly isolated history locations. Existing Claude outside-history indexing and its bound-conversation checks remain separate from desktop import.
+A copied conversation may use the original's working folder; importing history does not copy project files or create a worktree. Development imports require explicitly isolated history locations. Existing Claude outside-history indexing and its bound-conversation checks remain separate from desktop import.
 
 ## What v0.3 adds to the board
 
@@ -144,7 +144,7 @@ npm --prefix app test
 npm --prefix app run build
 ```
 
-Use `cd app && npm run mac -- --dev` for a separate development board. The [testing guide](docs/testing.md) describes isolated profiles and optional macOS integration commands. Final v0.3 test totals, native-platform checks, packaging results and release approval belong to the integration evidence; they are not asserted by this feature description. Windows behavior is retained, but retaining code is not a native Windows validation result.
+Use `cd app && npm run mac -- --dev` for a separate development board. The [testing guide](docs/testing.md) describes isolated profiles and optional macOS integration commands. The v0.3.0 validation includes 715 backend tests and 228 renderer tests on macOS, six Node versions, and isolated Electron tests of the packaged app: model selection, Korean input, nine concurrent sessions and backend restart recovery. Codex copying uses synthetic native-protocol fixtures; web pairing, shared terminals and revocation use a local HTTPS/WSS proxy. Real user conversations and external Tailscale devices were not used for these tests. Windows CI covers unit tests and builds; this release does not include a Windows installer.
 
 See the [architecture](docs/ARCH.md), [current decisions](docs/BRIEF.md) and [plan](docs/PLAN.md).
 

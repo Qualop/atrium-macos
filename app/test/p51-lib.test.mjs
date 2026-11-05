@@ -52,11 +52,12 @@ test('P51: wheelSteps를 나눠 쓴 뒤에도 Claude 노드 SGR 휠은 100px에 
 });
 
 test('POSIX shells and remote POSIX backends retain bracketed CR multiline paste', () => {
-  for (const platform of ['darwin', 'linux', undefined]) {
+  for (const platform of ['darwin', 'linux', null]) {
     const result = wrapPaste('echo first\r\necho second\necho third', { shell: true, platform });
     assert.equal(result, `${PASTE_START}echo first\recho second\recho third${PASTE_END}`);
     assert.ok(!result.includes(SHIFT_ENTER));
   }
+  assert.equal(wrapPaste('a\nb', { shell: true }), wrapPaste('a\nb', { shell: true, platform: process.platform }));
 });
 
 test('Cmd copy/paste and IME composition retain their keyboard semantics', async () => {

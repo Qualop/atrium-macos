@@ -178,7 +178,7 @@ test('box migration rolls back geometry and marker on late failure and can retry
 
 test('reconciliation uses real git init/removal in a temporary repository and retains content/groups', async (t) => {
   const { b, dir, content, reopen } = fixture(t); content();
-  const root = fs.realpathSync(dir);
+  const root = fs.realpathSync.native(dir); // Expand Windows 8.3 aliases just as git does.
   const localFolder = { key: pathKey(root), root, kind: 'folder' };
   b.store.rekeyWorkspace(folder.key, localFolder);
   b.sessions.get('live').workspaceKey = localFolder.key;

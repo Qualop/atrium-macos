@@ -52,10 +52,13 @@ test('quoted preset arguments retain literal content and provider model flags', 
 
 test('command env stays separate from raw command and reaches the process literally', () => {
   const secret = "a'b $HOME $(echo expanded) `echo expanded`";
-  const command = 'printf "%s" "$TOKEN"; printf "%s" "$TOKEN"';
+  const command = process.platform === 'win32' ? 'Write-Output -NoEnumerate ($env:TOKEN + $env:TOKEN)' : 'printf "%s" "$TOKEN"; printf "%s" "$TOKEN"';
   const plan = spawnPlanOf({}, { launcherDef: launcher({ harness: 'command', command, env: { TOKEN: secret } }) });
   assert.equal(plan.command, command); assert.deepEqual(plan.env, { TOKEN: secret });
-  assert.equal(execFileSync('/bin/sh', ['-c', plan.command], { encoding: 'utf8', env: plan.env }), secret + secret);
+  const output = process.platform === 'win32'
+    ? execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', plan.command], { encoding: 'utf8', env: { ...process.env, ...plan.env } }).replace(/\r?\n$/, '')
+    : execFileSync('/bin/sh', ['-c', plan.command], { encoding: 'utf8', env: plan.env });
+  assert.equal(output, secret + secret);
   const overridden = resolveLauncher(launcher({ harness: 'command', command, env: { TOKEN: secret } }), { command: 'echo override' });
   assert.equal(overridden.command, 'echo override'); assert.deepEqual(overridden.env, { TOKEN: secret });
   const preview = previewLauncher(launcher({ harness: 'command', command: 'echo hello', env: { TOKEN: secret } }));

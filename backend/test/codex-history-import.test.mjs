@@ -35,8 +35,9 @@ function fakeHistory(root, { failFork = false, copyId = id(2), model = 'fixture-
   return { history: new CodexHistory({ profile: 'real' }, { connect: async (fn) => fn(rpc) }), calls, rpc };
 }
 function fixture(t, options = {}) {
-  const root = temp(t), repo = path.join(root, 'repo'); fs.mkdirSync(repo);
-  const store = new Store(path.join(root, 'board.db')); t.after(() => store.close());
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'atrium-codex-import-')), repo = path.join(root, 'repo'); fs.mkdirSync(repo);
+  const store = new Store(path.join(root, 'board.db'));
+  t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
   const cfg = { profile: 'real', desktopSessionsDir: path.join(root, 'desktop'), claudeProjects: path.join(root, 'projects'), claudeSessionsDir: path.join(root, 'live'), sessionsDir: path.join(root, 'settings'), dataDir: root, claudeCommand: 'claude' };
   const notifications = [], history = fakeHistory(repo, options), infos = [];
   const b = { cfg, store, sessions: new Map(), hookUrl: 'http://127.0.0.1:1/hooks/claude', killing: new Set(),

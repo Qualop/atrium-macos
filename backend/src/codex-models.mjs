@@ -70,3 +70,6 @@ export function listCodexModels({ executable = findExecutable('codex'), spawnImp
     send({ id: 1, method: 'initialize', params: { clientInfo: { name: 'atrium_model_picker', title: 'Atrium', version: '0.1.0' }, capabilities: { experimentalApi: true, explicitGatewayOauth: true } } });
   });
 }
+
+// Optional synchronous cache compatibility; native model/list RPC above remains authoritative.
+export * from './codex-cache.mjs';

@@ -4,18 +4,21 @@
 // 알린 대기의 열쇠는 창을 다시 열어도 같은 대기에 다시 띄우지 않도록 localStorage에 하루 동안 둔다.
 import { getState, subscribe, wsName } from './store.js';
 import { notifyKey, shouldNotify, NOTIFY_DELAY_MS } from './lib/attention.js';
-import { askLine } from './lib/labels.js';
+import { responseNeeded } from './lib/response-needed.js';
+import { openResponseTerminal } from './response-needed.js';
 import { t } from './lib/i18n.js';
 import { perfLog } from './perf.js';
 import { notifyAllowed } from './lib/multiclient.js';
 
 const KEY = 'mt.notified';
 const DAY = 24 * 3600 * 1000;
-function load() { try { return new Map(Object.entries(JSON.parse(localStorage.getItem(KEY) || '{}'))); } catch { return new Map(); } }
+function load() { try { const now = Date.now(); return new Map(Object.entries(JSON.parse(localStorage.getItem(KEY) || '{}')).filter(([, at]) => Number.isFinite(at) && now - at < DAY)); } catch { return new Map(); } }
 function save(m) { try { const now = Date.now(); localStorage.setItem(KEY, JSON.stringify(Object.fromEntries([...m].filter(([, t]) => now - t < DAY)))); } catch {} }
 
 const done = load();
 const pending = new Map();
+const current = new Map();
+let started = false;
 export const notifyLog = []; // 시험이 읽는다
 
 function decide(id, key) {
@@ -28,25 +31,44 @@ function decide(id, key) {
   // P47: 창이 여럿 붙었으면 백엔드가 고른 클라이언트(최근에 쓴 쪽, 없으면 PC 창)만 띄운다
   const peer = notifyAllowed(getState().peers);
   if (r.notify && !peer.allowed) r = { ...r, notify: false, why: peer.reason, notifyClient: getState().peers.notify };
+  // A client that does not own OS notifications must not consume this request.
+  if (!peer.allowed) return;
   done.set(key, Date.now()); save(done);
   const rec = { at: Date.now(), sessionId: id, name: s.name, key, ...r };
-  notifyLog.push(rec);
+  notifyLog.push(rec); if (notifyLog.length > 100) notifyLog.shift();
   perfLog('notify', rec);
-  if (!r.notify) return;
+  if (!r.notify || !window.mt?.notify) return;
+  const notice = responseNeeded(s);
   const folder = s.workspaceKey ? wsName(s.workspaceKey) : String(s.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '';
-  window.mt.notify({ sessionId: id, key, title: `@${s.name} ${s.state === 'trust_wait' ? t('state.trust_wait') : t('state.waiting')}`, body: `${askLine(s)}${folder ? ` · ${folder}` : ''}` })
+  window.mt.notify({ sessionId: id, key, title: `@${s.name} ${notice?.title || t('response.terminal')}`, body: `${notice?.context || notice?.hint || t('response.hint')}${folder ? ` · ${folder}` : ''}` })
     .then((x) => { rec.result = x; }).catch((e) => { rec.result = { shown: false, reason: e.message }; });
 }
 
 function scan() {
-  for (const s of getState().sessions.values()) {
+  const sessions = getState().sessions;
+  for (const [id, key] of current) {
+    if (notifyKey(sessions.get(id)) === key) continue;
+    if (pending.has(key)) { clearTimeout(pending.get(key)); pending.delete(key); }
+    // Without a native request identity, ready → waiting is a new episode.
+    if (key.endsWith('|x') || key.includes('|error|x:')) { done.delete(key); save(done); }
+    current.delete(id);
+  }
+  for (const s of sessions.values()) {
     const key = notifyKey(s);
-    if (!key || done.has(key) || pending.has(key)) continue;
+    if (!key) continue;
+    current.set(s.sessionId, key);
+    if (done.has(key) || pending.has(key)) continue;
     pending.set(key, setTimeout(() => decide(s.sessionId, key), NOTIFY_DELAY_MS));
   }
 }
 
 export function startNotifier() {
+  if (started) return;
+  started = true;
   subscribe(scan);
-  window.mt.onNavigate((id) => { const st = getState(); if (st.navigateTo) st.navigateTo(id); });
+  window.mt?.onNavigate?.((target) => {
+    const id = typeof target === 'string' ? target : target?.sessionId;
+    if (id) openResponseTerminal(id);
+  });
+  scan();
 }

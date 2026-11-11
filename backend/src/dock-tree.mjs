@@ -248,13 +248,14 @@ export const PRESETS_BY_COUNT = {
   2: ['row', 'col', 'main2-left', 'main2-top'],
   3: ['main-left', 'main-right', 'main-top', 'row', 'col'],
   4: ['grid', 'main-left-3', 'main-right-3', 'main-top-3', 'row', 'col'],
-  5: ['top3-bottom2', 'main-left-4', 'big2-small3', 'main-top-4', 'cols-2-3'],
-  6: ['grid-3x2', 'grid-2x3', 'main-big5', 'big2-small4'],
+  5: ['top3-bottom2', 'main-left-4', 'big2-small3', 'main-top-4', 'cols-2-3', 'row', 'col'],
+  6: ['grid-3x2', 'grid-2x3', 'main-big5', 'big2-small4', 'row', 'col'],
 };
 export const EVEN_PRESETS = ['even-rows', 'even-cols', 'two-rows'];
+export const LINE_PRESETS = ['row', 'col']; // P73: 세션 수와 상관없이 모두 가로 한 줄(H), 모두 세로 한 줄(V)
 export function presetsFor(n) {
   if (!(n >= 2)) return [];
-  return PRESETS_BY_COUNT[n] || EVEN_PRESETS;
+  return PRESETS_BY_COUNT[n] || [...EVEN_PRESETS, ...LINE_PRESETS];
 }
 const cells = (n) => (typeof n === 'number' ? 1 : n.kids.reduce((a, k) => a + cells(k), 0));
 // n을 줄 r개에 고르게(앞 줄이 하나 더 많다)
@@ -275,7 +276,7 @@ function evenTree(kind, ids) {
 // 고른 노드(ids, 채울 순서)를 틀로 짠 나무. 칸보다 적으면 빈 칸은 없앤다. 많으면 남는 노드는 마지막 칸을 그 칸의 마디와 다른 방향으로 다시 나눠 넣는다
 export function presetTree(name, ids) {
   const p = PRESETS[name];
-  if (!p) throw new Error(`없는 배치 틀: ${name}`);
+  if (!p) throw new Error(`분할 레이아웃을 찾을 수 없습니다: ${name}`);
   if (p.line) return normalize({ dir: p.line, kids: [...ids], ratios: ids.map(() => 1) });
   if (p.even) return evenTree(p.even, [...ids]);
   const k = cells(p.tree);
@@ -413,6 +414,19 @@ export function edgeOf(t, id, side) {
   return found || { kind: 'outer', side };
 }
 
+// P73: 덩어리 바깥 테두리 끌기. side 쪽 테두리를 판 좌표 move(왼쪽·오른쪽은 dx, 위·아래는 dy)만큼 옮긴 바깥.
+// 나무(비율)는 그대로라 칸이 비율대로 함께 커지고 작아진다. 맞은편 테두리는 그대로, 잎마다 최소 크기를 지킨다
+export function dragOuter(t, outer, side, move, min = LEAF_MIN) {
+  const need = minSize(t, min);
+  const m = Math.round(Number(move) || 0);
+  const o = { x: Math.round(outer.x), y: Math.round(outer.y), w: Math.round(outer.w), h: Math.round(outer.h) };
+  if (side === 'right') return { ...o, w: Math.max(need.w, o.w + m) };
+  if (side === 'bottom') return { ...o, h: Math.max(need.h, o.h + m) };
+  if (side === 'left') { const w = Math.max(need.w, o.w - m); return { ...o, x: o.x + o.w - w, w }; }
+  if (side === 'top') { const h = Math.max(need.h, o.h - m); return { ...o, y: o.y + o.h - h, h }; }
+  return o;
+}
+
 // 덩어리 바깥 테두리에 닿은 잎 id의 side 쪽을 바깥으로 delta(판 좌표, +면 커짐)만큼 민다.
 // 그 쪽 방향의 조상 마디마다 잎이 든 자식만 delta만큼 길어지고 다른 자식은 길이가 그대로다(그 자식들 사이 비율도 그대로).
 // 다른 방향 마디의 비율은 그대로다. 잎 쪽 자식이 최소 크기보다 작아지지 않게 delta를 줄인다 → { tree, outer, delta }
@@ -496,4 +510,45 @@ export function evenDivider(t, outer, path, index, min = LEAF_MIN) {
   const dv = layout(t, outer, min).dividers.find((d) => d.index === index && pathEq(d.path, path));
   if (!dv) return t;
   return moveDivider(t, outer, path, index, (dv.sizes[index + 1] - dv.sizes[index]) / 2, min);
+}
+
+// ---------- P80: 덩어리 크기(틀 비율은 그대로, 바깥만) ----------
+// 크기 막대(방향·비율·단계)는 나무 비율을 바꾸지 않고 바깥 W×H만 정한다. 잎은 바깥의 a × b 몫(a: 가로 마디 비율의 곱, b: 세로 마디 비율의 곱)이라
+// 잎 모양 = W/H × a/b다. 바깥 모양은 log(W/H) = log(고른 모양) − L로 고른다. L은 잎 넓이(a·b) 무게의 log(a/b) 평균이다
+// (넓이 무게로 잎 모양과 고른 모양의 로그 차 제곱 합이 가장 작다). 단, 가장 큰 칸이 다른 칸보다 고른 모양에서 멀지 않게 L을 자른다
+// (작은 칸이 여럿이면 넓이 합이 큰 칸을 이겨 큰 칸이 더 어긋난다: 1 + 4). 고른 틀(H, V, 격자)은 모든 칸이 정확히 고른 모양이다.
+// 넓이 = 같은 값의 단독 세션 넓이 × √n(n = 잎 수). 덩어리를 "단독 세션 하나"(dockVirtual)로 보면 크기 막대가 단독 세션과 같은 규칙으로 돈다.
+export function leafShares(t, a = 1, b = 1, out = []) {
+  if (t == null) return out;
+  if (isLeaf(t)) { out.push({ id: t, a, b }); return out; }
+  const sum = t.ratios.reduce((s, r) => s + r, 0) || 1;
+  t.kids.forEach((k, i) => leafShares(k, t.dir === 'row' ? (a * t.ratios[i]) / sum : a, t.dir === 'col' ? (b * t.ratios[i]) / sum : b, out));
+  return out;
+}
+export function shapeShift(t) {
+  const ls = leafShares(t).map((l) => ({ w: l.a * l.b, k: Math.log(l.a / l.b) }));
+  const wsum = ls.reduce((s, l) => s + l.w, 0);
+  if (!(wsum > 0)) return 0;
+  let L = ls.reduce((s, l) => s + l.w * l.k, 0) / wsum;
+  const top = Math.max(...ls.map((l) => l.w));
+  const big = ls.filter((l) => l.w >= top * (1 - 1e-6)), rest = ls.filter((l) => l.w < top * (1 - 1e-6));
+  let lo = -Infinity, hi = Infinity;
+  for (const g of big) for (const l of rest) { const mid = (g.k + l.k) / 2; if (l.k > g.k + 1e-9) hi = Math.min(hi, mid); else if (l.k < g.k - 1e-9) lo = Math.max(lo, mid); }
+  if (lo <= hi) L = Math.min(hi, Math.max(lo, L));
+  return L;
+}
+const leafCount = (t) => Math.max(1, leaves(t).length);
+// 덩어리 바깥(outer) → 같은 규칙의 단독 세션 크기 { w, h }(모양 = W/H × e^L, 넓이 = 바깥 넓이 / √n)
+export function dockVirtual(t, outer) {
+  if (!outer || !(outer.w > 0) || !(outer.h > 0)) return null;
+  const m = (outer.w / outer.h) * Math.exp(shapeShift(t));
+  const area = (outer.w * outer.h) / Math.sqrt(leafCount(t));
+  return { w: Math.sqrt(area * m), h: Math.sqrt(area / m) };
+}
+// 단독 세션 크기(single) → 덩어리 바깥 { w, h }(dockVirtual의 반대)
+export function dockFit(t, single) {
+  if (!single || !(single.w > 0) || !(single.h > 0)) return null;
+  const s = (single.w / single.h) * Math.exp(-shapeShift(t));
+  const area = single.w * single.h * Math.sqrt(leafCount(t));
+  return { w: Math.round(Math.sqrt(area * s)), h: Math.round(Math.sqrt(area / s)) };
 }

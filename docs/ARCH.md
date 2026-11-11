@@ -1,6 +1,6 @@
 # Atrium 설계
 
-v0.3 통합 소스의 현재 구조를 적는다. 목적과 경계는 `docs/BRIEF.md`, 결정 경위는 `docs/decisions.md`, 남은 확인은 `docs/PLAN.md`에 둔다. 코드가 이 문서의 절 번호와 기능 번호(A1, H5 등)를 참조하므로 기존 번호를 유지한다. 이 문서는 시험 결과나 배포 승인을 대신하지 않는다.
+0.4 통합 소스의 구조를 적는다. 목적과 경계는 `docs/BRIEF.md`, 결정 경위는 `docs/decisions.md`, 남은 검증은 `docs/PLAN.md`에 둔다. 코드가 참조하는 절·기능 번호를 유지한다. 기능 설명은 통합·native 실행 환경·패키징 검증이나 배포 완료를 뜻하지 않는다.
 
 ## 1. 프로세스 구조
 
@@ -69,7 +69,7 @@ Claude 신뢰 예상은 `~/.claude.json`을 읽기만 한다. 커밋이 있는 g
 
 ### A. 알아차리기
 
-- **A1 내 답이 필요하다.** 모든 프로젝트의 waiting을 내 차례 목록에 모은다. 질문 내용은 hook·화면에서 얻고 승인 전 현재 blocked·질문 식별자를 재확인한다. 제공자에 따라 터미널에서 답하도록 안내한다. 로그인·신뢰를 대신 승인하지 않는다. OS 알림은 활동 클라이언트와 이미 보는 노드를 고려해 라우팅한다.
+- **A1 내 답이 필요하다.** `ResponseNotice`가 질문·신뢰·로그인·오류의 맥락과 실제 터미널로 가는 동작을 제공한다. PC 승인·답변 카드는 제거한다. OS 알림도 해당 터미널을 열며 활동 클라이언트·중복·현재 보이는 노드를 고려한다. 도구 자동 모드가 로그인·신뢰·질문에 답하지는 않는다.
 - **A2 검토 대기.** 보지 않은 마지막 답과 턴 상태를 구분한다. 답은 hook·native 기록·허용된 화면 fallback 중 실제 출처를 표시한다.
 - **A3 복귀 요약.** 마지막으로 보드를 본 뒤 바뀐 내용을 세션과 종류별로 모아 보여준다. 처음 시작을 재시작으로 세지 않는다.
 - **A4 조용함.** 최근 상태·hook·출력 활동을 기준으로 보조 표시한다. 침묵만으로 완료를 판정하지 않는다.
@@ -79,7 +79,7 @@ Claude 신뢰 예상은 `~/.claude.json`을 읽기만 한다. 커밋이 있는 g
 
 - **B1 `@이름`으로 말 걸기.** 세션별 직렬 대기열을 사용한다. ready/error이며 현재 관리 에이전트와 패널이 유효할 때만 제출한다. 승인·신뢰·시작·작업·절전·최근 사용자 입력 중에는 보류한다. UTF-8 글과 줄바꿈·괄호 붙여넣기를 보존하고 제공자별 신호로 제출을 확인한다. 전송 중 재시작이나 연결 세대 변경을 현재 턴으로 오인하지 않는다.
 - **B2 여러 세션에.** `@이름` 여럿과 `@all`을 지원한다. 셸은 요청 전달 대상이 아니다. 서로 다른 작업을 나누는 것은 에이전트의 협업 명령으로 한다.
-- **B3 새 세션 시작.** `spawnPlanOf(b,p)`가 호출자 또는 기존 기본값을 풀어 `{kind,flavor,launcher,launcherId,command,model,effort,permissionMode,allowHerdr,extraArgs,env,gateway,args}`를 만든다. argv 배열의 경계를 보존한다. Backend는 이름을 예약하고 제공자·게이트웨이를 확인한 뒤 private 설정·workspace env·패널을 준비한다. Claude는 hook·세션 ID·플러그인, Gemini/agy는 각 관리 통합, Codex는 private 자격 증명과 협업 문맥을 쓴다. 첫 요청은 B1로 전달한다.
+- **B3 새 세션 시작.** `spawnPlanOf`가 호출자·기존 기본값·override로 제공자, 모델, 실행 명령, argv와 env를 푼다. Backend는 이름을 예약하고 제공자·게이트웨이·관리 설정·패널을 준비한다. `auto-approval.mjs`는 부모 권한을 제공자에 맞게 변환하고 보드의 `agentAutoApprove`가 켜졌으면 실행·복구 옵션을 자동 모드로 바꾼다. 공개 기본값은 false이고 전역 CLI 설정은 고치지 않는다. 첫 요청은 B1로 전달한다.
 - **B4 호출자와 모델.** `launchers.mjs`가 프리셋·즐겨찾기·이행·미리보기를 관리한다. Codex/Gemini/agy 모델은 `agent.models`의 현재 목록, Claude는 별칭, 게이트웨이는 모델 endpoint에서 가져온다. `models.mjs`는 정확한 ID·별칭·자연어 이름을 풀며 모호함과 미등록 이름을 명시한다. 기본 Gemini 프리셋은 agy 하나이고 `flavor`로 Gemini CLI를 가장하지 않는다. 기존 DeepSeek 즐겨찾기는 유지한다.
 
 명령 프리셋은 원문을 터미널로, env는 `workspace.create.env`로 보낸다. env 앞머리나 eval wrapper를 만들지 않는다. 원문·환경은 복구용 비공개 `rt.launcherCommand`·`rt.launcherEnv`에 보존하고 공개 이벤트의 command는 가린다. 로컬 저장 데이터는 암호화 보관함이 아니다.
@@ -95,7 +95,7 @@ Claude 신뢰 예상은 `~/.claude.json`을 읽기만 한다. 커밋이 있는 g
 - **D1 자원.** 소유 패널의 셸 PID와 하위 프로세스 메모리를 조회한다. Windows는 프로세스 표, macOS는 POSIX 조회를 사용한다. 연결 예산·WebGL 예산의 실제 값은 코드에서 관리한다.
 - **D2 끄기.** 현재 소유한 패널·workspace만 정리한다. 형제 패널이 있거나 열거가 불확실하면 workspace 전체를 닫지 않는다. 프로세스 이름으로 일괄 종료하지 않는다. 보관·삭제와 확인 절차를 구분하며 지원되는 기록 파일 삭제는 휴지통으로 보낸다.
 - **D3 herdr 화면이 붙음.** 별도의 herdr TUI가 같은 패널을 제어하는 경우를 감지해 알린다. 보드 클라이언트끼리는 공유 제어기 소유권으로 크기를 정한다.
-- **D4 잠재우기.** 자동 절전 대상은 자격이 되는 관리 Claude 세션이다. 리포에 작업·승인·신뢰 관문·초안·전달·루프 등 활동이 남으면 보류한다. 기존 Claude는 리포 단위로 깨우되 미사용 가져오기 사본은 제외한다. Codex 가져오기 사본은 `wakeCodexSession`으로 고른 native UUID만 깨운다. Node 클릭·branch wake·대기열 tick도 이 경로를 사용한다. 실패한 패널을 닫지 못했으면 추적을 유지한다.
+- **D4 잠재우기.** 관리 Claude의 프로젝트·세션 규칙을 구분해 `sleep.scope`에 저장한다(P111). 프로젝트가 바빠도 개별 세션이 자격을 갖추면 잠재우고, 프로젝트 깨우기는 개별 절전 세션과 미사용 사본을 제외한다. 개별 절전 세션 선택은 그것만 깨운다. 작업·신뢰 관문·초안·전달·루프·백그라운드 작업을 보호한다. Codex 사본은 저장한 UUID만 깨우며 실패한 패널의 추적을 유지한다.
 
 ### E. 다시 들어가기
 
@@ -115,17 +115,17 @@ Claude 플러그인은 herdr와 `atrium` 스킬, 옛 `delegate` 별칭, `atrium`
 ### G. 워크스페이스와 일반 셸
 
 - **G1 워크스페이스.** 저장소는 git 공통 폴더, 일반 폴더는 해당 경로로 식별한다. 워크트리는 본 저장소 키를 공유한다. 폴더가 git 저장소로 바뀌면 세션·메모·칸반·도킹·대화 노드·그룹 소속을 이행한다. 프로젝트 제거는 보드 데이터의 제거/보관 선택을 받으며 디스크의 폴더와 대화 파일을 지우는 명령과 구분한다.
-- **G2 일반 셸.** 전용 herdr의 에이전트 없는 패널을 노드로 둔다. 에이전트 등장·종료 때 같은 노드를 전환한다. 새 셸은 workspace를 만들고 명령 프리셋이면 별도 env와 원문 명령을 사용한다. 셸에는 메시지 첫 지시나 승인 카드를 보내지 않는다.
+- **G2 일반 셸.** 전용 herdr의 에이전트 없는 패널을 노드로 둔다. 에이전트 등장·종료 때 같은 노드를 전환한다. 새 셸은 workspace를 만들고 명령 프리셋이면 별도 env와 원문 명령을 사용한다. 셸의 명령은 실제 터미널에서 입력한다.
 - **G4 가로지르기.** 내 차례·검토 대기·문제·검색·자원은 모든 프로젝트를 가로지른다. 프로젝트 가상 그룹은 정리·탐색용이며 예전 세션 전송 그룹과 다르다.
 
 ### H. 단일 캔버스와 관계 표현
 
 - **H1 한 캔버스와 영역.** 프로젝트 영역이 세션·메모·칸반·도킹을 감싸고 워크트리 상자를 내부에 둔다. 새 항목은 빈자리에 놓고, 저장된 배치와 사용자 위치를 유지한다. 뷰포트는 클라이언트별로 저장한다.
-- **H2 바로 가기.** 프로젝트 탭·가상화 사이드바·검색으로 노드와 영역에 간다. 검색은 보드 색인과 기록을 대상으로 하며 전체 외부 transcript를 무조건 스캔하지 않는다. Mac 기본 수정키와 입력 중 단축키 보호를 유지한다.
+- **H2 바로 가기와 이름.** 탭·가상화 사이드바·검색으로 이동한다. 표시 이름 `label`은 한글을 허용하고 에이전트 주소 `name`은 유지한다. `findSession`은 ID·주소·표시 이름을 풀며 요약은 표시 이름과 주소를 구분한다. 검색은 보드 색인을 대상으로 하고 Mac 수정키·IME 입력을 보호한다.
 - **H3 오버뷰.** 먼 노드에도 이름·상태·질문·최근 요청/답을 보여준다. 작은 얼굴에서 끌기와 들어가기를 구분한다.
 - **H4 바로 들어가기.** 화면 크롬을 고려해 대상 노드나 도킹을 화면에 맞춘다. 초점·선택·터미널 연결 시점을 구분하고 대화상자의 Esc·Tab·복귀 초점을 관리한다.
-- **H5 붙여 묶기.** 도킹은 분할 나무와 비율을 저장하는 보드 배치다. 구성 노드를 붙이고 떼거나 배치 틀을 적용해도 herdr 레이아웃을 바꾸지 않는다. 도킹 내부 연결은 가장자리·괄호형 경로 등으로 본문을 덜 가리며, 설명은 배율과 선택 상태에 맞춘다.
-- **H7 크기와 정리.** 세션·도킹·메모·칸반·워크트리 상자와 프로젝트 영역을 고려한다. 프로젝트 하나 또는 보드 전체를 명시적으로 정리하고 되돌릴 수 있다. 배치 틀과 크기 변경은 주변 노드와 겹침을 처리한다. 자리가 바뀐 까닭을 보드 이벤트에 남긴다.
+- **H5 붙여 묶기.** 도킹은 분할 나무·비율을 저장하며 herdr 레이아웃을 바꾸지 않는다. 같은 저장소의 여러 워크트리를 섞어 묶어도 각 노드의 원래 소속을 유지한다. 워커는 부모 오른쪽의 열로 배치하고 관계선은 본문을 덜 가리게 그린다.
+- **H7 크기와 정리.** 도킹은 가상 단독 세션의 크기와 실제 바깥 크기를 구분하며 틀 비율을 지킨다. 정리는 프로젝트·상자·메모·칸반과 관계를 고려하고 사람이 정한 그룹 순서·제외를 보존한다. 새 안팎 폴더는 자동 그룹으로 묶는다. 프로젝트·보드 전체 정리와 되돌리기에서 주변 겹침을 처리한다.
 - **H8 `@all`.** 보드 전체의 에이전트 대상이다. API에 workspace를 주면 그 프로젝트 범위로 좁힐 수 있다. 프로젝트 가상 그룹을 자동 수신 대상으로 해석하지 않는다.
 
 ### I. 그 밖의 기능
@@ -137,6 +137,8 @@ Claude 플러그인은 herdr와 `atrium` 스킬, 옛 `delegate` 별칭, `atrium`
 - **I6 미션 맵.** 역할·위임·요청·루프를 프로젝트와 부모/자식 트리로 보여준다. 접기·개수·선택을 보드 상태와 동기화한다.
 - **I7 설정과 트레이 상주.** 언어, 트레이, worker 상한, 기록, 절전, herdr 경로와 원격 사용자 정책을 관리한다. 호출자는 별도 CRUD와 즐겨찾기를 사용한다. 화면 크기·터미널 글자 크기·하단 표시 등 클라이언트 표현 설정은 UI 경로를 따른다. 트레이는 앱·백엔드·엔진 수명을 구분해 제어하고 활동 클라이언트 알림 정책을 따른다.
 - **I8 셸과 채택 패널의 복구.** 남은 패널은 보존하고, 잃은 패널은 출처·native ID·관리 여부에 맞는 경로로 복구한다. 명령 프리셋의 private 원문과 env는 공개 이벤트를 대신해 복구에 사용한다. 가림 문자열을 원문으로 실행하지 않는다.
+
+- **I9 앱 업데이트.** `Qualop/atrium-macos`의 stable/dev 완성 앱 ZIP을 받아 체크섬·서명·번들·CPU·런타임을 검사한다. 별도 helper가 설치 Mac 앱을 교체·재실행하고 실패하면 이전 번들로 복구한다. 릴리스 소스 빌드나 npm 실행으로 체크아웃을 덮지 않는다.
 
 ### J. 세션 되찾기와 사이드바
 
@@ -160,9 +162,9 @@ Claude 플러그인은 herdr와 `atrium` 스킬, 옛 `delegate` 별칭, `atrium`
 ### L. 여러 클라이언트와 원격
 
 - **L1 공유 상태.** 각 연결은 클라이언트 ID·종류·활동을 알린다. 뷰포트는 별도로 저장하고 노드 이동·선택 관련 최신 보드 상태를 전달한다. 터미널은 공유 구독과 크기 소유권, 알림은 활동 클라이언트 선택을 사용한다.
-- **L2 웹과 기기.** 원격/브라우저 기능은 기본 꺼짐이다. local-only `remote.configure`나 명시적 환경 설정으로 켠다. 코드 또는 호스트 승인 요청으로 기기 토큰을 발급하고 서버에는 해시를 저장한다. 기기 회수는 해당 연결을 끊는다. 원격을 끄면 새 pairing을 중지하고 기기 연결을 닫는다. 보드 API 토큰과 child 세션 토큰은 별도 경계다.
+- **L2 웹과 기기.** 원격은 기본 꺼짐이고 호스트가 켠 뒤 코드·승인으로 기기를 등록한다. 쿠키는 HttpOnly·SameSite=Strict와 HTTPS의 Secure를 쓰며 서버에는 세션 해시를 둔다. `remotePasskey` 기본값도 false이며 켜면 출처·RP ID에 묶인 WebAuthn 등록·로그인과 세션 만료를 적용한다. 회수는 세션·연결을 끊는다. 보드·child 자격 증명과 분리한다.
 - **L3 Tailscale.** 진단·Host/Origin·동일 로그인/허용 목록 정책과 Serve 구성을 구분한다. CLI 변경은 명시적 확인이 있을 때만 실행하며 Funnel을 사용하지 않는다. 호스트의 loopback API를 광역 주소에 직접 bind하지 않는다. 등록 기기는 호스트 보드의 터미널 조작 권한을 가지며 읽기 전용 사용자가 아니다.
-- **L4 브라우저 기능.** 폴더 탐색, 파일·이미지 업로드, 재접속·지연 표시, 설치형 웹 화면과 터치 동작을 제공한다. 업로드는 보드 데이터 경로와 전송 검사를 따른다. 미통합 P56~P59의 passkey·인증 구조를 이 기능의 구현으로 주장하지 않는다.
+- **L4 휴대폰·푸시.** 휴대폰 보드·미션·터미널, 터치 입력·탐색·업로드와 설치형 웹 화면을 둔다. Web Push는 기기별 허용·구독·알림 설정을 사용하고 브라우저 푸시 서비스를 거친다. 원격 차단은 새 pairing·기기 연결·푸시 구독을 중지한다. 재접속과 서비스 워커 갱신은 입력·연결 세대를 지킨다.
 
 ## 5. 백엔드 모듈
 
@@ -170,7 +172,7 @@ Claude 플러그인은 herdr와 `atrium` 스킬, 옛 `delegate` 별칭, `atrium`
 |---|---|
 | `herdr/adapter.mjs`, `herdr/discover.mjs` | 실행 파일 탐색·호환 판정·서버 수명·소켓 요청·이벤트 구독·workspace env 전달 |
 | `backend.mjs`, `features.mjs`, `config.mjs`, `client.mjs` | 초기화 ready gate, 관리 세션 등록·상태·API 연결, 프로필, 동시 백엔드 시작 재사용 |
-| `launchers.mjs`, `spawn-plan.mjs` | 프리셋 저장·이행·검사·미리보기·즐겨찾기, 제공자별 순수 실행 계획과 원문/env 분리 |
+| `launchers.mjs`, `spawn-plan.mjs`, `auto-approval.mjs` | 프리셋·즐겨찾기·실행 계획, 부모 권한 변환·보드 도구 자동 옵션, 원문/env 분리 |
 | `models.mjs`, `codex-models.mjs`, `gemini-models.mjs`, `agy.mjs` | 자연어 모델 해석, 실제 제공자 catalog, gateway 목록, 제공자별 검증 |
 | `launch.mjs`, `gemini.mjs`, `codex-session.mjs` | private 관리 설정, Claude 인자·신뢰 예상, Gemini profile, Codex 문맥·자격 증명·native resume |
 | `branch.mjs`, `bin/atrium-child.mjs` | child 인증·제공자 상속·상한 예약·자손 정리·신뢰 관문·catalog·생성 스킬 |
@@ -178,17 +180,19 @@ Claude 플러그인은 herdr와 `atrium` 스킬, 옛 `delegate` 별칭, `atrium`
 | `delivery.mjs`, `answer.mjs`, `text.mjs` | 세션별 전달 직렬화·제출 확인, 현재 질문 답하기, 글 정규화 |
 | `relay.mjs`, `herdr/adapter.mjs`의 Controller, `frame-batch.mjs` | 소유 제어기, 공유 화면 스트림·입력·resize, 원격 프레임 배치 |
 | `multiclient.mjs`, `peers.mjs` | 클라이언트별 viewport·터미널 크기 소유권·활동·알림 라우팅 |
-| `web.mjs`, `tailscale.mjs`, `bin/atrium-remote.mjs` | opt-in 웹 화면·pairing·기기·폴더·업로드, Tailscale 진단·허용 정책·명시적 변경 |
+| `web.mjs`, `web-auth.mjs`, `passkey.mjs`, `tailscale.mjs` | opt-in 웹·기기 정책, 쿠키 세션·WebAuthn·회수, 명시적 Serve 변경 |
 | `store.mjs`, `store-*.mjs` | SQLite 세션·private runtime·이벤트·보드·관계·색인·import 이력·소속 이행 |
 | `git.mjs`, `workspaces.mjs`, `workspace-merge*.mjs` | 저장소 키·경로·브랜치 조사, 폴더→저장소 소속 이행 |
 | `canvas.mjs`, `canvas-ops.mjs`, `region-layout.mjs`, `dock-tree.mjs` | 충돌·영역·분할 나무·전체 정리·되돌리기 |
-| `worktrees.mjs`, `worktree-areas.mjs`, `ws-groups.mjs`, `ws-close.mjs` | 리포 내부 worktree 상자, 프로젝트 가상 그룹·정렬·제거 계획 |
+| `worktrees.mjs`, `worktree-areas.mjs`, `ws-groups.mjs`, `ws-nest.mjs`, `ws-close.mjs` | 내부 worktree 상자·혼합 도킹, 폴더 자동 그룹·제거 계획 |
 | `links.mjs`, `mission.mjs`, `spawns.mjs` | 역할·위임 기록, 미션 그래프, 기록 속 생성 관계 |
 | `recall.mjs`, `convos.mjs`, `archive.mjs`, `missed.mjs`, `convo-canvas.mjs` | 기존 Claude history 색인·묶임·복구, 보관·missed, 대화 카드 배치 |
 | `desktop-import.mjs`, `codex-import.mjs`, `codex-protocol.mjs`, `store-imports.mjs` | 명시적 선택 사본, Claude snapshot, Codex native 프로토콜과 import 이력 |
-| `sleep.mjs`, `resources.mjs` | Claude 자동 절전·선택 Codex 사본 깨우기, 소유 프로세스 자원 |
+| `sleep.mjs`, `resources.mjs` | Claude 프로젝트·세션 절전 범위, 선택 Codex 사본 깨우기, 소유 프로세스 자원 |
 | `search.mjs`, `outputs.mjs`, `thread.mjs`, `memos.mjs`, `kanban.mjs`, `loops.mjs`, `changes.mjs` | 검색·출력·요청 기록·메모·카드·반복·복귀 요약 |
 | `settings.mjs`, `msg.mjs`, `api.mjs` | 설정 정의·기존 기본값 유지, 표시 메시지 열쇠, 인증된 요청·이벤트·ready gate |
+| `session-label.mjs`, `web-push.mjs`, `push-cycle.mjs` | 표시 이름·안정된 주소, 기기별 알림 구독·전달 |
+| `update.mjs`, `updater.mjs`, `update-swap.mjs`, `update-verify.mjs`, `update-native.mjs` | 소유자 저장소의 Mac 번들 조회·검증·교체·백업 복구 |
 | `rename-migrate.mjs`, `migrate*.mjs` | 기존 보드 이름·schema·좌표 이행 |
 | `bin/atrium.mjs`, `bin/atrium-features.mjs` | 로컬 API의 CLI. 옛 mtask 별칭 유지 |
 | `app/src/main/cli-paths.mjs`, `app/scripts/package-macos.mjs` | 수신자 Mac의 CLI 탐색, 상대 번들 경로·서명·라이선스 패키징 |
@@ -208,6 +212,7 @@ WebSocket 요청은 `{id,method,params}`다. 로컬 CLI는 `atrium call <메서�
 | `launcher.list`, `launcher.create`, `launcher.update`, `launcher.delete`, `launcher.favorite`, `launcher.order`, `launcher.preview` | 호출자·즐겨찾기·지원 필드·명령 미리보기 |
 | `session.send {target,text,workspace?,source?}`, `delivery.cancel {deliveryId}` | 대상별 전달·Thread 항목, 전달 취소 |
 | `session.answer {sessionId,toolUseId?,since?,choice?,picks?,text?}` | 현재 질문에 허용된 입력 또는 stale/터미널 안내 |
+| `session.rename {session,name?,clear?,by?}` | 표시 이름 변경·비움 → name·address·label |
 | `session.kill {session,confirm,after?}`, `session.wake {session,wait?,why?}` | 세션 종료/보관/삭제, 제공자별 깨우기 |
 | `session.list`, `session.get`, `session.messages`, `session.events` | 공개 요약·메시지·이벤트. private runtime 원문·env는 공개 요약에서 제외 |
 | `session.markSeen`, `session.touch`, `session.briefing`, `session.clearInterrupted`, `board.markSeen` | 봤음·활동·복귀·끊긴 턴 |
@@ -233,12 +238,12 @@ WebSocket 요청은 `{id,method,params}`다. 로컬 CLI는 `atrium call <메서�
 | `output.get`, `output.save`, `thread.list` | 실제 턴 답변·저장 파일·요청 기록 |
 | `memo.create`, `memo.update`, `memo.delete`, `memo.list`, `kanban.create`, `kanban.update`, `kanban.delete`, `kanban.list` | 캔버스 글과 카드·열 |
 | `loop.create`, `loop.pause`, `loop.resume`, `loop.delete`, `loop.list`, `mission.graph` | 반복 요청 상태, 역할/위임 그래프 |
-| `settings.get`, `settings.set` | schema와 값. worker 상한·기존 기본값·herdr 경로·언어·절전·원격 사용자 정책 |
+| `settings.get`, `settings.set` | schema와 값. worker 상한·도구 자동 모드·프로젝트/세션 절전·원격 정책 |
 | `recall.list`, `recall.closed`, `recall.reopen`, `recall.dismiss` | 닫힌 관리 세션·정확한 대화의 복구 |
 | `convo.list`, `convo.open`, `convo.binding`, `convo.scan`, `convo.discover`, `archive.add`, `archive.restore`, `archive.old`, `archive.list` | 기존 Claude 밖 대화·묶임·보관 |
 | `convo.nodes`, `convo.move`, `convo.subagents`, `convo.classify`, `missed.list`, `missed.delete` | 대화 카드·분류·확인된 파일 정리 |
 | `desktop.list`, `desktop.import {selections:[{provider,appSessionId}]}` | 기본 선택 없는 후보, 선택한 Claude/Codex 사본 등록·건너뜀 사유 |
-| `workspace.sleep`, `workspace.wake`, `workspace.sleepIdle`, `sleep.status` | 자격 있는 절전·깨우기·상태 |
+| `workspace.sleep`, `workspace.wake`, `workspace.sleepIdle`, `sleep.status` | 절전·깨우기·진단과 repo/session 범위. 개별 절전은 프로젝트 깨우기에서 제외 |
 | `resources.get`, `herdr.clients`, `inbox.list`, `delivery.list`, `changes.since` | 자원·별도 제어기·내 차례·전달·복귀 변화 |
 
 **Child HTTP**
@@ -260,6 +265,9 @@ WebSocket 요청은 `{id,method,params}`다. 로컬 CLI는 `atrium call <메서�
 | `web.status`, `remote.status`, `remote.configure {enabled}` | opt-in 상태·진단, local-only 활성화 |
 | `device.list`, `device.code`, `device.cancelCode`, `device.approve`, `device.deny`, `device.rename`, `device.revoke` | 기기와 pairing. 코드 발급·승인은 호스트 전용 |
 | HTTP `/web/pair/code`, `/web/pair/request`, `/web/pair/poll` | 새 기기 등록. 원격 비활성 상태에서는 허용하지 않음 |
+| HTTP `/web/passkey/*`, `/web/me`, `/web/logout` | 출처·챌린지 검증, 쿠키 세션 조회·종료 |
+| `push.status`, `push.subscribe`, `push.unsubscribe`, `push.prefs`, `push.test` | 현재 기기의 푸시 구독·알림 설정·시험 |
+| `update.status`, `update.check`, `update.apply`, `update.leaving` | 채널·검증·교체 준비, 설치 앱 종료 협조 |
 | `fs.roots`, `fs.list`, HTTP 업로드 | 인증된 브라우저의 호스트 폴더 목록·허용된 파일 수신 |
 | `events.subscribe` | 세션·보드·프로젝트·관계·기능·호출자·기기·import 변화 |
 | `terminal.attach`, `terminal.detach`, `terminal.input`, `terminal.resize`, `terminal.snapshot` | 현재 제어기·attachment 식별자와 공유 프레임·입력·크기 소유권 |
@@ -273,7 +281,7 @@ WebSocket 요청은 `{id,method,params}`다. 로컬 CLI는 `atrium call <메서�
 | 요소 | 현재 역할 |
 |---|---|
 | 세션 노드 | 제공자·이름·상태·부모·역할·브랜치와 터미널/대화/요약 얼굴 |
-| 승인 줄 | 현재 질문과 선택지. 제공자별로 터미널 답하기를 안내하고 초점/크기를 관리 |
+| 응답 필요 안내 | `SessionExtras.jsx`의 `ResponseNotice`: 질문·신뢰·로그인·오류를 보여 주고 실제 터미널로 이동 |
 | 연결선 | 역할·위임·생성 관계. 도킹 내부는 본문을 덜 가리는 경로와 배율별 설명 |
 | 프로젝트와 worktree | 프로젝트 내부 worktree 상자, 영역 이름·수·이동·정리 |
 | 도킹 | 분할 나무의 비율과 바깥 크기를 조절하는 세션 묶음 |
@@ -295,7 +303,7 @@ WebSocket 요청은 `{id,method,params}`다. 로컬 CLI는 `atrium call <메서�
 
 ### 7.3 화면 참고와 고지
 
-대화 보기·승인 줄·캔버스 구성은 기존 설계를 발전시킨다. 외부 제품의 코드·이름·로고·그림을 무단 복제하지 않는다. 제공자 로고는 도구를 구분하는 표시이며 관련 라이선스·글꼴 고지는 `app/THIRD_PARTY_NOTICES.txt`와 번들의 라이선스 폴더에 유지한다.
+대화 보기·응답 필요 안내·캔버스 구성은 기존 설계를 발전시킨다. 외부 제품의 코드·이름·로고·그림을 무단 복제하지 않는다. 제공자 로고는 도구를 구분하는 표시이며 관련 라이선스·글꼴 고지는 `app/THIRD_PARTY_NOTICES.txt`와 번들의 라이선스 폴더에 유지한다.
 
 ### 7.4 화면을 위해 백엔드가 준비하는 것
 

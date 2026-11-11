@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { CODEX_ID, codexError } from './codex-protocol.mjs';
 import { CodexHistory } from './codex-import.mjs';
 import { withCodexModel } from './codex-args.mjs';
+import { providerPermissionArgs } from './auto-approval.mjs';
 
 export function codexRecovery(row) {
   const rt = row?.rt || row?.runtime || {};
@@ -62,7 +63,8 @@ export function codexCollaboration(b, sessionId, { env = {}, prompt } = {}) {
 export function prepareCodexSession(b, { sessionId, id = sessionId, args = [], model, env = {}, hookToken = crypto.randomBytes(24).toString('hex'), threadId = null } = {}) {
   if (!CODEX_ID.test(id || '')) throw codexError('bad_request');
   const scoped = codexCollaboration(b, id, { env: env || {} });
-  const base = threadId ? codexResumeArgs({ threadId, args, model }) : withCodexModel(args, model);
+  const settings = { ...(b.store?.getMeta?.('settings') || {}), ...(b.features?.settings?.get?.() || {}) };
+  const base = providerPermissionArgs('codex', threadId ? codexResumeArgs({ threadId, args, model }) : withCodexModel(args, model), 'manual', { autoApprove: settings.agentAutoApprove === true });
   // Reuse atrium-child's private-file credential bridge. No token in argv and
   // no overrides to the user's Codex shell filtering or developer instructions.
   if (scoped.branchFile) {
@@ -98,19 +100,20 @@ export function wakeCodexSession(b, s, { why = 'user' } = {}) {
 async function wake(b, s, why) {
   if (!s.rt.sleep || !b.sessions.has(s.sessionId)) return { awake: true, name: s.name };
   if (s.kind !== 'codex') throw codexError('bad_request');
-  const prev = structuredClone(s.rt), sleep = prev.sleep;
+  const runtime = s.rt, prev = structuredClone(runtime), sleep = prev.sleep;
   let created = null;
+  const current = () => !b.stopping && b.sessions.get(s.sessionId) === s && s.rt === runtime && (!created || s.paneId === created.paneId);
   s.waking = { at: Date.now(), why };
   try {
     b.requireHerdr();
     if (!s.cwd || !fs.statSync(s.cwd).isDirectory()) throw codexError('no_folder');
     const recovery = await verifyCodexResume(b, s);
-    if (b.sessions.get(s.sessionId) !== s || !s.rt.sleep) throw codexError('closed');
+    if (!current() || !s.rt.sleep || b.killing.has(s.sessionId)) throw codexError('closed');
     const { args, env, settingsPath } = prepareCodexSession(b, { sessionId: s.sessionId, threadId: recovery.id, model: s.model, args: s.rt.extraArgs || [], hookToken: s.hookToken, env: s.rt.launcherEnv ?? b.store.spawnInfo(s.sessionId)?.env ?? {} });
     s.settingsPath = settingsPath;
     await b.withNewPane(() => b.adapter.createWorkspace({ cwd: s.cwd, label: s.name, env }), (r) => {
+      if (!current() || b.killing.has(s.sessionId)) throw codexError('closed');
       created = r;
-      if (b.sessions.get(s.sessionId) !== s) throw codexError('closed');
       s.paneId = r.paneId; s.herdrWorkspaceId = r.workspaceId;
       Object.assign(s.rt, { sleep: null, exit: null, phase: 'starting', launchedAt: Date.now(), sessionEnd: null, pendingAsk: null, lastError: null,
         herdr: { status: null, launchPending: true, agentSessionId: null, present: false, at: Date.now() } });
@@ -118,8 +121,9 @@ async function wake(b, s, why) {
     });
     await b.adapter.refreshSubscription();
     if (await b.adapter.waitShellReady(s.paneId, 8000) === false) throw codexError('shell_not_ready');
-    if (b.sessions.get(s.sessionId) !== s || s.paneId !== created.paneId || b.killing.has(s.sessionId)) throw codexError('closed');
+    if (!current() || b.killing.has(s.sessionId)) throw codexError('closed');
     const started = await b.adapter.startAgent({ name: s.agentName || s.name, paneId: s.paneId, args, kind: 'codex' });
+    if (!current() || b.killing.has(s.sessionId)) throw codexError('closed');
     s.rt.herdr.launchPending = started.agent?.launchPending ?? true;
     b.store.saveRuntime(s.sessionId, s.rt);
     b.store.addEvent(s.sessionId, 'woke', { why, provider: 'codex', convId: recovery.id, paneId: s.paneId });
@@ -127,17 +131,19 @@ async function wake(b, s, why) {
   } catch (e) {
     let retained = false;
     if (created) {
-      b.killing.add(s.sessionId);
+      const alreadyKilling = b.killing.has(s.sessionId);
+      if (!alreadyKilling) b.killing.add(s.sessionId);
       try { await b.adapter.closePane(created.paneId); }
       catch { retained = true; e.recoveryPaneRetained = true; }
-      finally { b.killing.delete(s.sessionId); }
+      finally { if (!alreadyKilling) b.killing.delete(s.sessionId); }
     }
-    if (b.sessions.get(s.sessionId) === s) {
+    const ownsSession = current();
+    if (ownsSession) {
       if (retained) { s.rt.sleep = null; s.rt.lastError = { code: 'codex_wake_cleanup_failed', at: Date.now() }; }
       else { s.paneId = null; s.herdrWorkspaceId = null; s.rt = { ...prev, sleep: { ...sleep, error: { code: e.code || 'codex_wake_failed', at: Date.now() } } }; }
       b.store.updateSession(s.sessionId, { paneId: s.paneId, herdrWorkspaceId: s.herdrWorkspaceId, runtime: s.rt });
     }
-    b.queue?.cancelSession(s.sessionId, 'Codex wake failed');
+    if (ownsSession) b.queue?.cancelSession(s.sessionId, 'Codex wake failed');
     throw e;
   } finally { s.waking = null; if (b.sessions.get(s.sessionId) === s) b.broadcastSession(s, { cause: `wake:${why}` }); }
 }

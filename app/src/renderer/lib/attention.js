@@ -4,19 +4,25 @@
 import { t } from './i18n.js';
 
 export const NOTIFY_DELAY_MS = 1200; // waiting이 된 뒤 이만큼 기다렸다가 정한다. hook이 herdr보다 먼저 오는 틈과 바로 풀리는 요청을 거른다
-export const NOTIFY_MIN_VISIBLE_PX = 200; // 노드가 화면에서 이만큼 넓어야(중간 얼굴 이상, 승인 카드가 보임) "보인다"로 친다
+export const NOTIFY_MIN_VISIBLE_PX = 200; // 노드가 화면에서 이만큼 넓어야(중간 얼굴 이상, 응답 안내가 보임) "보인다"로 친다
 export const DEFAULT_AWAY_MS = 5 * 60 * 1000;
 
-const NEEDS_YOU = new Set(['waiting', 'trust_wait']);
+const NEEDS_YOU = new Set(['waiting', 'trust_wait', 'error']);
 
 // 같은 대기에 한 번만 띄우기 위한 열쇠. 요청(tool_use_id 또는 시작 시각)이 바뀌면 새 대기다.
 export function notifyKey(s) {
   if (!s || !NEEDS_YOU.has(s.state)) return null;
+  if (s.state === 'error') {
+    const e = s.error || {};
+    let hash = 2166136261;
+    for (const c of JSON.stringify([e.type || '', e.message || e || ''])) hash = Math.imul(hash ^ c.charCodeAt(0), 16777619);
+    return `${s.sessionId}|error|${e.at || s.turn?.startedAt || 'x'}:${hash >>> 0}`;
+  }
   const a = s.ask;
   return `${s.sessionId}|${s.state}|${(a && (a.toolUseId || a.since)) || 'x'}`;
 }
 
-// 노드가 화면에 보이는가: 판 영역과 겹치고, 화면 너비가 NOTIFY_MIN_VISIBLE_PX 이상(멀리 얼굴에서는 승인 카드를 그리지 않는다)
+// 노드가 화면에 보이는가: 판 영역과 겹치고, 화면 너비가 NOTIFY_MIN_VISIBLE_PX 이상(아주 먼 얼굴에서는 응답 안내가 작다)
 export function nodeVisible(nodeRect, canvasRect) {
   if (!nodeRect || !canvasRect) return false;
   const w = Math.min(nodeRect.right, canvasRect.right) - Math.max(nodeRect.left, canvasRect.left);

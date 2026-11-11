@@ -5,6 +5,8 @@ import { toast } from './store.js';
 import { STATE_LABEL, agoText } from './lib/labels.js';
 import { useT, t, errText } from './lib/i18n.js';
 import { markInteracted } from './touch.js';
+import { responseNeeded } from './lib/response-needed.js';
+import { openResponseTerminal } from './response-needed.js';
 
 // C3: herdr 재시작으로 끊긴 턴. 그때의 상태와 지시, 지금의 대화 기록 꼬리를 보여준다.
 // P6c: 셸은 "끊긴 명령"이다(P6b I8: 그때 돌던 명령이 prompt에 있다). 셸에는 대화 기록이 없어 꼬리를 읽지 않는다
@@ -44,3 +46,19 @@ export function InterruptedBanner({ s }) {
 const RECOVER_KEYS = ['recreate_resume', 'recreate_fresh', 'restart_with_settings', 'start_resume', 'start_fresh'];
 // 그때의 언어로 찾는다(RECOVER_LABEL[plan])
 export const RECOVER_LABEL = new Proxy({}, { get: (_, k) => (typeof k === 'string' && RECOVER_KEYS.includes(k) ? t(`extras.recover.${k}`) : undefined) });
+
+// 기존 승인 카드 대신 현재 질문·신뢰·로그인·오류의 맥락과 터미널로 가는 동작 하나를 둔다.
+export function ResponseNotice({ s }) {
+  const t = useT();
+  const notice = responseNeeded(s);
+  if (!notice) return null;
+  return (
+    <div className="mt-response nodrag nopan" data-role="response-needed" data-kind={notice.kind} onClick={(e) => e.stopPropagation()}>
+      <div className="mt-response-copy" role="status" aria-live="polite">
+        <strong>{notice.title}</strong>
+        <span className="mt-response-context" title={notice.context}>{notice.context || notice.hint}</span>
+      </div>
+      <button type="button" className="mt-btn small" data-action="response-terminal" title={notice.hint} onClick={() => openResponseTerminal(s.sessionId)}>{t('response.open')}</button>
+    </div>
+  );
+}

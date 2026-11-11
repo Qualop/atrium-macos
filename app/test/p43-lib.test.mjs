@@ -75,12 +75,12 @@ const MENU = el('BUTTON', { inside: ['.mt-menu', '.mt-stage'] });
 const DROP = el('BUTTON', { inside: ['.mt-dropdown', '.mt-stage'] });
 const MODAL = el('BUTTON', { inside: ['.mt-modal'] });
 
-test('P43 방향키: 판에 초점이 있으면 아래=명령 바, 위=찾기, 왼쪽=도구 바꾸기, 오른쪽=받기만', () => {
+test('P43 방향키: 판에 초점이 있으면 아래=명령 바, 위=찾기, 왼쪽=이전 프로젝트, 오른쪽=다음 프로젝트', () => {
   for (const t of [BODY, PANE, NODE, RAIL, null]) {
     assert.equal(boardArrowKey(key('ArrowDown', t)), 'command');
     assert.equal(boardArrowKey(key('ArrowUp', t)), 'search');
-    assert.equal(boardArrowKey(key('ArrowLeft', t)), 'tool');
-    assert.equal(boardArrowKey(key('ArrowRight', t)), 'none');
+    assert.equal(boardArrowKey(key('ArrowLeft', t)), 'prevWs');
+    assert.equal(boardArrowKey(key('ArrowRight', t)), 'nextWs');
   }
   assert.equal(boardArrowKey(key('a', BODY)), null, '방향키가 아니다');
   assert.equal(boardArrowKey(null), null);

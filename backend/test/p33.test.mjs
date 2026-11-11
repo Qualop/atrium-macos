@@ -101,7 +101,7 @@ test('P33 옮기기: 옛 설정 → 호출자, 레일 네 단추 순서로 즐�
 test('P33 옮기기: 새 판은 Claude Code, Codex, 셸이 즐겨찾기이고 DeepSeek는 즐겨찾기 밖 예시', () => {
   const v = initialLaunchers({});
   assert.deepEqual(v.favorites, ['claude', 'codex', 'gemini', 'shell']);
-  assert.ok(v.items.some((l) => l.id === 'deepseek'));
+  assert.ok(!v.items.some((l) => l.id === 'deepseek'), '새 판은 별도 게이트웨이를 만들지 않는다');
   assert.deepEqual(initialLaunchers({}), v, '같은 입력이면 같은 결과');
 });
 
@@ -150,15 +150,16 @@ test('P33 API: 만들기, 고치기, 지우기, 즐겨찾기(자리), 순서. �
     ls.update({ id: c.launcher.id, patch: { model: 'sonnet' } });
     assert.equal(ls.get('Haiku').model, 'sonnet');
     assert.throws(() => ls.update({ id: c.launcher.id, patch: { name: 'Codex' } }), (e) => e.code === 'name_taken');
-    ls.favorite({ id: 'deepseek', index: 0 });
-    assert.deepEqual(ls.data().favorites, ['deepseek', 'claude', 'codex', 'gemini', 'shell', c.launcher.id]);
+    const gateway = ls.create({ launcher: { name: 'Custom gateway', harness: 'claude', model: 'fixture-model' } }).launcher.id;
+    ls.favorite({ id: gateway, index: 0 });
+    assert.deepEqual(ls.data().favorites, [gateway, 'claude', 'codex', 'gemini', 'shell', c.launcher.id]);
     ls.favorite({ id: 'codex', favorite: false });
-    assert.deepEqual(ls.data().favorites, ['deepseek', 'claude', 'gemini', 'shell', c.launcher.id]);
-    ls.order({ ids: [c.launcher.id, 'shell', 'claude', 'gemini', 'deepseek'] });
-    assert.deepEqual(ls.list().favorites, [c.launcher.id, 'shell', 'claude', 'gemini', 'deepseek']);
+    assert.deepEqual(ls.data().favorites, [gateway, 'claude', 'gemini', 'shell', c.launcher.id]);
+    ls.order({ ids: [c.launcher.id, 'shell', 'claude', 'gemini', gateway] });
+    assert.deepEqual(ls.list().favorites, [c.launcher.id, 'shell', 'claude', 'gemini', gateway]);
     assert.throws(() => ls.order({ ids: ['shell'] }), (e) => e.key === 'launchers.err.order');
     ls.delete({ id: c.launcher.id });
-    assert.deepEqual(ls.data().favorites, ['shell', 'claude', 'gemini', 'deepseek']);
+    assert.deepEqual(ls.data().favorites, ['shell', 'claude', 'gemini', gateway]);
     assert.throws(() => ls.get(c.launcher.id), (e) => e.code === 'no_launcher');
     assert.deepEqual(ls.preview({ launcher: { name: 'p', harness: 'codex', model: 'm' } }).preview.line, 'codex --model m');
     store.close();

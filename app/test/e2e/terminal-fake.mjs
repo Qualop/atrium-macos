@@ -14,7 +14,7 @@ export const state = { sessions: new Map([['s', { kind: 'claude' }]]), termScale
 export const getState = () => state;
 export const useStore = fn => fn(state);
 export const takePendingInput = () => ''; export const pendingFor = () => null;
-export const isWeb = false; export const uploadFiles = async () => [];
+export const isWeb = new URLSearchParams(location.search).has('fixtureWeb'); export const uploadFiles = async () => [];
 export const useT = () => (key) => key; export const errText = e => e.message;
 const listeners = new Map();
 export const api = {
@@ -36,12 +36,13 @@ let browser;
 try {
   await build({ stdin: { contents: `
 import React from 'react'; import {createRoot} from 'react-dom/client'; import {flushSync} from 'react-dom';
+import {ReactFlowProvider} from '@xyflow/react';
 import {TerminalView, terms} from './src/renderer/TerminalView.jsx';
 import {openFolderPicker} from './src/renderer/FolderPicker.jsx'; window.openPicker=()=>openFolderPicker().then(v=>window.picked=v);
 import '@xterm/xterm/css/xterm.css';
-window.mt={platform:'darwin',log(){}}; Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>window.copied=text}});
+window.mt={platform:'darwin',web:new URLSearchParams(location.search).has('fixtureWeb'),log(){}}; Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>window.copied=text}});
 const root=createRoot(document.getElementById('root')); let n=0;
-window.mount=()=>flushSync(()=>root.render(<TerminalView key={++n} sessionId="s" width={800} height={300}/>));
+window.mount=()=>flushSync(()=>root.render(<ReactFlowProvider><TerminalView key={++n} sessionId="s" width={800} height={300}/></ReactFlowProvider>));
 window.unmount=()=>flushSync(()=>root.render(null)); window.terms=terms; window.mount();
 `, loader: 'jsx', resolveDir: app }, outfile: path.join(out, 'bundle.js'), bundle: true, jsx: 'automatic', write: true, plugins: [{ name: 'isolated-fixtures', setup(b) {
     b.onResolve({ filter: /^\.\/(api\.js|store\.js|web\.js|lib\/i18n\.js)$/ }, args => ({ path: 'fixture', namespace: 'fixture' }));
@@ -50,7 +51,7 @@ window.unmount=()=>flushSync(()=>root.render(null)); window.terms=terms; window.
   await fs.writeFile(path.join(out, 'index.html'), `<!doctype html><link rel="stylesheet" href="bundle.css"><style>:root{--term-bg:#111;--term-text:#eee;--term-cursor:#fff;--term-select:#345}body{margin:20px}.mt-term-wrap{position:relative;width:800px;height:300px}.mt-term{position:absolute;inset:0}#root{transform:scale(.75);transform-origin:top left}</style><div id="root"></div><script src="bundle.js"></script>`);
   browser = await chromium.launch({ headless: true, channel: process.env.ATRIUM_TEST_BROWSER || 'chrome' });
   const page = await browser.newPage(); const errors=[]; page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(pathToFileURL(path.join(out, 'index.html')).href + '?webglBudget=0');
+  await page.goto(pathToFileURL(path.join(out, 'index.html')).href + '?webglBudget=' + (process.env.ATRIUM_TERMINAL_GPU === '1' ? '1' : '0') + (process.env.ATRIUM_TERMINAL_WEB === '1' ? '&fixtureWeb=1' : ''));
   await page.waitForFunction(() => window.terms?.get('s')?.buffer.active.getLine(0)?.translateToString(true).includes('line 000'));
   assert.equal(await page.locator('.mt-term-note').count(),0,'early full frame replayed after attach response');
   const point=async(col,row)=>page.evaluate(({col,row})=>{const t=terms.get('s'),r=document.querySelector('.xterm-screen').getBoundingClientRect();return{x:r.left+(col+.2)*r.width/t.cols,y:r.top+(row+.5)*r.height/t.rows};},{col,row});
@@ -69,10 +70,26 @@ window.unmount=()=>flushSync(()=>root.render(null)); window.terms=terms; window.
   await page.waitForTimeout(60);
   assert.equal(await page.locator('.mt-term-cover').count(),0,'late detach from reused PID ignored');
   assert.match(await page.evaluate(()=>terms.get('s').buffer.active.getLine(0).translateToString(true)),/line 000/);
-  await page.evaluate(()=>{fixture.api.generation++;fixture.api.status='closed';fixture.api.emit('$close');});
+  await page.evaluate(()=>{const term=terms.get('s');term.focus();window.beforeReconnect=term;window.focusCountBeforeReconnect=fixture.api.calls.filter(([k])=>k==='terminal.focus').length;fixture.api.generation++;fixture.api.status='closed';fixture.api.emit('$close');});
   assert.equal(await page.evaluate(()=>terms.get('s').options.disableStdin),true,'connection invalidation disables stdin immediately');
   await page.evaluate(()=>{fixture.api.status='open';fixture.api.emit('$open');});
+  assert.equal(await page.evaluate(()=>fixture.api.calls.filter(([k])=>k==='terminal.focus').length),await page.evaluate(()=>focusCountBeforeReconnect),'focus is not sent while reattachment is pending');
   await page.waitForFunction(()=>!terms.get('s').options.disableStdin);
+  assert.equal(await page.evaluate(()=>document.activeElement===terms.get('s').textarea),true,'reconnect retains/restores focused terminal');
+  const focus = await page.evaluate(()=>fixture.api.calls.filter(([k])=>k==='terminal.focus').at(-1)?.[1]);
+  assert.equal(focus?.attachmentId,await page.evaluate(()=>fixture.api.attachmentId),'reconnect focus claims the fresh attachment rather than the previous attachment');
+  assert.equal(focus?.controllerPid,7);
+  if (process.env.ATRIUM_TERMINAL_WEB === '1') assert.equal(await page.evaluate(()=>terms.get('s')===beforeReconnect),true,'web reconnect retains xterm instance');
+  await page.evaluate(()=>{
+    const input=document.createElement('input');input.id='reconnect-other-input';document.body.append(input);input.focus();
+    window.unfocusedFocusCount=fixture.api.calls.filter(([k])=>k==='terminal.focus').length;
+    fixture.api.generation++;fixture.api.status='closed';fixture.api.emit('$close');
+    fixture.api.status='open';fixture.api.emit('$open');
+  });
+  await page.waitForFunction(()=>!terms.get('s').options.disableStdin);
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'reconnect-other-input','reconnect never steals another input focus');
+  assert.equal(await page.evaluate(()=>fixture.api.calls.filter(([k])=>k==='terminal.focus').length),await page.evaluate(()=>unfocusedFocusCount),'unfocused terminal does not claim the new attachment');
+  await page.evaluate(()=>document.getElementById('reconnect-other-input').remove());
   await page.evaluate(()=>{fixture.state.sessions.set('s',{kind:'shell'});mount();});
   await page.waitForFunction(()=>terms.get('s').buffer.active.baseY>=10);
   const history=await page.evaluate(()=>{const t=terms.get('s');t.scrollToTop();return t.buffer.active.getLine(0).translateToString(true);});
@@ -89,5 +106,20 @@ window.unmount=()=>flushSync(()=>root.render(null)); window.terms=terms; window.
   await page.evaluate(()=>document.querySelector('[data-field=fpick-path]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',isComposing:true,bubbles:true})));
   assert.equal(await page.locator('[data-role=folder-picker]').count(),1,'IME Escape does not dismiss folder picker');
   await page.click('[data-action=fpick-choose]');await page.waitForFunction(()=>window.picked==='/fast');
+  if (process.env.ATRIUM_TERMINAL_GPU === '1') {
+    const dims = await page.evaluate(() => [terms.get('s').cols, terms.get('s').rows]);
+    for (const zoom of [.75, 1, 1.25]) {
+      await page.evaluate((z) => { document.getElementById('root').style.transform = `scale(${z})`; }, zoom);
+      await page.waitForTimeout(1250);
+      const sharp = await page.evaluate(() => {
+        const canvas = document.querySelector('.xterm-screen canvas:not(.xterm-link-layer)'), host = document.querySelector('.mt-term');
+        const box = canvas?.getBoundingClientRect();
+        return { plan: host.dataset.sharp, sx: box ? box.width * devicePixelRatio / canvas.width : null, sy: box ? box.height * devicePixelRatio / canvas.height : null, dims: [terms.get('s').cols, terms.get('s').rows] };
+      });
+      assert.ok(sharp.plan, 'WebGL re-renders to device pixels');
+      assert.ok(Math.abs(sharp.sx - 1) < .02 && Math.abs(sharp.sy - 1) < .02, JSON.stringify(sharp));
+      assert.deepEqual(sharp.dims, dims, 'board zoom leaves PTY rows and columns stable');
+    }
+  }
   assert.deepEqual(errors,[]);console.log('PASS: scaled selection, retained off-screen content, Cmd+C, POSIX paste, early frames, reused-PID attachment filtering, reconnect, shell scrollback, folder navigation and IME dialog guards.');
 } finally { await browser?.close(); await fs.rm(out,{recursive:true,force:true}); }

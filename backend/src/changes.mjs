@@ -7,13 +7,14 @@ import { m } from './msg.mjs'; // P16: 줄마다 화면 글 열쇠(msg)도 준�
 export const CHANGE_KINDS = ['state', 'hook', 'closed', 'turn_interrupted', 'herdr_disconnected', 'herdr_connected', 'backend_started'];
 const ORDER = { needs_you: 0, error: 1, interrupted: 2, exited: 3, turn_done: 4, herdr: 5, backend: 6 };
 
-const EXIT_TEXT = { normal: '정상 종료', trust_declined: '신뢰하지 않아 끝남', other: '끝남' };
+const EXIT_TEXT = { normal: '정상 종료', trust_declined: "폴더 신뢰 거부로 종료", other: "종료됨" };
 const EXIT_KEY = { normal: 'chgExitNormal', trust_declined: 'chgExitTrust', other: 'chgExited' };
 function askMsg(ask) {
   if (!ask) return null;
   if (ask.kind === 'question') return m('chgQuestion', { q: (ask.questions || []).map((q) => q.question).join(' / ') });
   if (ask.kind === 'plan') return m('chgPlan');
   if (ask.kind === 'unknown_dialog') return m('chgUnknownDialog');
+  if (ask.kind === 'worktree_exit') return m('chgWorktreeExit');
   return m('chgPermission', { what: ask.summary || ask.tool || '' });
 }
 
@@ -22,6 +23,7 @@ function askText(ask) {
   if (ask.kind === 'question') return `질문: ${(ask.questions || []).map((q) => q.question).join(' / ')}`;
   if (ask.kind === 'plan') return '계획 승인';
   if (ask.kind === 'unknown_dialog') return '알 수 없는 대화상자';
+  if (ask.kind === 'worktree_exit') return '워크트리를 남길지 확인 필요';
   return `권한: ${ask.summary || ask.tool || ''}`;
 }
 const one = (s, n = 120) => (typeof s === 'string' ? (s.replace(/\s+/g, ' ').trim().length > n ? s.replace(/\s+/g, ' ').trim().slice(0, n) + '…' : s.replace(/\s+/g, ' ').trim()) : '');
@@ -49,16 +51,16 @@ export function summarizeChanges(events, { nameOf = () => null, current = new Ma
     const base = { sessionId: sid, name: sid ? nameOf(sid) || '?' : null };
     if (e.kind === 'state') {
       if ((d.to === 'waiting' || d.to === 'trust_wait') && d.from !== 'waiting' && d.from !== 'trust_wait') add(`${sid}|needs_you`, { ...base, kind: 'needs_you' }, e.t, d.to === 'trust_wait' ? '처음 쓰는 폴더 신뢰 확인' : askText(d.ask), { msg: d.to === 'trust_wait' ? m('chgTrust') : askMsg(d.ask) });
-      else if (d.to === 'error' && d.from !== 'error') add(`${sid}|error`, { ...base, kind: 'error' }, e.t, d.error ? `${d.error.type}` : '턴 실패', { msg: d.error ? null : m('chgTurnFailed') });
-      else if (d.to === 'exited' && d.exit && d.exit.kind !== 'herdr_stopped') add(`${sid}|exited`, { ...base, kind: 'exited' }, e.t, EXIT_TEXT[d.exit.kind] || '끝남', { msg: m(EXIT_KEY[d.exit.kind] || 'chgExited') });
+      else if (d.to === 'error' && d.from !== 'error') add(`${sid}|error`, { ...base, kind: 'error' }, e.t, d.error ? `${d.error.type}` : "요청 처리 실패", { msg: d.error ? null : m('chgTurnFailed') });
+      else if (d.to === 'exited' && d.exit && d.exit.kind !== 'herdr_stopped') add(`${sid}|exited`, { ...base, kind: 'exited' }, e.t, EXIT_TEXT[d.exit.kind] || "종료됨", { msg: m(EXIT_KEY[d.exit.kind] || 'chgExited') });
     } else if (e.kind === 'hook' && d.ev === 'Stop') {
       add(`${sid}|turn_done`, { ...base, kind: 'turn_done' }, e.t, one(d.lastAnswer));
     } else if (e.kind === 'hook' && d.ev === 'StopFailure') {
-      add(`${sid}|error`, { ...base, kind: 'error' }, e.t, d.error ? `${d.error.type}` : '턴 실패', { msg: d.error ? null : m('chgTurnFailed') });
+      add(`${sid}|error`, { ...base, kind: 'error' }, e.t, d.error ? `${d.error.type}` : "요청 처리 실패", { msg: d.error ? null : m('chgTurnFailed') });
     } else if (e.kind === 'turn_interrupted') {
       add(`${sid}|interrupted`, { ...base, kind: 'interrupted' }, e.t, d.prompt ? `${d.state === 'shell_running' ? '명령' : '지시'}: ${one(d.prompt, 80)}` : `${d.state || ''} 중이었음`, { msg: d.prompt ? m(d.state === 'shell_running' ? 'chgCommand' : 'chgPrompt', { p: one(d.prompt, 80) }) : m('chgWasState', { state: d.state || '' }) }); // 셸의 끊긴 명령(I8)
     } else if (e.kind === 'closed') {
-      add(`${sid}|exited`, { ...base, kind: 'exited' }, e.t, d.reason === 'killed' ? '판에서 끔' : `판에서 빠짐(${d.reason})`, { merge: true, msg: d.reason === 'killed' ? m('chgKilled') : m('chgRemoved', { reason: d.reason }) });
+      add(`${sid}|exited`, { ...base, kind: 'exited' }, e.t, d.reason === 'killed' ? "보드에서 종료" : `보드에서 제거됨 (${d.reason})`, { merge: true, msg: d.reason === 'killed' ? m('chgKilled') : m('chgRemoved', { reason: d.reason }) });
     } else if (e.kind === 'herdr_disconnected' && !d.expected) herdrDown++;
     else if (e.kind === 'herdr_connected') herdrUp++;
     else if (e.kind === 'backend_started' && isRestart(d)) { backendRestarts++; if (d.previousRun.downMs) downMs += d.previousRun.downMs; }
@@ -71,8 +73,8 @@ export function summarizeChanges(events, { nameOf = () => null, current = new Ma
   }
   // P53(#10): herdr와 백엔드는 다른 것이라 줄을 나눈다. 줄 이름표가 그 줄의 주제와 맞는다
   const sys = (kind, count, text, msg) => out.push({ kind, sessionId: null, name: null, count, text, msg, firstAt: null, lastAt: null });
-  if (herdrDown) sys('herdr', herdrDown, `herdr가 ${herdrDown}번 예기치 않게 꺼졌다${herdrUp ? '(다시 붙음)' : ''}`, m('chgHerdrDown', { n: herdrDown, up: herdrUp ? m('chgReattached') : '' }));
-  if (backendRestarts) sys('backend', backendRestarts, `백엔드가 ${backendRestarts}번 다시 떴다${downMs ? `(꺼져 있던 시간 ${Math.round(downMs / 1000)}초)` : ''}`, m('chgBackendRestarts', { n: backendRestarts, down: downMs ? m('chgDownFor', { s: Math.round(downMs / 1000) }) : '' }));
+  if (herdrDown) sys('herdr', herdrDown, `herdr가 ${herdrDown}회 예기치 않게 종료되었습니다.${herdrUp ? "(다시 연결됨)" : ''}`, m('chgHerdrDown', { n: herdrDown, up: herdrUp ? m('chgReattached') : '' }));
+  if (backendRestarts) sys('backend', backendRestarts, `백엔드가 ${backendRestarts}회 다시 시작되었습니다.${downMs ? `(꺼져 있던 시간 ${Math.round(downMs / 1000)}초)` : ''}`, m('chgBackendRestarts', { n: backendRestarts, down: downMs ? m('chgDownFor', { s: Math.round(downMs / 1000) }) : '' }));
   out.sort((a, b) => ORDER[a.kind] - ORDER[b.kind] || (b.lastAt || 0) - (a.lastAt || 0));
   return out;
 }

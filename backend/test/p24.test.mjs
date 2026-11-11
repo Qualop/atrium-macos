@@ -52,7 +52,7 @@ function board() {
   const b = {
     cfg: { claudeProjects: root, killWaitMs: 2000 }, sessions, store, queue, killing: new Set(), log: () => {},
     hooked: (s) => s.kind === 'claude', relay: { stats: () => [], detach: () => {} },
-    features: { loops: { activeCount: () => 0 }, settings: { get: () => ({ sleepAfterMin: 30 }) } },
+    features: { loops: { activeCount: () => 0 }, settings: { get: () => ({ sleepAfterMin: 30, sessionSleepAfterMin: 0 }) } },
     requireHerdr: () => {},
     resolve: (ref) => sessions.get(ref) || [...sessions.values()].find((s) => s.name === ref),
     resolveWorkspace: async (ref) => ({ key: ref === 'repo-a' ? 'ka' : ref === 'repo-b' ? 'kb' : ref }),

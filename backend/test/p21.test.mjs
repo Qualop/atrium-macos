@@ -193,7 +193,7 @@ test('D4 잠재우기: /exit 뒤 작업 공간을 닫고 패널 없이 sleeping�
   assert.ok(events.some((e) => e.kind === 'slept'));
   assert.ok(!calls.some((c) => c[0] === 'broadcast' && c[2] === 'exited'), 'claude가 끝나는 동안 exited로 보이지 않는다');
   const st = sl.status();
-  assert.deepEqual({ ...st, repos: undefined }, { afterMin: 30, sleeping: 1, savedMB: 482, sessions: [{ name: 'a1', workspace: '', at: s.rt.sleep.at, memMB: 482 }], repos: undefined });
+  assert.deepEqual({ ...st, repos: undefined }, { afterMin: 30, sessionAfterMin: 30, sleeping: 1, savedMB: 482, sessions: [{ name: 'a1', workspace: '', at: s.rt.sleep.at, memMB: 482, scope: 'repo' }], repos: undefined });
   assert.equal(st.repos[0].why, 'asleep'); assert.equal(st.repos[0].asleep, 1); assert.equal(st.repos[0].savedMB, 482);
   assert.equal(sl.summaryExtra(s).sleep.memMB, 482);
 });
@@ -370,7 +370,7 @@ test('D4 끄기: 잠든 세션은 herdr 없이 닫는다(보관·삭제는 그 �
 test('D4 전달: 잠재우는 중에는 sleeping, 깨우는 중에는 준비된 뒤에도 잠깐 starting으로 기다린다(입력 칸이 Enter를 받기 전)', () => {
   const rt = newRuntime(); applyAgentDetected(rt); applyHerdrStatus(rt, 'idle');
   const s = { sessionId: 'a', rt };
-  const fake = { sessions: new Map([['a', s]]), sleeper: { going: new Map() }, adapter: { connected: true } };
+  const fake = { hooked: () => true, sessions: new Map([['a', s]]), sleeper: { going: new Map() }, adapter: { connected: true } };
   const view = () => Backend.prototype.deliveryView.call(fake, 'a', null).state;
   assert.equal(view(), 'ready');
   s.waking = { at: 1, why: 'delivery' };

@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { splitArgs } from './gemini-args.mjs';
 import { resolvePath, canonicalPath, windowsPath } from './platform.mjs';
 
 // http hook으로 받을 이벤트. SessionStart는 http hook을 부르지 않으므로 넣지 않는다(E2 2.5).
@@ -45,19 +46,20 @@ function commonArgs({ settingsPath, permissionMode, model, effort, pluginDir, sy
 export const PLUGIN_NAME = 'atrium-herdr';
 export const LEGACY_PLUGIN_NAME = 'multitask-herdr'; // P18 전의 플러그인 폴더 이름(옮기기가 이어 가기 인자를 고칠 때 찾는다)
 export const BOARD_SYSTEM_PROMPT = [
-  '너는 Atrium 판이 띄운 herdr 패널 안에서 돈다(HERDR_ENV=1).',
+  '너는 Atrium 보드가 띄운 herdr 패널 안에서 돈다(HERDR_ENV=1).',
   '다른 에이전트에게 일을 시키거나, 답을 받아 오거나, 새 에이전트를 띄우라는 말을 들으면 herdr 스킬(atrium-herdr:herdr)로 한다.',
-  'herdr 명령에 --session, --machine, --remote를 붙이지 않는다. 패널의 herdr 명령은 이미 이 판의 herdr 세션에 붙는다.',
-  '"[Atrium 판]"으로 시작하는 글은 판이 알려 주는 연결(어느 에이전트가 너의 무슨 역할인지)이다. 이 판의 예전 이름으로 시작하는 지난 알림도 같다.',
+  'herdr 명령에 --session, --machine, --remote를 붙이지 않는다. 패널의 herdr 명령은 이미 이 보드의 herdr 세션에 붙는다.',
+  '"[Atrium 보드]"으로 시작하는 글은 보드가 알려 주는 연결(어느 에이전트가 너의 무슨 역할인지)이다. 이 보드의 예전 이름으로 시작하는 지난 알림도 같다.',
   '일이 서로 기다리지 않는 조각 여럿으로 나뉘거나 사용자가 워커·하위 세션·병렬·워크트리를 말하면 atrium 스킬(atrium-herdr:atrium, 옛 이름 delegate)대로 `atrium child`로 워커를 만들어 맡긴다. 설정의 워커 수·깊이·전체 상한을 지킨다. 워커의 모델을 말로 들으면 `atrium models`에서 골라 띄운다. 예전 이름 mtask도 같은 명령이다.', // P8(K2), P36, P41
-  '판은 오래 쉬는 리포의 세션을 모두 잠재운다(sleeping, herdr에 없다). herdr 명령이 판의 세션 이름을 찾지 못하면 `atrium wake <이름>`으로 그 리포를 깨운 뒤 다시 한다.', // P21·P24(D4)
+  '보드는 오래 쉬는 리포의 세션을 모두 잠재우고, 리포가 바빠도 오래 쉰 세션은 혼자 잠재운다(sleeping, herdr에 없다). herdr 명령이 보드의 세션 이름을 찾지 못하면 `atrium wake <이름>`으로 그 세션을(리포째 잠들었으면 그 리포를) 깨운 뒤 다시 한다.', // P21·P24(D4), P111
+  '부모·하위 세션·역할 연결은 `atrium me`가 보드의 지금 기록이다. 누구의 무엇인지, 누구에게 맡길지 헷갈리면 먼저 치고, 예전 알림과 다르면 이것을 믿는다. 매 턴 치지는 않는다.', // P81
 ].join('\n');
 // P8(K2): skills는 herdr 옆에 더할 스킬 { 이름: SKILL.md 글 }, bin은 Bash 도구 PATH에 오르는 명령 { 파일 이름: 글 }(플러그인 bin/)
 export function writeBoardPlugin({ dir, skillText, skills = {}, bin = {} }) {
   const root = path.join(dir, PLUGIN_NAME);
   fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
   fs.mkdirSync(path.join(root, 'skills', 'herdr'), { recursive: true });
-  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: PLUGIN_NAME, version: '0.1.0', description: 'Atrium 판이 띄운 에이전트에게 주는 herdr 스킬' }, null, 2));
+  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: PLUGIN_NAME, version: '0.1.0', description: 'Atrium 보드가 띄운 에이전트에게 주는 herdr 스킬' }, null, 2));
   fs.writeFileSync(path.join(root, 'skills', 'herdr', 'SKILL.md'), skillText);
   for (const [name, text] of Object.entries(skills)) { fs.mkdirSync(path.join(root, 'skills', name), { recursive: true }); fs.writeFileSync(path.join(root, 'skills', name, 'SKILL.md'), text); }
   if (Object.keys(bin).length) fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
@@ -69,7 +71,23 @@ export function writeBoardPlugin({ dir, skillText, skills = {}, bin = {} }) {
 // P8(K1): worktree면 Claude Code가 자기 규칙으로 워크트리를 만든다(claude -w <이름>). 판은 워크트리를 만들지 않는다. 처음 띄울 때만 넣는다
 export function buildStartArgs({ sessionId, worktree = null, ...o }) { return ['--session-id', sessionId, ...(worktree ? ['--worktree', worktree] : []), ...commonArgs(o)]; }
 // B3 4번: 첫 요소는 명령 이름, 경로는 슬래시(E7 2.3)
-export function buildResumeArgv({ claudeCommand = 'claude', sessionId, ...o }) { return [claudeCommand, '--resume', sessionId, ...commonArgs(o)]; }
+// P97: startCommand(호출자의 실행 명령, 예: `ocx claude`)가 있으면 그 낱말들로 시작한다. herdr는 다시 켤 때 이 명령을 패널 셸에서 그대로 돌린다(P97 실험)
+export function buildResumeArgv({ claudeCommand = 'claude', startCommand = '', sessionId, ...o }) {
+  const head = splitArgs(startCommand);
+  return [...(head.length ? head : [claudeCommand]), '--resume', sessionId, ...commonArgs(o)];
+}
+// P97: PowerShell 패널에 칠 낱말(안전한 글자가 아니면 작은따옴표로 묶고 '는 두 번). 실행 명령 호출자는 판이 이 줄을 패널에 친다
+const PS_SAFE = /^[A-Za-z0-9_\-.:/\\=]+$/;
+export const psQuote = (w) => (PS_SAFE.test(String(w)) ? String(w) : `'${String(w).replace(/'/g, "''")}'`);
+export const psLine = (words) => {
+  const quoted = words.map(psQuote);
+  return (quoted[0]?.startsWith("'") ? '& ' : '') + quoted.join(' ');
+};
+// argv → 패널 셸 명령. POSIX에서는 작은따옴표를 닫고 따옴표 자체를 붙인다.
+export const platformLine = (words, platform = process.platform) => platform === 'win32' ? psLine(words) : words.map((w) => {
+  const s = String(w);
+  return /^[A-Za-z0-9_./:@=-]+$/.test(s) ? s : "'" + s.replace(/'/g, "'\\''") + "'";
+}).join(' ');
 // C3 대책(P3): 판이 직접 이어 갈 때 agent.start에 넘기는 인자(명령 이름 없이)
 export function buildResumeArgs({ sessionId, ...o }) { return ['--resume', sessionId, ...commonArgs(o)]; }
 

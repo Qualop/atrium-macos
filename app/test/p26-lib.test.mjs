@@ -1,32 +1,20 @@
 // P26 단위 시험: 고른 노드 막대(크기 단계 찾기, 토글, 자리), 덩어리 안 연결선의 끝 자리(초점 세션의 테두리 가운데), 눌러서 보기(85% 채우기, 이미 보는 중)
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sizeStepOf, litStep, autoDir, flipStep, sizeTargets, layoutCount, placeBar, stepPlace } from '../src/renderer/lib/selbar.js';
+import { blockState, litOf, levelSize, sizeTargets, layoutCount, placeBar } from '../src/renderer/lib/selbar.js';
 import { borderAnchor, linkEnds, dockFocus, centerOf, placeLabels } from '../src/renderer/lib/dock-links.js';
 import { enterView, isViewing, fullyVisible, dockRect, FILL, ZOOM_MAX } from '../src/renderer/lib/nav.js';
 
-test('크기 단계 찾기: 여섯 중 맞는 것(±1px), 없으면 null', () => {
-  assert.equal(sizeStepOf({ w: 1040, h: 585 }), 'wide-normal');
-  assert.equal(sizeStepOf({ w: 1041, h: 584 }), 'wide-normal', '1px 어긋남은 같다');
-  assert.equal(sizeStepOf({ w: 480, h: 740 }), 'tall-small');
-  assert.equal(sizeStepOf({ w: 720, h: 460 }), null, '옛 보통(720×460)은 막대 단계가 아니다');
-  assert.equal(sizeStepOf({ w: 1043, h: 585 }), null);
-  assert.equal(sizeStepOf(null), null);
-  assert.deepEqual(stepPlace('tall-large'), { dir: 'tall', i: 0 });
-  assert.equal(stepPlace('large'), null);
-});
-
-test('불: 고른 것 모두 같은 단계일 때만. 토글 쪽은 불의 쪽, 없으면 모양', () => {
-  assert.equal(litStep([{ w: 720, h: 405 }, { w: 720, h: 405 }]), 'wide-small');
-  assert.equal(litStep([{ w: 720, h: 405 }, { w: 1040, h: 585 }]), null);
-  assert.equal(litStep([]), null);
-  assert.equal(autoDir([{ w: 600, h: 920 }]), 'tall');
-  assert.equal(autoDir([{ w: 900, h: 500 }]), 'wide');
-  assert.equal(autoDir([{ w: 500, h: 900 }]), 'tall');
-  assert.equal(flipStep('wide-normal', 'tall'), 'tall-normal', '토글을 바꾸면 같은 단계');
-  assert.equal(flipStep('tall-large', 'wide'), 'wide-large');
-  assert.equal(flipStep('wide-normal', 'wide'), null, '같은 쪽이면 그대로');
-  assert.equal(flipStep(null, 'tall'), null, '불이 없으면 쪽만 바꾼다');
+// P73 replaced the old six named size steps with direction × aspect × level.
+test('size and selection state use the final direction, aspect and level model', () => {
+  const rect = levelSize('normal', { dir: 'wide', aspect: '16:9' });
+  const state = blockState(rect, '16:9');
+  assert.equal(state.dir, 'wide');
+  assert.equal(state.aspect, '16:9');
+  assert.equal(state.level, 'normal');
+  const light = litOf([state, state]);
+  assert.deepEqual([light.dir, light.aspect, light.level], ['wide', '16:9', 'normal']);
+  assert.equal(litOf([state, blockState(levelSize('small', { dir: 'wide', aspect: '16:9' }), '16:9')]).level, null);
 });
 
 test('크기 대상과 틀 세션 수: 덩어리 안 노드는 덩어리 하나, 구성 노드 모두', () => {

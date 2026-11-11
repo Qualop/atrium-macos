@@ -5,7 +5,7 @@ const workspace = { key: 'fixture', name: 'UI fixture', root: '/fixture/project'
 const launchers = ['claude', 'codex', 'agy', 'shell'].map((harness) => ({ id: `default-${harness}`, name: harness === 'agy' ? 'Gemini (Antigravity)' : harness, harness, model: '', args: '', icon: '', favorite: true, permissionMode: 'manual', preview: { line: harness, env: [] } }));
 const fixture = {
   calls: [], pending: [], hold: [], errors: [],
-  settings: { language: 'en', tray: false, sleepAfterMin: 30, archiveDays: 14, branchMaxChildren: 4, branchMaxDepth: 3, branchMaxTotal: 16, autoOpenRepos: false },
+  settings: { language: 'en', tray: false, agentAutoApprove: false, sessionSleepAfterMin: 30, sleepAfterMin: 30, archiveDays: 14, branchMaxChildren: 4, branchMaxDepth: 3, branchMaxTotal: 16, autoOpenRepos: false },
   launchers: { launchers, favorites: launchers.map((l) => l.id), harnesses: [
     { id: 'claude', fields: ['model', 'effort', 'permissionMode', 'allowHerdr', 'args', 'env', 'checkUrl'], models: ['sonnet'] },
     ...['codex', 'gemini', 'agy'].map((id) => ({ id, fields: ['model', 'args'], models: ['static-must-not-appear'] })),
@@ -21,6 +21,11 @@ const fixture = {
   },
 };
 function result(method, p) {
+  if (method === 'terminal.attach') {
+    setTimeout(() => api.emit('terminal.frame', { sessionId: p.session, controllerPid: 101, attachmentId: p.attachmentId, bytes: btoa('Synthetic agent terminal\r\nChoose a response in this terminal.\r\n'), full: true }), 30);
+    return { controllerPid: 101, attachmentId: p.attachmentId };
+  }
+  if (method === 'terminal.history') return { text: '' };
   if (method === 'board.get') return structuredClone(fixture.board);
   if (method === 'settings.get') return { settings: { ...fixture.settings }, schema: Object.fromEntries(['branchMaxChildren', 'branchMaxDepth', 'branchMaxTotal'].map((k) => [k, { min: 1, max: 64, default: fixture.settings[k] }])) };
   if (method === 'settings.set') { fixture.settings[p.key] = p.value; api.emit('settings.updated', { ...fixture.settings }); return { settings: { ...fixture.settings } }; }

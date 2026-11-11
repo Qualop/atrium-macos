@@ -6,7 +6,7 @@ export const HUMAN_ID = 'human';
 const sid = (id) => `s:${id}`;
 const clip = (s, n) => { if (typeof s !== 'string') return s ?? null; const t = s.replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
 
-// 미션 맵의 거르기(symvibe: All, Working, Needs you(오류 포함), Idle, Done). Done은 끝났지만 아직 안 본 것(검토 대기)
+// 미션 맵의 거르기(참고 제품: All, Working, Needs you(오류 포함), Idle, Done). Done은 끝났지만 아직 안 본 것(검토 대기)
 export function categoryOf(s) {
   if (s.state === 'waiting' || s.state === 'trust_wait' || s.state === 'error') return 'needs_you';
   if (s.state === 'working' || s.state === 'shell_running') return 'working';
@@ -28,7 +28,7 @@ export function missionGraph({ sessions = [], links = [], thread = [], loops = [
     const active = l.lastKind === 'prompt' || l.lastKind === 'target_working' || l.lastKind === 'target_submitted';
     if (l.role) add({ ...base, kind: 'role', label: l.role, active });
     if (l.observed) add({ ...base, kind: 'prompt', label: clip(l.lastText, 80), active });
-    if (l.spawned) add({ ...base, kind: 'spawn', label: '띄움', active: false });
+    if (l.spawned) add({ ...base, kind: 'spawn', label: "세션 생성", active: false });
   }
 
   // 명령 바 전달(Thread): 사람 → 세션. 같은 대상은 한 선으로 모아 횟수와 마지막 글을 붙인다
@@ -59,7 +59,7 @@ export function missionGraph({ sessions = [], links = [], thread = [], loops = [
   for (const e of edges) if ((e.kind === 'role' || e.kind === 'prompt' || e.kind === 'spawn') && e.from.startsWith('s:')) directs.set(e.from, (directs.get(e.from) || 0) + 1);
 
   const counts = { all: 0, working: 0, needs_you: 0, idle: 0, done: 0, exited: 0 };
-  const nodes = [{ id: HUMAN_ID, kind: 'human', name: '사람(명령 바)', column: 0 }];
+  const nodes = [{ id: HUMAN_ID, kind: 'human', name: "사용자 (명령 입력줄)", column: 0 }];
   for (const s of sessions) {
     const cat = categoryOf(s);
     counts.all++; counts[cat]++;
@@ -70,6 +70,11 @@ export function missionGraph({ sessions = [], links = [], thread = [], loops = [
       since: (s.ask && s.ask.since) || s.lastActivityAt || null, lastPrompt: clip(s.lastPrompt, 120), loops: s.loops || 0,
       // P8(K4): 나무(부모 아래에 들여 보인다). 판에 올린 에이전트도 부모가 있으면 같이 따른다
       parentId: s.parentSessionId && byId.has(s.parentSessionId) ? sid(s.parentSessionId) : null, depth: (s.branch && s.branch.depth) || 1, role: (s.branch && s.branch.child && s.branch.role) || null,
+      order: (s.branch && s.branch.child && s.branch.order) || null, createdAt: s.createdAt || null, // P75: 형제는 띄운 순서로
+      // P95: 카드의 옅은 메타 줄(모델·노력 수준, 일한 시간 또는 마지막 활동, 워크트리 브랜치)
+      model: s.model || null, effort: s.effort || null,
+      turnAt: s.state === 'working' && s.turn && s.turn.startedAt ? s.turn.startedAt : null, activeAt: s.lastActivityAt || null,
+      gitBranch: (s.git && s.git.isWorktree && s.git.branch) || null,
     });
   }
   return { nodes, edges, counts, at: now };

@@ -11,10 +11,15 @@
 // P48(원격 R2): Electron 밖(브라우저)에서 돌면 웹 어댑터(web.js)가 window.mt를 두고, 짝을 맺기 전에는 짝 맺기 화면(Pair.jsx)만 보인다.
 //   PC 창에는 브라우저의 허락 요청 카드(WebDevices.jsx)가 뜬다
 import './dialog.js';
+import { lightMode, startCrashWatch, setCrumbSampler, bootState, boardPlan } from './crash-watch.js'; // P84: 죽기 전 기록, 반복해서 죽으면 가벼운 화면
 import { isWeb } from './web.js';
 import { RemoteBar } from './RemoteBar.jsx'; // P49: 웹 화면의 다시 연결 띠와 왕복 지연
 import { webGate } from './Pair.jsx';
 import { PairRequestBanner } from './WebDevices.jsx';
+import { PhoneApp, usePhoneLayout, useScreenFix, LightBanner, LevelBadge, phoneScreen } from './Phone.jsx'; // P74: 휴대폰 세로 화면. P86: LevelBadge(가벼운 보드 단계)
+// P87: 휴대폰은 늘 세션 목록(Phone.jsx)이다. P76의 휴대폰 보드(목록 단추, 탭한 세션의 전체 보기 PhoneFull.jsx)는 휴대폰에 그리지 않는다
+import { startRemoteNotice, remoteNotices } from './remote-notice.js'; // P58
+import { startPushClient } from './push.js'; // P88: 웹 푸시
 import '@xyflow/react/dist/style.css';
 import '@xterm/xterm/css/xterm.css';
 import './fonts.css';
@@ -24,7 +29,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ReactFlowProvider } from '@xyflow/react';
 import { api } from './api.js';
-import { useStore, getState, openDialog, setKillAsk, setDebugThrow, setSearchOpen, pendingFor, setMissionOpen, setConvoNodes, setFocus, setBottomPin } from './store.js';
+import { useStore, getState, openDialog, setKillAsk, setRenaming, setDebugThrow, setSearchOpen, pendingFor, setMissionOpen, setConvoNodes, setFocus, setBottomPin, selectWorkspace } from './store.js';
 import { OutputPanel } from './Output.jsx';
 import { LoopDialog } from './Loops.jsx';
 import { MissionMap } from './Mission.jsx';
@@ -39,11 +44,13 @@ import { OpenRepoDialog, CloseWsDialog } from './Workspaces.jsx';
 import { DesktopImportDialog } from './DesktopImport.jsx'; // P34
 import { Sidebar } from './Sidebar.jsx'; // P7(J5): 평소에 닫힌 왼쪽 사이드바
 import { SearchBox, SelectionBar } from './Search.jsx';
-import { keyToData, closeKeyTargets, boardArrowKey } from './lib/keys.js';
+import { keyToData, closeKeyTargets, boardArrowKey, stepWorkspace, spaceHoldReady, spaceHoldStep, SPACE_HOLD_MS } from './lib/keys.js';
+import { wsTabs, tabKeys } from './lib/ws-tabs.js'; // P98
+import { renameKeyTarget } from './lib/session-name.js'; // P66: F2로 고른 노드의 이름 바꾸기
 import { ReturnSummary, useReturnSummary } from './ReturnSummary.jsx';
 import { CloseDialog } from './SessionNode.jsx';
 import { AppBoundary } from './ErrorBoundary.jsx';
-import { budget, terms } from './TerminalView.jsx';
+import { budget, terms, termStats } from './TerminalView.jsx';
 import { nextTarget } from './lib/faces.js';
 import { startViewingReport } from './sleep.js';
 import { startNotifier, notifyLog } from './notify.js';
@@ -65,7 +72,7 @@ function Dialogs() {
   if (d.kind === 'desktopImport') return <DesktopImportDialog onClose={close} />;
   if (d.kind === 'wsclose') return <CloseWsDialog ws={d.ws} onClose={close} />;
   if (d.kind === 'loop') return <LoopDialog target={d.target} onClose={close} />;
-  if (d.kind === 'settings') return <SettingsDialog onClose={close} />;
+  if (d.kind === 'settings') return <SettingsDialog tab={d.tab} newLauncher={d.newLauncher} onClose={close} />; // P97: 레일 +는 런처 탭의 새 런처로
   return null;
 }
 
@@ -108,9 +115,12 @@ function App() {
   const order = [...inbox.needsYou, ...inbox.problems].map((s) => s.sessionId);
   const orderRef = useRef(order);
   orderRef.current = order;
-  // P11: 왼쪽 레일의 "손으로 잇기"(노드 손잡이를 늘 보인다), 오른쪽 레일의 루프 목록. P43: 판에서 ← 키로도 바꾼다
+  // P11: 왼쪽 레일의 "손으로 잇기"(노드 손잡이를 늘 보인다), 오른쪽 레일의 루프 목록
   const [linking, setLinking] = useState(false);
   const [loopsOpen, setLoopsOpen] = useState(false);
+  const [phone] = usePhoneLayout(isWeb); // P74. P87: 휴대폰이면 늘 목록
+  const light = lightMode(); // P84: 반복해서 죽은 뒤의 가벼운 화면(태블릿·마우스 웹 화면의 보드 위 안내)
+  useScreenFix(isWeb); // P83: iOS 홈 화면 앱의 짧은 창 높이
 
   useEffect(() => {
     // H4: 노드를 눌러 들어간 직후 터미널이 붙기 전에 친 키(입력칸 밖)는 모아 둔다. 터미널에 초점이 가면 그만 모은다
@@ -127,7 +137,7 @@ function App() {
         e.preventDefault(); e.stopPropagation();
         if (arrow === 'command') cmd.current && cmd.current.focus();
         else if (arrow === 'search') { if (st.searchOpen) { const el = document.querySelector('[data-field="search"]'); if (el) el.select(); } else setSearchOpen(true); }
-        else if (arrow === 'tool') setLinking((l) => !l);
+        else if (arrow === 'prevWs' || arrow === 'nextWs') { const k = stepWorkspace(tabKeys(wsTabs(st.workspaces, st.groups)), st.currentWs, arrow === 'prevWs' ? -1 : 1); if (k) selectWorkspace(k); } // 탭을 누른 것과 같다(고르고 그 영역으로 화면을 맞춘다). P98: 위 바 칩 순서(묶음은 그 자리에서 구성 순서로 편다)
         return;
       }
       if (!p || st.dialog || st.searchOpen || st.missionOpen || st.outputView || st.killAsk) return;
@@ -146,6 +156,8 @@ function App() {
       // P22: 고른 세션 노드를 Delete로 닫는다(X와 같은 확인). 터미널·입력 칸·메모 편집 중에는 위의 editable에서 그대로 글자를 지운다
       const close = closeKeyTargets(e, getState());
       if (close) { e.preventDefault(); if (close.one) setKillAsk(close.one); else openDialog({ kind: 'close', ids: close.many }); return; }
+      const ren = !e.defaultPrevented && renameKeyTarget(e, getState()); // P66: 사이드바 목록의 F2는 그 줄이 먼저 받는다
+      if (ren) { e.preventDefault(); setRenaming(ren, 'node'); return; }
       if ((e.key === 'm' || e.key === 'M') && !getState().dialog) { e.preventDefault(); setMissionOpen(!getState().missionOpen); return; }
       if (e.key === 'n' || e.key === 'N') {
         // N: 내 차례(그다음 문제)를 차례로. 노드를 옮기지 않고 화면만 간다(BRIEF 4절)
@@ -157,6 +169,50 @@ function App() {
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keydown', onKeyCapture, true); };
   }, []);
 
+  useEffect(() => {
+    // P109: 고른 노드가 없을 때 판에서 Space를 살짝 길게 누르면 전체 보기(lib/keys.js spaceHoldReady·spaceHoldStep).
+    // 막지 않고 보기만 한다(React Flow의 Space 누른 채 휠로 옮기기, 그 자리의 Space는 그대로). 기준 전 마우스 누름·휠·다른 키는 취소
+    let hold = { phase: 'idle', at: 0 };
+    let timer = null;
+    const step = (ev) => {
+      const r = spaceHoldStep(hold, ev);
+      hold = r.s;
+      if (hold.phase !== 'armed' && timer) { clearTimeout(timer); timer = null; }
+      if (r.fire) { const st = getState(); if (st.fitAll) st.fitAll(250); }
+    };
+    const onDown = (e) => {
+      if (e.key !== ' ') { if (hold.phase === 'armed') step({ type: 'cancel' }); return; }
+      const st = getState();
+      const ready = !e.repeat && spaceHoldReady(e, { dialog: st.dialog, missionOpen: st.missionOpen, outputOpen: !!st.outputView, searchOpen: st.searchOpen, pending: !!(st.pendingInput && pendingFor(st.pendingInput.id)), selected: st.selected, rfSelected: !!document.querySelector('.mt-canvas .react-flow__node.selected') });
+      const was = hold.phase;
+      step({ type: 'down', ready, repeat: e.repeat, at: performance.now() });
+      if (hold.phase === 'armed' && was !== 'armed') timer = setTimeout(() => { timer = null; step({ type: 'tick', at: performance.now() }); }, SPACE_HOLD_MS + 5);
+    };
+    const onUp = (e) => { if (e.key === ' ') step({ type: 'up' }); };
+    const cancel = () => { if (hold.phase === 'armed') step({ type: 'cancel' }); };
+    window.addEventListener('keydown', onDown, true);
+    window.addEventListener('keyup', onUp, true);
+    window.addEventListener('pointerdown', cancel, true);
+    window.addEventListener('wheel', cancel, { capture: true, passive: true });
+    window.addEventListener('blur', cancel);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener('keydown', onDown, true); window.removeEventListener('keyup', onUp, true);
+      window.removeEventListener('pointerdown', cancel, true); window.removeEventListener('wheel', cancel, { capture: true }); window.removeEventListener('blur', cancel);
+    };
+  }, []);
+
+  // P74: 웹 화면을 휴대폰 세로로 열면 캔버스 대신 휴대폰 화면(Phone.jsx). 가로·넓은 화면이나 "보드 화면"을 고르면 이 보드 화면
+  // P76: 휴대폰도 기본은 보드 화면이다(phone-board: 크롬을 줄이고, 목록 단추, 탭하면 전체 보기). 목록 단추로 고르면 휴대폰 목록 화면
+  // P87: 휴대폰은 늘 목록 화면이다. 보드 화면은 태블릿·마우스 웹 화면·PC 창만
+  if (phone) return (
+    <div className="mt-app phone">
+      {loaded && <AppBoundary><PhoneApp /></AppBoundary>}
+      <RemoteBar />
+      {splash !== 'off' && <Splash error={!loaded && conn === 'error' ? t('app.backendFailed', { detail }) : null} leaving={splash === 'leaving'} />}
+      <div className="mt-toasts">{toasts.map((t) => <div key={t.id} className={`mt-toast ${t.kind}`}>{t.text}</div>)}</div>
+    </div>
+  );
   return (
     <div className={`mt-app${linking ? ' linking' : ''}`}>
       <div className="mt-body">
@@ -184,6 +240,8 @@ function App() {
       <Dialogs />
       {loaded && <PairRequestBanner />}
       {isWeb && <RemoteBar />}
+      {light && <LightBanner floating />}
+      {!light && <LevelBadge />}
       {splash !== 'off' && <Splash error={!loaded && conn === 'error' ? t('app.backendFailed', { detail }) : null} leaving={splash === 'leaving'} />}
       <div className="mt-toasts">{toasts.map((t) => <div key={t.id} className={`mt-toast ${t.kind}`}>{t.text}</div>)}</div>
     </div>
@@ -191,7 +249,7 @@ function App() {
 }
 
 // 시험 스크립트(Playwright)와 E5·E6 측정이 읽는 창 안의 값
-window.__mt = { api, getState, perf, budget, terms, maxControllers: MAX_CONTROLLERS, notifyLog, setDebugThrow, setConvoNodes, setFocus, pinBottom: setBottomPin }; // P13: setConvoNodes는 성능 시험의 기준(대화 노드 뺀 판). P26: setFocus는 초점 세션 시험. P43: pinBottom(true)은 아래 바를 늘 보이게(옛 창 시험)
+window.__mt = { api, getState, perf, budget, terms, maxControllers: MAX_CONTROLLERS, crash: bootState, termStats, notifyLog, remoteNotices, setDebugThrow, setConvoNodes, setFocus, pinBottom: setBottomPin }; // P13: setConvoNodes는 성능 시험의 기준(대화 노드 뺀 판). P26: setFocus는 초점 세션 시험. P43: pinBottom(true)은 아래 바를 늘 보이게(옛 창 시험)
 window.addEventListener('error', (e) => { perf.perfLog('window_error', { message: e.message, at: `${e.filename}:${e.lineno}` }); window.mt.log(`error ${e.message} ${e.filename}:${e.lineno}`); });
 window.addEventListener('unhandledrejection', (e) => { perf.perfLog('unhandled', { message: String(e.reason && (e.reason.message || e.reason)) }); window.mt.log(`unhandled ${e.reason && (e.reason.stack || e.reason.message || e.reason)}`); });
 
@@ -206,11 +264,19 @@ const fontsReady = Promise.race([
     .map((f) => document.fonts.load(f, f.includes('Nanum') || f.includes('Pretendard') ? '가나' : 'Ab').catch(() => null))),
   new Promise((r) => setTimeout(r, 1500)),
 ]);
+// P86: 보드 단계 3부터 효과를 끈다(styles.css html.mt-lite). 시험이 html[data-level]을 읽는다
+// P87: 휴대폰은 보드를 그리지 않으므로 단계를 걸지 않는다(미션 맵의 가벼운 움직임은 남긴다)
+{ const pl = boardPlan(); if (pl.level && !(isWeb && phoneScreen())) { document.documentElement.dataset.level = String(pl.level); if (!pl.effects) document.documentElement.classList.add('mt-lite'); } }
 function boot() {
   fontsReady.then(() => root.render(<ReactFlowProvider><App /></ReactFlowProvider>));
   api.connect();
   startNotifier();
+  if (!isWeb) startRemoteNotice(); // P58: 원격 기기가 붙으면 PC 창에 알린다
+  if (isWeb) startPushClient(); // P88: 보이는 상태 알리기(보는 기기에는 푸시를 보내지 않는다), 알림을 누르면 그 세션으로
   startViewingReport(); // P21(D4): 초점 노드는 저절로 잠재우지 않는다
+  // P84: 웹 화면의 죽기 전 기록(화면, 터미널 메모리). 직전 페이지가 죽었으면 연결 기록에 남긴다
+  setCrumbSampler(() => ({ view: document.querySelector('[data-role=phone]') ? (document.querySelector('[data-role=phone]').dataset.view === 'session' ? 'session' : 'list') : document.querySelector('[data-role=phone-full]') ? 'full' : 'board', ...termStats() }));
+  startCrashWatch();
 }
 // P48: 웹 화면은 짝을 맺은 뒤에 판에 붙는다
 if (isWeb) webGate().then(boot); else boot();

@@ -3,7 +3,7 @@
 import { perfLog } from './perf.js';
 import { pendingRequest } from '../../../backend/src/requests.mjs';
 import { clientIdOf, clientQuery } from './lib/multiclient.js';
-import { connInit, connStep, retryDelay, pingTimedOut, rttLabel, PING_EVERY_MS, PING_TIMEOUT_MS } from './lib/reconnect.js';
+import { connInit, connStep, retryDelay, pingTimedOut, rttLabel, prevCloseParam, PING_EVERY_MS, PING_TIMEOUT_MS } from './lib/reconnect.js'; // P49. P82: prevCloseParam
 
 export const CONNECT_TIMEOUT_MS = 10000;
 function loadClientId() {
@@ -16,6 +16,7 @@ function loadClientId() {
 }
 function clientName(info) { try { const n = localStorage.getItem('mt.clientName'); if (n) return n; } catch {} return info.deviceName || null; }
 const disconnected = () => Object.assign(new Error('disconnected'), { code: 'disconnected' });
+export const BIG_MSG = 8000;
 
 export class Api {
   constructor({ connectTimeoutMs = CONNECT_TIMEOUT_MS } = {}) {
@@ -25,6 +26,8 @@ export class Api {
     this.status = 'connecting'; this.info = null; this.ws = null; this.stopped = false;
     this.clientId = loadClientId(); this.conn = connInit();
     this.rtts = []; this.rtt = null; this.pingSentAt = null;
+    this.openedAt = null; this.lastClose = null; this.closeLog = [];
+    this.onStep = null;
     this.onWake = () => this.wake();
     this.onVisible = () => { if (document.visibilityState === 'visible') this.wake(); };
     globalThis.window?.addEventListener?.('online', this.onWake);
@@ -51,6 +54,15 @@ export class Api {
     for (const w of [...this.wait.values()]) w.rej(disconnected());
     this.wait.clear();
   }
+  // P82: 직전 닫힘(브라우저가 본 코드, 깨끗이 닫혔나, 붙어 있던 ms). 다음 연결 주소의 pc 값으로 백엔드에 알린다(연결 기록의 connect). closeLog는 시험이 읽는다
+  noteClose({ code, wasClean }) {
+    const ms = this.openedAt ? Date.now() - this.openedAt : 0;
+    this.openedAt = null;
+    this.lastClose = { code, wasClean: !!wasClean, ms };
+    this.closeLog.push({ ...this.lastClose, at: Date.now() }); if (this.closeLog.length > 20) this.closeLog.shift();
+    perfLog('ws_close', this.lastClose);
+  }
+
   async connect() {
     this.stopped = false;
     const generation = ++this.generation;
@@ -67,7 +79,8 @@ export class Api {
     }
     if (generation !== this.generation) return;
     this.info = info; this.clientName = clientName(info);
-    const q = clientQuery({ clientId: this.clientId, name: this.clientName, kind: info.clientKind || 'desktop' });
+    const pc = prevCloseParam(this.lastClose);
+    const q = [clientQuery({ clientId: this.clientId, name: this.clientName, kind: info.clientKind || 'desktop' }), pc ? `pc=${encodeURIComponent(pc)}` : ''].filter(Boolean).join('&');
     const base = info.wsUrl || `ws://127.0.0.1:${info.port}/api?token=${encodeURIComponent(info.token)}`;
     let ws;
     try { ws = new WebSocket(q ? `${base}${base.includes('?') ? '&' : '?'}${q}` : base); }
@@ -77,6 +90,8 @@ export class Api {
     this.openTimer = setTimeout(() => { if (live() && ws.readyState === 0) this.dead(ws, 'open_timeout'); }, this.connectTimeoutMs);
     ws.onopen = async () => {
       if (!live()) return;
+      this.openedAt = Date.now(); this.lastClose = null;
+      if (this.onStep) this.onStep('open', { in: this.inB || 0 });
       clearTimeout(this.openTimer); this.step({ type: 'open' }); this.setStatus('open');
       this.pingTimer = setInterval(() => this.ping(), PING_EVERY_MS);
       this.firstPingTimer = setTimeout(() => { if (live()) this.ping(); }, 1000);
@@ -85,19 +100,23 @@ export class Api {
     };
     ws.onmessage = (ev) => {
       if (!live()) return;
+      const size = typeof ev.data === 'string' ? ev.data.length : ev.data.byteLength || 0;
+      this.inB = (this.inB || 0) + size; // P84: 받은 양(죽기 전 기록)
       let m; try { m = JSON.parse(ev.data); } catch { return; }
       if (!m || typeof m !== 'object' || Array.isArray(m)) return;
+      if (size >= BIG_MSG && this.onStep) this.onStep('msg', { k: typeof m.event === 'string' ? m.event : this.wait.get(m.id)?.m || 'reply', b: size });
       if (typeof m.event === 'string') return this.emit(m.event, m.data);
       const w = this.wait.get(m.id); if (!w) return;
       if (m.error) w.rej(Object.assign(new Error(m.error.message), { code: m.error.code, key: m.error.key, vars: m.error.vars }));
       else w.res(m.result);
     };
     ws.onerror = () => {}; // onclose (or the open deadline) owns reconnection.
-    ws.onclose = (ev) => { if (live()) this.dead(ws, ev?.code); };
+    ws.onclose = (ev) => { if (live()) this.dead(ws, ev?.code, ev?.wasClean); };
   }
-  dead(ws, code = 'timeout') {
+  dead(ws, code = 'timeout', wasClean = false) {
     if (this.ws !== ws || this.stopped) return;
     this.generation++; this.ws = null; this.clearTimers(); this.drop(ws);
+    this.noteClose({ code, wasClean });
     this.step({ type: 'close', code }); this.setStatus('closed'); this.emit('$close');
     // Check /web/me once after revocation so the web adapter returns to pairing.
     if (code === 4401 && globalThis.window?.mt?.web) this.retryTimer = setTimeout(() => this.connect(), 0);
@@ -144,7 +163,7 @@ export class Api {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return Promise.reject(disconnected());
     const id = ++this.n;
-    return pendingRequest(this.wait, id, () => ws.send(JSON.stringify({ id, method, params })), { method });
+    return pendingRequest(this.wait, id, () => { this.wait.get(id).m = method; ws.send(JSON.stringify({ id, method, params })); }, { method });
   }
 }
 export const api = new Api();

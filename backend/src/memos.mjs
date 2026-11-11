@@ -47,7 +47,7 @@ export class Memos {
   }
   find(ref) {
     const m = ref && this.ctx.store.getMemo(String(ref));
-    if (!m) throw this.ctx.apiError('not_found', `없는 메모: ${ref}`);
+    if (!m) throw this.ctx.apiError('not_found', `메모를 찾을 수 없습니다: ${ref}`);
     return m;
   }
   text(t) {
@@ -84,7 +84,7 @@ export class Memos {
   // memo.delete { memo, confirm? }. 글이 있는 메모는 확인을 받는다(되돌릴 수 없다)
   delete(p) {
     const m = this.find(p.memo);
-    if (m.text.trim() && !p.confirm) return confirmResult(`메모(${m.text.trim().split('\n')[0].slice(0, 40)}…)를 지운다. 되돌릴 수 없다.`, mk('memoDelete', { text: m.text.trim().split('\n')[0].slice(0, 40) }));
+    if (m.text.trim() && !p.confirm) return confirmResult(`메모(${m.text.trim().split('\n')[0].slice(0, 40)}…)를 삭제합니다. 이 작업은 되돌릴 수 없습니다.`, mk('memoDelete', { text: m.text.trim().split('\n')[0].slice(0, 40) }));
     this.ctx.store.deleteMemo(m.memoId);
     this.ctx.broadcast('memo.removed', { memoId: m.memoId });
     return { deleted: true, memoId: m.memoId };

@@ -58,6 +58,11 @@ try {
   client = new ApiClient(info); await client.open();
   await until(async () => (await client.call('backend.status')).herdr.connected, 'herdr connection');
   console.log('PASS backend and herdr connected');
+  if (process.env.ATRIUM_TEST_AUTO === '1') {
+    await client.call('settings.set', { agentAutoApprove: true });
+    assert.equal((await client.call('settings.get')).settings.agentAutoApprove, true);
+    console.log('PASS board auto approval enabled on the isolated fixture');
+  }
   if (process.env.ATRIUM_TEST_MODELS === '1') {
     const { checkModelPicker } = await import('./model-picker.mjs');
     await checkModelPicker({ page, app, client, project, dir });
@@ -232,6 +237,10 @@ try {
   }
   if (process.env.ATRIUM_SMOKE_AGENT === '1') {
     const agent = await client.call('session.spawn', { kind: 'claude', name: 'mac-claude-smoke', cwd: path.join(dir, 'project') });
+    if (process.env.ATRIUM_TEST_AUTO === '1') {
+      const mode = agent.argv?.findIndex((a) => a === '--permission-mode');
+      assert.ok(mode >= 0 && agent.argv[mode + 1] === 'bypassPermissions');
+    }
     const state = await until(async () => {
       const s = await client.call('session.get', { session: agent.sessionId });
       return /Claude|trust|Welcome|permission/i.test(s.screenTail || '') ? s : null;

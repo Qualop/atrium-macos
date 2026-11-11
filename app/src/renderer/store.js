@@ -4,8 +4,11 @@
 // P6c: 메모·칸반 노드(I3·I4), Thread(I2), 루프(I5), 설정(I7), 출력 보기(I1)와 미션 맵(I6) 창을 연 상태.
 import { useSyncExternalStore } from 'react';
 import { api } from './api.js';
+import { step } from './crash-watch.js'; // P86: 단계 기록
 import { setLanguage, t, errText } from './lib/i18n.js';
 import { readScale, saveScale, SCALE_KEYS } from './lib/scale.js'; // P45
+import { loadSpot, saveSpot, applySpot } from './lib/overview.js'; // P85
+import { applyWorkLight, applyMissionOpen } from './lib/work-light.js'; // P107: 작업 중 테두리 빛 설정과 미션 맵 덮개를 문서 뿌리에
 
 const state = {
   conn: 'connecting',
@@ -16,7 +19,6 @@ const state = {
   boardLoaded: false,
   viewport: null, // 저장한 캔버스 뷰포트(없으면 처음 열 때 모두 보이게 맞춘다)
   deliveries: new Map(), // deliveryId → delivery(+name, text)
-  dismissedAsks: new Set(), // 카드가 닫힌 요청(toolUseId 또는 since)
   focusId: null, // N과 칩으로 마지막에 간 세션
   focusTick: 0, // 바뀌면 그 세션의 터미널에 초점을 준다
   attached: [], // 제어기를 붙인 세션(가까이 얼굴이면서 보이는 노드, 상한까지)
@@ -31,6 +33,7 @@ const state = {
   links: new Map(), // P4: linkId → 연결(누가 누구에게 시켰는지, 역할, 띄움)
   dialog: null, // { kind: 'spawn' | 'role' | 'link' | 'wsopen' | 'wsclose' | 'close', from?, to?, linkId?, cwd?, ids? }
   killAsk: null, // P22: { id, at } Delete 키로 그 노드의 닫기 확인(X와 같음)을 연다
+  renaming: null, // P66: { id, where: 'node' | 'sidebar' } 이름을 바꾸는 세션과 입력칸 자리
   // P5: 리포지토리 워크스페이스
   workspaces: [], // [{ key, name, kind, root, createdAt, counts, x, y }] 처음 생긴 순서
   groups: [], // P44: 가상 그룹 [{ id, name, members: [워크스페이스 키] }](판 데이터 meta wsGroups)
@@ -66,7 +69,8 @@ const state = {
 };
 const subs = new Set();
 // P16: 설정의 language를 화면 언어로. 언어가 바뀌면 사전을 쓰는 화면이 다시 그린다(lib/i18n.js)
-function putSettings(s) { state.settings = s; if (s && s.language) setLanguage(s.language); changed(); }
+// P107: workLight(작업 중 테두리 빛: 판 노드 둘레와 미션 맵 카드)를 문서 뿌리 data-work-light로(PC 창·웹·휴대폰 같은 판 설정)
+function putSettings(s) { state.settings = s; if (s && s.language) setLanguage(s.language); applyWorkLight(s); changed(); }
 function changed() { state.version++; for (const fn of [...subs]) fn(); }
 
 export function useStore(select) {
@@ -118,7 +122,7 @@ export async function loadBoard() {
     }
     state[key] = next;
   };
-  put('nodes', b.nodes.map((n) => [n.session_id, { x: n.x, y: n.y, w: n.w, h: n.h, z: n.z, size: n.size || null, area: n.area || '' }])); // P27
+  put('nodes', b.nodes.map((n) => [n.session_id, { x: n.x, y: n.y, w: n.w, h: n.h, z: n.z, size: n.size || null, area: n.area || '', aspect: n.aspect || null }])); // P27
   put('links', (b.links || []).map((l) => [l.linkId, l]));
   put('docks', (b.docks || []).map((d) => [d.dockId, d]));
   put('memos', memos.map((m) => [m.memoId, m]));
@@ -131,6 +135,8 @@ export async function loadBoard() {
   }
   if (!state.boardLoaded || !state.workspaces.some((w) => w.key === state.currentWs)) state.currentWs = b.current || (state.workspaces[0] || {}).key || null;
   if (!state.boardLoaded) { state.viewport = b.viewport || null; state.boardSeenAt = b.seenAt || null; }
+  // P86: 판 상태 적용(종류별 수, 그리기 전). 웹 화면만 적는다
+  step('board', { n: state.nodes.size, ss: state.sessions.size, cv: state.convoNodes.size, ce: state.convoEdges.length, m: state.memos.size, kb: state.kanbans.size, l: state.links.size, ws: state.workspaces.length });
   state.boardLoaded = true;
   changed();
 }
@@ -146,6 +152,16 @@ export function selectWorkspace(key) {
   if (moved) api.call('workspace.select', { workspace: key }).catch(() => {});
   if (state.fitWorkspace) state.fitWorkspace(key);
 }
+// P98: 위 바의 묶음 칩. pick을 지금 워크스페이스로 고르고(새 세션 폴더 등), 화면은 묶음 구성 영역 모두에 맞춘다
+export function selectGroup(keys, pick) {
+  if (!pick) return;
+  const moved = pick !== state.currentWs;
+  state.currentWs = pick;
+  changed();
+  if (moved) api.call('workspace.select', { workspace: pick }).catch(() => {});
+  if (state.fitWorkspaces) state.fitWorkspaces(keys && keys.length ? keys : [pick]);
+  else if (state.fitWorkspace) state.fitWorkspace(pick);
+}
 // 노드로 갔을 때 그 워크스페이스를 기본으로(새 세션 대화상자의 폴더)
 export function noteWorkspace(key) {
   if (!key || key === state.currentWs) return;
@@ -160,6 +176,7 @@ export function setViewNow(vp, size) {
   state.vpNow = vp; if (size) state.canvasSize = size; changed();
 }
 export function setKillAsk(id) { state.killAsk = id ? { id, at: Date.now() } : null; changed(); }
+export function setRenaming(id, where = 'node') { state.renaming = id ? { id, where } : null; changed(); } // P66
 // 시험용(P3, 노드 오류 경계): 이 세션 노드가 그릴 때 일부러 오류를 낸다. 창 안의 window.__mt.setDebugThrow로만 켠다
 export function setDebugThrow(id) { state.debugThrow = id; changed(); }
 
@@ -188,7 +205,6 @@ export function saveNode(id, cause = 'unknown') {
   api.call('board.setNode', { session: id, x: Math.round(n.x), y: Math.round(n.y), w: Math.round(n.w), h: Math.round(n.h), z: n.z || 0, cause }).catch((e) => toast(t('store.saveNodeFailed', { error: errText(e) }), 'error'));
 }
 
-export function dismissAsk(key) { state.dismissedAsks = new Set(state.dismissedAsks); state.dismissedAsks.add(key); changed(); }
 // 새로 띄우거나 판으로 연 세션이 판에 올라오면 그 노드로 들어간다(터미널에 초점)
 export function goWhenOpen(sessionId) {
   const t0 = Date.now();
@@ -207,6 +223,7 @@ export function setAttached(list) {
   if (list.length === state.attached.length && list.every((x, i) => x === state.attached[i])) return;
   state.attached = list; changed();
 }
+// 기다리는 요청 하나를 가리키는 열쇠(toolUseId, 없으면 시작 시각). P104: 휴대폰 키 패드가 요청마다 펼침을 새로 정한다
 export const askKey = (ask) => (ask ? ask.toolUseId || String(ask.since || '') : '');
 
 export function markSeen(id) {
@@ -257,7 +274,8 @@ export function setConvoLocal(id, f) { const c = state.convoNodes.get(id); if (!
 export function setKanbanLocal(id, f) { const k = state.kanbans.get(id); if (!k) return; state.kanbans = new Map(state.kanbans); state.kanbans.set(id, { ...k, ...f }); changed(); }
 export function setThreadOpen(v) { state.threadOpen = v; changed(); }
 export function setOutputView(v) { state.outputView = v; changed(); }
-export function setMissionOpen(v) { state.missionOpen = v; changed(); }
+// P107: 덮개를 연 동안 문서 뿌리 data-mm-open(뒤의 판 노드 둘레를 멈춘다)
+export function setMissionOpen(v) { state.missionOpen = v; applyMissionOpen(v); changed(); }
 // 검색으로 간 칸반 카드를 2초 동안 빛낸다
 export function setFlashCard(id) { state.flashCard = id; changed(); setTimeout(() => { if (state.flashCard === id) { state.flashCard = null; changed(); } }, 2000); }
 function putThread(items, { front = false } = {}) {
@@ -290,7 +308,12 @@ api.on('$open', async (r) => {
   // 한 부가 기능(자원 측정 등)이 실패해도 설정과 나머지 맥락은 읽는다.
   const results = await Promise.allSettled([
     loadBoard(),
-    read('delivery.list', (ds) => { state.deliveries = mergeSnapshot(before.deliveries, state.deliveries, new Map(ds.slice().reverse().filter((d) => state.sessions.has(d.sessionId)).map((d) => [d.deliveryId, d]))); }, { limit: 10 }),
+    (async () => {
+      const [recent, active] = await Promise.all([api.call('delivery.list', { limit: 10 }), api.call('delivery.list', { active: true }).catch(() => [])]);
+      if (generation !== api.generation) return;
+      state.deliveries = mergeSnapshot(before.deliveries, state.deliveries, new Map([...recent.slice().reverse(), ...active].filter((d) => state.sessions.has(d.sessionId)).map((d) => [d.deliveryId, d])));
+      changed();
+    })(),
     read('herdr.status', (st) => { if (state.herdr === before.herdr) state.herdr = herdrStateOf(st); }),
     read('resources.get', (v) => { if (state.resources === before.resources) state.resources = v; }),
     read('herdr.clients', (v) => { if (state.clients === before.clients) state.clients = v; }),
@@ -366,7 +389,8 @@ api.on('kanban.removed', (d) => { state.kanbans = new Map(state.kanbans); state.
 api.on('thread.item', (it) => putThread([it]));
 api.on('loop.updated', (l) => { state.loops = new Map(state.loops); state.loops.set(l.loopId, l); changed(); });
 api.on('loop.removed', (d) => { state.loops = new Map(state.loops); state.loops.delete(d.loopId); changed(); });
-api.on('settings.updated', (v) => putSettings(v.settings || v));
+// P62: 웹 화면은 패스키로 확인이 바뀌면 세션 쿠키를 새 수명으로 다시 받는다(web.js passkeyMode)
+api.on('settings.updated', (v) => { const s = v.settings || v; try { if (s && window.mt && typeof window.mt.passkeyMode === 'function') window.mt.passkeyMode(s.remotePasskey); } catch {} putSettings(s); });
 // P33 호출자(왼쪽 레일 즐겨찾기, 설정의 호출자 탭, 새 세션 창). 옛 백엔드면 없다
 export function putLaunchers(v) { state.launchers = v && Array.isArray(v.launchers) ? v : null; changed(); }
 let launchersRequest = 0;
@@ -387,3 +411,7 @@ state.termScale = readScale(scaleStore(), SCALE_KEYS.term);
 state.uiScale = readScale(scaleStore(), SCALE_KEYS.ui);
 export function setTermScale(f) { state.termScale = saveScale(scaleStore(), SCALE_KEYS.term, f); changed(); }
 export function setUiScale(f) { state.uiScale = saveScale(scaleStore(), SCALE_KEYS.ui, f); applyUiScale(state.uiScale); changed(); }
+// P85: "작업 중만 또렷하게"(lib/overview.js). 이 창(프로필)의 localStorage에 두고 문서 뿌리의 mt-spot 클래스로 그린다
+state.spotlight = loadSpot(scaleStore());
+applySpot(state.spotlight);
+export function setSpotlight(on) { state.spotlight = saveSpot(scaleStore(), on); applySpot(state.spotlight); changed(); }

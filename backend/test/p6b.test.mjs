@@ -92,7 +92,7 @@ test('I1: 파일 이름은 쓸 수 없는 글자를 바꾸고, 문서에 지시�
   const md = renderMarkdown({ session: 's1', workspace: 'multitask', cwd: 'C:/x', turn: 2, prompt: '줄1\n줄2', answer: '# 답', answerAt: 1, source: 'transcript' });
   assert.match(md, /^# @s1 턴 2/);
   assert.match(md, /> 줄1\n> 줄2/);
-  assert.match(md, /## 답\n\n# 답\n$/);
+  assert.match(md, /## 응답\n\n# 답\n$/);
 });
 
 test('I1: output.get은 지난 턴들도 주고, output.save는 판 데이터 폴더의 outputs/<워크스페이스>/에 쓴다', () => {
@@ -115,7 +115,7 @@ test('I1: output.get은 지난 턴들도 주고, output.save는 판 데이터 �
   assert.equal(g.turn.long, true);
   assert.equal(g.turns[0].answerHead, '답 하나');
   assert.equal(o.get({ session: 's1', turn: 1 }).turn.markdown, '답 하나');
-  assert.throws(() => o.get({ session: 's1', turn: 5 }), /없는 턴/);
+  assert.throws(() => o.get({ session: 's1', turn: 5 }), (e) => e.code === 'not_found');
   const r = o.save({ session: 's1', turn: 1 });
   assert.equal(path.dirname(r.file), path.join(dir, 'outputs', 'parent_repo'));
   assert.match(fs.readFileSync(r.file, 'utf8'), /답 하나/);
@@ -199,7 +199,7 @@ test('I3: 메모 만들기·고치기·지우기(글이 있으면 확인)·찾�
   assert.equal(c.x, a.x + a.w + 40);
   const u = await m.update({ memo: a.memoId, text: '바뀜', x: 100, workspace: null });
   assert.deepEqual([u.text, u.x, u.workspaceKey], ['바뀜', 100, null]);
-  await assert.rejects(m.update({ memo: 'nope' }), /없는 메모/);
+  await assert.rejects(m.update({ memo: 'nope' }), (e) => e.code === 'not_found');
   await assert.rejects(m.create({ text: 'x'.repeat(MEMO.maxText + 1) }), /자까지/);
   assert.equal((await m.list({ q: '바뀜' })).length, 1);
   assert.equal(m.delete({ memo: a.memoId }).needsConfirm, true);
@@ -220,24 +220,24 @@ test('I4: 칸반 열과 카드 바꾸기(순수 함수)', () => {
   const card = r1.result.cardId;
   cols = applyKanbanOp(cols, { op: 'addCard', column: '할 일', text: '먼저', index: 0 }).columns;
   assert.deepEqual(cols[0].cards.map((c) => c.text), ['먼저', '리뷰']);
-  cols = applyKanbanOp(cols, { op: 'moveCard', card, column: '끝' }).columns;
+  cols = applyKanbanOp(cols, { op: 'moveCard', card, column: '완료' }).columns;
   assert.equal(cols[2].cards[0].cardId, card);
   cols = applyKanbanOp(cols, { op: 'linkCard', card, sessionId: null }).columns;
   assert.equal(cols[2].cards[0].sessionId, null);
   cols = applyKanbanOp(cols, { op: 'editCard', card, text: '리뷰 끝' }).columns;
   const add = applyKanbanOp(cols, { op: 'addColumn', name: '보류', index: 1 });
   cols = add.columns;
-  assert.deepEqual(cols.map((c) => c.name), ['할 일', '보류', '하는 중', '끝']);
+  assert.deepEqual(cols.map((c) => c.name), ['할 일', '보류', '진행 중', '완료']);
   cols = applyKanbanOp(cols, { op: 'renameColumn', column: add.result.columnId, name: '막힘' }).columns;
   cols = applyKanbanOp(cols, { op: 'moveColumn', column: '막힘', index: 99 }).columns;
   assert.equal(cols.at(-1).name, '막힘');
   cols = applyKanbanOp(cols, { op: 'removeColumn', column: '막힘' }).columns;
   cols = applyKanbanOp(cols, { op: 'removeCard', card }).columns;
   assert.equal(cols.reduce((n, c) => n + c.cards.length, 0), 1);
-  assert.throws(() => applyKanbanOp(cols, { op: 'addCard', text: '  ' }), /카드 글/);
-  assert.throws(() => applyKanbanOp(cols, { op: 'moveCard', card: 'x' }), /없는 카드/);
+  assert.throws(() => applyKanbanOp(cols, { op: 'addCard', text: '  ' }), (e) => e.code === 'bad_request');
+  assert.throws(() => applyKanbanOp(cols, { op: 'moveCard', card: 'x' }), (e) => e.code === 'not_found');
   assert.throws(() => applyKanbanOp(newColumns(['한 열']), { op: 'removeColumn', column: 0 }), /마지막 열/);
-  assert.throws(() => applyKanbanOp(cols, { op: 'fly' }), /모르는/);
+  assert.throws(() => applyKanbanOp(cols, { op: 'fly' }), (e) => e.code === 'bad_request');
 });
 
 test('I4: 칸반 노드 — 체크리스트(열 하나), 세션 잇기와 이은 카드의 세션 요약, 카드가 든 열·칸반 지우기는 확인', async () => {
@@ -253,16 +253,16 @@ test('I4: 칸반 노드 — 체크리스트(열 하나), 세션 잇기와 이은
   assert.equal(list.title, '체크리스트');
   const b = await k.create({ title: '이번 주', workspace: 'repo' });
   assert.equal(b.workspaceKey, 'k1');
-  const u = await k.update({ kanban: b.kanbanId, ops: [{ op: 'addCard', text: '리뷰 맡기기', session: 's1' }, { op: 'addCard', column: '하는 중', text: '테스트' }] });
+  const u = await k.update({ kanban: b.kanbanId, ops: [{ op: 'addCard', text: '리뷰 맡기기', session: 's1' }, { op: 'addCard', column: '진행 중', text: '테스트' }] });
   assert.equal(u.results.length, 2);
   const linked = u.columns[0].cards[0];
   assert.deepEqual([linked.sessionId, linked.session.state], ['S1', 'working']);
   await assert.rejects(k.update({ kanban: b.kanbanId, op: 'addCard', text: 'x', session: 'nope' }), /nope/);
-  const one = await k.update({ kanban: b.kanbanId, op: 'moveCard', card: linked.cardId, column: '끝' });
+  const one = await k.update({ kanban: b.kanbanId, op: 'moveCard', card: linked.cardId, column: '완료' });
   assert.equal(one.columns[2].cards[0].cardId, linked.cardId);
-  assert.equal((await k.update({ kanban: b.kanbanId, op: 'removeColumn', column: '끝' })).needsConfirm, true);
+  assert.equal((await k.update({ kanban: b.kanbanId, op: 'removeColumn', column: '완료' })).needsConfirm, true);
   assert.equal(store.getKanban(b.kanbanId).columns.length, 3, '확인 전에는 바꾸지 않는다');
-  await k.update({ kanban: b.kanbanId, op: 'removeColumn', column: '끝', confirm: true });
+  await k.update({ kanban: b.kanbanId, op: 'removeColumn', column: '완료', confirm: true });
   assert.equal(store.getKanban(b.kanbanId).columns.length, 2);
   assert.equal(k.delete({ kanban: b.kanbanId }).needsConfirm, true);
   assert.equal(k.delete({ kanban: list.kanbanId }).deleted, true);
@@ -281,13 +281,13 @@ test('I5: 시간 글과 조건 풀기. 주기는 1분~24시간', () => {
   assert.throws(() => normalizeTrigger({ type: 'interval', every: '25h' }), /1분~24시간/);
   assert.deepEqual(normalizeTrigger({ type: 'idle' }), { type: 'idle' });
   assert.deepEqual(normalizeTrigger({ type: 'text', text: 'DONE' }), { type: 'text', text: 'DONE', source: 'answer', immediate: false });
-  assert.throws(() => normalizeTrigger({ type: 'text', text: '' }), /찾을 글/);
+  assert.throws(() => normalizeTrigger({ type: 'text', text: '' }), /검색할 문구/);
   assert.throws(() => normalizeTrigger({ type: 'text', text: 'x', source: 'log' }), /source/);
   assert.throws(() => normalizeTrigger(null), /trigger/);
   assert.deepEqual(normalizeStop({ maxRuns: 3, maxMs: '10m', untilText: 'GOAL' }), { maxRuns: 3, maxMs: 600000, untilText: 'GOAL' });
   assert.deepEqual(normalizeStop({}), {});
   assert.throws(() => normalizeStop({ maxRuns: 0 }), /maxRuns/);
-  assert.match(describeLoop({ targetLabel: '@s1', prompt: '테스트 돌려', trigger: normalizeTrigger({ type: 'interval', every: '1m' }), stop: { maxRuns: 2 } }), /1분마다.*2번 보내면.*토큰/);
+  assert.match(describeLoop({ targetLabel: '@s1', prompt: '테스트 돌려', trigger: normalizeTrigger({ type: 'interval', every: '1m' }), stop: { maxRuns: 2 } }), /1분마다.*2회 전송 후.*토큰/);
 });
 
 test('I5: 차례 판정 — 주기, 쉴 때, 글. 내 차례·셸·시작 중은 건너뛰고, 앞 전달이 남았으면 기다린다', () => {
@@ -439,7 +439,7 @@ test('I5: 멈춤과 이어 가기 — 사람이 멈추면 대기열의 루프 �
   const elapsed = rig.store.getLoop(v.loopId).elapsedMs;
   rig.clock.t += 60 * 60_000; rig.engine.tick();
   assert.equal(rig.store.getLoop(v.loopId).elapsedMs, elapsed, '멈춘 동안은 시간을 세지 않는다');
-  assert.throws(() => rig.engine.pause(v.loopId), /켜져 있지 않은/);
+  assert.throws(() => rig.engine.pause(v.loopId), /실행 중이 아닌/);
   const r = rig.engine.resume(v.loopId);
   assert.equal(r.nextInMs, 6 * 60_000, '남은 6분부터');
   assert.throws(() => rig.engine.resume(v.loopId), /멈춘 루프만/);

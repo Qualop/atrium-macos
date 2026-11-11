@@ -1,6 +1,6 @@
 // 저장소(ARCH 5절): 판 배치, 노드와 세션 ID 연결, 이벤트, 전달, 봤음 기록(P3), 세션끼리 연결과 오간 일(P4),
 // 리포지토리 워크스페이스(P5), 단일 캔버스의 영역 자리·붙여 묶기·크기 단계·검색(P6a). sessions.workspace_id는 herdr 작업 공간 ID다(코드에서는 herdrWorkspaceId). 판의 워크스페이스는 workspace_key다.
-// E8 결과로 Node 내장 node:sqlite를 쓴다. node:sqlite 호출과 SQL은 이 파일 안에만 둔다.
+// E8 결과로 Node 내장 node:sqlite를 쓴다(Node 22.13 이상, 22.5~22.12는 플래그가 필요해 받지 않는다). node:sqlite 호출과 SQL은 이 파일 안에만 둔다.
 import fs from 'node:fs';
 import path from 'node:path';
 import { RECORDS_SCHEMA, installRecords } from './store-records.mjs'; // P6b: Thread, 메모, 칸반, 루프 표
@@ -52,10 +52,10 @@ CREATE TABLE IF NOT EXISTS docks (dock_id TEXT PRIMARY KEY, workspace_key TEXT, 
 // P3에서 더한 열. P1·P2에서 만든 board.db에는 ALTER TABLE로 더한다.
 // P22: 그룹·묶음 실행·한 줄 메모를 뺐다. 옛 판의 sessions.group_id, deliveries.group_id, thread_results.group_id 열과 notes 표는 남지만 읽지도 쓰지도 않는다(dropGroups)
 const ADDED_COLUMNS = {
-  sessions: { touched_at: 'INTEGER', kind: 'TEXT', origin: 'TEXT', parent_session_id: 'TEXT', workspace_key: 'TEXT', flavor: 'TEXT', extra_args: 'TEXT' }, // extra_args(호출자의 claude 추가 인자, JSON 배열)는 P33 // kind·origin·parent는 P4, workspace_key는 P5, flavor(띄운 방법, 예: deepseek)는 P25
+  sessions: { touched_at: 'INTEGER', kind: 'TEXT', origin: 'TEXT', parent_session_id: 'TEXT', workspace_key: 'TEXT', flavor: 'TEXT', extra_args: 'TEXT', label: 'TEXT', start_command: 'TEXT' }, // start_command(호출자의 실행 명령, 예: ocx claude)는 P97 // label(판의 이름, 사람이 정한 표시 이름)은 P66 // extra_args(호출자의 claude 추가 인자, JSON 배열)는 P33 // kind·origin·parent는 P4, workspace_key는 P5, flavor(띄운 방법, 예: deepseek)는 P25
   workspaces: { x: 'REAL', y: 'REAL' }, // P6a: 영역의 자리(빈 워크스페이스, 영역 옮기기)
-  nodes: { size: 'TEXT' }, // P6a: 크기 단계(large, normal, small)
-  docks: { tree: 'TEXT' }, // P17: 분할 나무(dock-tree.mjs). 없으면 옛 한 줄 덩어리(dir, members)이고 뜰 때 나무로 바꾼다(canvas-ops migrateDocks)
+  nodes: { size: 'TEXT', aspect: 'TEXT' }, // P6a: 크기 단계(large, normal, small). P73: aspect(고른 종횡비 16:9·4:3, 없으면 자유 비율)
+  docks: { tree: 'TEXT', aspect: 'TEXT' }, // P17: 분할 나무(dock-tree.mjs). 없으면 옛 한 줄 덩어리(dir, members)이고 뜰 때 나무로 바꾼다(canvas-ops migrateDocks). P73: aspect(덩어리 바깥의 종횡비)
 };
 
 const plain = (r) => (r ? { ...r } : null); // node:sqlite 행은 프로토타입이 없다(E8 2.2)
@@ -68,6 +68,8 @@ function sessionRow(r) {
     resumeArgv: r.resume_argv ? JSON.parse(r.resume_argv) : null, resumeVerified: !!r.resume_verified,
     createdAt: r.created_at, closedAt: r.closed_at, seenAt: r.seen_at, touchedAt: r.touched_at ?? null, runtime: r.runtime ? JSON.parse(r.runtime) : null,
     kind: r.kind || 'claude', origin: r.origin || 'board', parentSessionId: r.parent_session_id ?? null, workspaceKey: r.workspace_key ?? null, flavor: r.flavor ?? null, extraArgs: r.extra_args ? JSON.parse(r.extra_args) : [],
+    label: r.label ?? null, // P66: 판의 이름. 없으면 name(에이전트 주소)이 보인다
+    startCommand: r.start_command || '', // P97: 실행 명령(빈 값은 claude)
   };
 }
 function linkRow(r) {
@@ -89,7 +91,7 @@ function dockRow(r) {
   try { tree = r.tree ? normalize(JSON.parse(r.tree)) : null; } catch { tree = null; }
   const legacy = !tree;
   if (legacy) tree = fromLine(r.dir, JSON.parse(r.members));
-  return { dockId: r.dock_id, workspaceKey: r.workspace_key ?? null, tree, dir: tree && !isLeaf(tree) ? tree.dir : r.dir, members: leaves(tree), legacy, origin: r.origin ?? null, createdAt: r.created_at, updatedAt: r.updated_at };
+  return { dockId: r.dock_id, workspaceKey: r.workspace_key ?? null, tree, dir: tree && !isLeaf(tree) ? tree.dir : r.dir, members: leaves(tree), legacy, origin: r.origin ?? null, aspect: r.aspect ?? null, createdAt: r.created_at, updatedAt: r.updated_at };
 }
 const dockCols = (d) => { const tree = d.tree ? normalize(d.tree) : fromLine(d.dir, d.members || []); return { tree: JSON.stringify(tree), dir: tree && !isLeaf(tree) ? tree.dir : d.dir || 'row', members: JSON.stringify(leaves(tree)) }; };
 const eventRow = (r) => ({ id: r.id, t: r.t, sessionId: r.session_id, kind: r.kind, data: r.data ? JSON.parse(r.data) : null });
@@ -120,14 +122,14 @@ export class Store {
   setMeta(key, value) { this.st('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, JSON.stringify(value)); }
 
   insertSession(s) {
-    this.st(`INSERT INTO sessions (session_id, name, cwd, pane_id, workspace_id, agent_name, model, effort, permission_mode, settings_path, hook_token, resume_argv, created_at, touched_at, runtime, kind, origin, parent_session_id, workspace_key, flavor, extra_args)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    this.st(`INSERT INTO sessions (session_id, name, cwd, pane_id, workspace_id, agent_name, model, effort, permission_mode, settings_path, hook_token, resume_argv, created_at, touched_at, runtime, kind, origin, parent_session_id, workspace_key, flavor, extra_args, start_command, label)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       s.sessionId, s.name, s.cwd, s.paneId ?? null, s.herdrWorkspaceId ?? null, s.agentName ?? null, s.model ?? null, s.effort ?? null,
       s.permissionMode, s.settingsPath ?? '', s.hookToken ?? '', s.resumeArgv ? JSON.stringify(s.resumeArgv) : null, s.createdAt, s.touchedAt ?? null, JSON.stringify(s.runtime || null),
-      s.kind || 'claude', s.origin || 'board', s.parentSessionId ?? null, s.workspaceKey ?? null, s.flavor ?? null, s.extraArgs && s.extraArgs.length ? JSON.stringify(s.extraArgs) : null);
+      s.kind || 'claude', s.origin || 'board', s.parentSessionId ?? null, s.workspaceKey ?? null, s.flavor ?? null, s.extraArgs && s.extraArgs.length ? JSON.stringify(s.extraArgs) : null, s.startCommand || null, s.label || null);
   }
   updateSession(sessionId, fields) {
-    const map = { paneId: 'pane_id', herdrWorkspaceId: 'workspace_id', agentName: 'agent_name', resumeVerified: 'resume_verified', closedAt: 'closed_at', seenAt: 'seen_at', touchedAt: 'touched_at', resumeArgv: 'resume_argv', runtime: 'runtime', cwd: 'cwd', parentSessionId: 'parent_session_id', workspaceKey: 'workspace_key', kind: 'kind', origin: 'origin', flavor: 'flavor', ...RECALL_SESSION_FIELDS };
+    const map = { paneId: 'pane_id', herdrWorkspaceId: 'workspace_id', agentName: 'agent_name', resumeVerified: 'resume_verified', closedAt: 'closed_at', seenAt: 'seen_at', touchedAt: 'touched_at', resumeArgv: 'resume_argv', runtime: 'runtime', cwd: 'cwd', parentSessionId: 'parent_session_id', workspaceKey: 'workspace_key', kind: 'kind', origin: 'origin', flavor: 'flavor', startCommand: 'start_command', ...RECALL_SESSION_FIELDS };
     const sets = []; const vals = [];
     for (const [k, v] of Object.entries(fields)) {
       if (!map[k]) throw new Error('unknown field ' + k);
@@ -136,6 +138,7 @@ export class Store {
     }
     this.db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE session_id = ?`).run(...vals, sessionId);
   }
+  setSessionLabel(sessionId, label) { this.st('UPDATE sessions SET label = ? WHERE session_id = ?').run(label || null, sessionId); } // P66
   renameSession(sessionId, name) { this.st('UPDATE sessions SET name = ? WHERE session_id = ?').run(name, sessionId); }
   saveRuntime(sessionId, runtime) { this.st('UPDATE sessions SET runtime = ? WHERE session_id = ?').run(JSON.stringify(runtime), sessionId); }
   getSession(sessionId) { return sessionRow(this.st('SELECT * FROM sessions WHERE session_id = ?').get(sessionId)); }
@@ -187,7 +190,9 @@ export class Store {
   // 판 배치(9.4). P5: 노드마다 세션의 워크스페이스를 붙인다(판은 워크스페이스마다 하나)
   nodes() { return this.st('SELECT n.*, s.workspace_key FROM nodes n JOIN sessions s ON s.session_id = n.session_id WHERE s.closed_at IS NULL').all().map(plain); }
   // P27: area(놓인 워크트리 영역, 본 저장소는 '')는 주지 않으면 그대로 둔다
-  setNode(n) { this.st('INSERT INTO nodes (session_id, x, y, w, h, z, size, area) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET x = excluded.x, y = excluded.y, w = excluded.w, h = excluded.h, z = excluded.z, size = COALESCE(excluded.size, nodes.size), area = COALESCE(excluded.area, nodes.area)').run(n.session_id, n.x, n.y, n.w, n.h, n.z ?? 0, n.size ?? null, n.area ?? null); }
+  setNode(n) { this.st('INSERT INTO nodes (session_id, x, y, w, h, z, size, area, aspect) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET x = excluded.x, y = excluded.y, w = excluded.w, h = excluded.h, z = excluded.z, size = COALESCE(excluded.size, nodes.size), area = COALESCE(excluded.area, nodes.area), aspect = COALESCE(excluded.aspect, nodes.aspect)').run(n.session_id, n.x, n.y, n.w, n.h, n.z ?? 0, n.size ?? null, n.area ?? null, n.aspect ?? null); }
+  // P73: 고른 종횡비(16:9·4:3)와 크기 단계 열쇠. null이면 지운다(자유 비율). setNode는 빈 값으로 지우지 않으므로 따로 둔다
+  setNodeAspect(sid, aspect, size = undefined) { if (size === undefined) this.st('UPDATE nodes SET aspect = ? WHERE session_id = ?').run(aspect ?? null, sid); else this.st('UPDATE nodes SET aspect = ?, size = ? WHERE session_id = ?').run(aspect ?? null, size ?? null, sid); }
   // 세션끼리 연결(P4, ARCH 4절 F). 순서 있는 쌍(A → B)마다 한 줄. 판에서 정한 역할(F2), 오간 지시를 알아챔(F1), A가 띄움(F3)을 같은 줄에 모은다.
   // 지운 연결은 removed_at만 남긴다. 같은 쌍에 새 일이 오가면 다시 연다.
   linkByPair(from, to) { return linkRow(this.st('SELECT * FROM links WHERE from_session = ? AND to_session = ? ORDER BY created_at DESC LIMIT 1').get(from, to)); }
@@ -207,6 +212,8 @@ export class Store {
     const r = this.st('INSERT INTO link_events (link_id, t, kind, text, data) VALUES (?, ?, ?, ?, ?)').run(linkId, t, kind, text, data == null ? null : JSON.stringify(data));
     return { id: Number(r.lastInsertRowid), linkId, t, kind, text, data };
   }
+  // P67: 선 이름표의 지시 수(+n)와 마지막 지시 시각(물러나기). lastAt은 답 읽기(reply)·키 보내기에도 바뀌므로 지시만 따로 센다
+  linkPromptStats(linkId) { const r = this.st("SELECT COUNT(*) AS n, MAX(t) AS at FROM link_events WHERE link_id = ? AND kind = 'prompt'").get(linkId); return { n: r ? Number(r.n) : 0, at: r && r.at != null ? Number(r.at) : null }; }
   linkEvents(linkId, limit = 200) { return this.st('SELECT * FROM link_events WHERE link_id = ? ORDER BY id DESC LIMIT ?').all(linkId, limit).reverse().map((r) => ({ id: r.id, linkId: r.link_id, t: r.t, kind: r.kind, text: r.text, data: r.data ? JSON.parse(r.data) : null })); }
 
   // 리포지토리 워크스페이스(P5, ARCH 4절 G). 줄의 순서는 처음 생긴 순서(created_at)로 고정한다. 닫으면 줄을 지운다
@@ -244,9 +251,10 @@ export class Store {
   docks() { return this.st('SELECT * FROM docks ORDER BY created_at').all().map(dockRow); }
   getDock(id) { return dockRow(this.st('SELECT * FROM docks WHERE dock_id = ?').get(id)); }
   // P17: tree를 주면 그것을, 없으면 dir·members로 한 줄 나무를 만들어 둔다. dir·members 열도 나무에 맞춰 함께 쓴다(옛 백엔드가 읽어도 순서는 맞다)
-  insertDock(d) { const c = dockCols(d); this.st('INSERT INTO docks (dock_id, workspace_key, dir, members, tree, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(d.dockId, d.workspaceKey ?? null, c.dir, c.members, c.tree, d.origin ?? null, d.createdAt, d.createdAt); }
+  insertDock(d) { const c = dockCols(d); this.st('INSERT INTO docks (dock_id, workspace_key, dir, members, tree, origin, created_at, updated_at, aspect) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(d.dockId, d.workspaceKey ?? null, c.dir, c.members, c.tree, d.origin ?? null, d.createdAt, d.createdAt, d.aspect ?? null); }
   updateDock(id, f) { const c = dockCols(f); this.st('UPDATE docks SET dir = ?, members = ?, tree = ?, updated_at = ? WHERE dock_id = ?').run(c.dir, c.members, c.tree, Date.now(), id); }
   deleteDock(id) { this.st('DELETE FROM docks WHERE dock_id = ?').run(id); }
+  setDockAspect(id, aspect) { this.st('UPDATE docks SET aspect = ? WHERE dock_id = ?').run(aspect ?? null, id); } // P73: 덩어리 바깥의 종횡비(null이면 자유 비율)
   // 검색(H2): 판 기록에서 q가 든 글. 판이 보낸 글(전달), hook 이벤트(지시와 답), 연결로 오간 지시. LIKE는 영문만 대소문자를 가리지 않는다
   searchText(q, limit = 200) {
     const like = `%${String(q).replace(/[!%_]/g, (c) => '!' + c)}%`;

@@ -133,5 +133,5 @@ export function herdrCompat(pong, { protocols, tested }) {
 export function updateNotice({ serverVersion, found }) {
   if (!serverVersion || !found || !found.version) return null;
   if (compareVersions(found.version, serverVersion) <= 0) return null;
-  return { version: found.version, path: found.path, source: found.source, serverVersion, message: `새 herdr ${found.version}이 설치됨. 판 서버는 ${serverVersion}로 도는 중. 다시 띄우면 세션이 끝나므로 원할 때 트레이에서` };
+  return { version: found.version, path: found.path, source: found.source, serverVersion, message: `새 herdr ${found.version}이 설치되었습니다. 보드 전용 서버는 ${serverVersion}로 실행 중입니다. 서버를 재시작하면 세션이 종료되므로 원하는 시점에 트레이 메뉴에서 재시작하세요.` };
 }

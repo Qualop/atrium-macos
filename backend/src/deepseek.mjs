@@ -23,8 +23,8 @@ const err = (code, message, key, vars = {}) => Object.assign(new Error(message),
 // 직접 명령 글 검사: 한 줄(줄바꿈과 제어 글자 없음), 길이 제한. 앞뒤 빈칸은 뗀다. 빈 글이면 ''(기본 실행)
 export function checkCommand(text) {
   const c = String(text ?? '').trim();
-  if (c.length > COMMAND_MAX) throw err('bad_request', `직접 명령이 너무 길다(${c.length}자, ${COMMAND_MAX}자까지)`, 'deepseekCommandLong', { n: c.length, max: COMMAND_MAX });
-  if (/[\x00-\x1f\x7f]/.test(c)) throw err('bad_request', '직접 명령은 한 줄이어야 한다(줄바꿈, 탭, 제어 글자 없이)', 'deepseekCommandLine');
+  if (c.length > COMMAND_MAX) throw err('bad_request', `실행 명령이 너무 깁니다 (${c.length}자, ${COMMAND_MAX}자까지)`, 'deepseekCommandLong', { n: c.length, max: COMMAND_MAX });
+  if (/[\x00-\x1f\x7f]/.test(c)) throw err('bad_request', "실행 명령은 줄바꿈, 탭, 제어 문자 없이 한 줄로 입력하세요.", 'deepseekCommandLine');
   return c;
 }
 
@@ -39,5 +39,5 @@ export async function checkProxy({ url = DEFAULT_HEALTH_URL, timeoutMs = 2000, f
       why = `status ${body.status}`;
     } else why = `HTTP ${r.status}`;
   } catch (e) { why = e && e.name === 'TimeoutError' ? 'timeout' : (e && (e.cause && e.cause.code)) || (e && e.message) || 'unreachable'; }
-  throw err('deepseek_proxy_down', `opencodex 프록시가 돌지 않는다(${url}: ${why}). PowerShell에서 \`ocx status\`로 보고 \`ocx start\`로 켠 뒤 다시 띄운다`, 'deepseekProxyDown', { url, why });
+  throw err('deepseek_proxy_down', `opencodex 프록시가 실행 중이 아닙니다 (${url}: ${why}). PowerShell에서 \`ocx status\`로 상태를 확인하고 \`ocx start\`로 실행한 뒤 다시 시도하세요.`, 'deepseekProxyDown', { url, why });
 }

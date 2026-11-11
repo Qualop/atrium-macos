@@ -1,16 +1,16 @@
 // atrium CLI의 P6b 명령(ARCH 4절 I): 출력 보기, Thread, 메모, 칸반, 루프, 미션 맵, 설정. 판 API를 그대로 부르는 얇은 층이다(P6c가 볼 예시).
 // atrium.mjs가 모르는 명령을 여기로 넘긴다(featureCommand). watch의 새 이벤트 줄도 여기서 찍는다(featureEvent).
 
-export const FEATURES_HELP = `  --- P6b(PLAN 4절 I) ---
-  output <이름> [--turn n] [--list] [--save]   출력 보기: 마지막(또는 n번째, -1은 마지막) 턴의 답 문서. --list는 턴 목록, --save는 판 데이터 폴더 outputs/에 .md로
-  thread [--limit n] [--before seq]  명령 바 대화 기록(보낸 글, 대상별 전달 상태, 완료 보고)
-  memo | memo add <글> [--ws w] [--x n --y n --w n --h n] | memo set <ID> [--body 글] [--x …] [--ws w|-] | memo rm <ID> [--yes]   메모 노드(\\n은 줄바꿈)
-  kanban | kanban add [제목] [--columns 할 일,하는 중,끝] [--ws w] | kanban rm <ID> [--yes]   칸반 노드(열 하나면 체크리스트)
+export const FEATURES_HELP = `  --- 응답·메모·칸반·반복 작업 ---
+  output <이름> [--turn n] [--list] [--save]   응답 보기: 마지막 또는 n번째 응답 (-1: 마지막). --list: 응답 목록, --save: 보드 데이터 폴더 outputs/에 .md로 저장
+  thread [--limit n] [--before seq]  명령 입력줄 대화 기록(보낸 글, 대상별 전달 상태, 완료 보고)
+  memo | memo add <글> [--ws w] [--x n --y n --w n --h n] | memo set <ID> [--body 글] [--x …] [--ws w|-] | memo rm <ID> [--yes]   메모 카드(\\n은 줄바꿈)
+  kanban | kanban add [제목] [--columns 할 일,진행 중,완료] [--ws w] | kanban rm <ID> [--yes]   칸반 카드 (열이 하나면 체크리스트)
   kanban card <ID> <글> [--column 열] [--session 이름] | kanban move <ID> <카드> <열> | kanban link <ID> <카드> <이름|-> | kanban op <ID> <JSON> [--yes]
-  loop | loop add @이름 <지시> (--every 1m | --idle | --match 글 [--source answer|screen|any]) [--runs n] [--for 10m] [--until 글] [--no-immediate] [--yes]
-  loop pause|resume|rm <ID>         루프 멈춤, 이어 가기, 지우기
-  mission                           미션 맵(사람·지시하는 세션 → 그룹 → 세션, 선)
-  settings | settings set <키> <값>  판 설정(tray on|off: 창을 닫아도 트레이에 남기)`;
+  loop | loop add @이름 <요청> (--every 1m | --idle | --match 글 [--source answer|screen|any]) [--runs n] [--for 10m] [--until 글] [--no-immediate] [--yes]
+  loop pause|resume|rm <ID>         반복 작업 일시 정지·재개·삭제
+  mission                           작업 관계도 (사용자와 세션 사이의 작업 위임 관계)
+  settings | settings set <키> <값>  보드 설정 (tray on|off: 창을 닫아도 트레이에서 실행)`;
 // 값을 받지 않는 플래그
 export const FEATURE_BOOL_FLAGS = ['idle', 'save', 'list', 'no-immediate'];
 
@@ -32,10 +32,10 @@ export async function featureCommand(cmd, rest, { c, flags, out, ts, json }) {
       if (flags.save) { out(await c.call('output.save', { session: rest[0], turn })); return true; }
       const r = await c.call('output.get', { session: rest[0], turn });
       if (json) { out(r); return true; }
-      console.log(`@${r.name} 턴 ${r.turnCount}개(출처 ${r.source || '-'}, 워크스페이스 ${r.workspace || '-'})`);
-      if (flags.list) { for (const t of r.turns) console.log(`  #${t.turn} ${t.long ? '[긴 답] ' : ''}${t.chars}자  지시 "${t.prompt || ''}"  → ${t.answerHead || '(답 없음)'}`); return true; }
-      if (!r.turn) { console.log('(답 없음)'); return true; }
-      console.log(`--- 턴 ${r.turn.turn}${r.turn.long ? ' (긴 답: 출력 보기)' : ''} ${r.turn.answerAt ? new Date(r.turn.answerAt).toLocaleTimeString() : ''}\n지시: ${r.turn.prompt || '-'}\n---\n${r.turn.markdown}`);
+      console.log(`@${r.name} 턴 ${r.turnCount}개(출처 ${r.source || '-'}, 프로젝트 ${r.workspace || '-'})`);
+      if (flags.list) { for (const t of r.turns) console.log(`  #${t.turn} ${t.long ? '[긴 응답] ' : ''}${t.chars}자  지시 "${t.prompt || ''}"  → ${t.answerHead || "(응답 없음)"}`); return true; }
+      if (!r.turn) { console.log("(응답 없음)"); return true; }
+      console.log(`--- 턴 ${r.turn.turn}${r.turn.long ? ' (긴 응답: 출력 보기)' : ''} ${r.turn.answerAt ? new Date(r.turn.answerAt).toLocaleTimeString() : ''}\n지시: ${r.turn.prompt || '-'}\n---\n${r.turn.markdown}`);
       return true;
     }
     case 'thread': {
@@ -78,7 +78,7 @@ export async function featureCommand(cmd, rest, { c, flags, out, ts, json }) {
         console.log(`${k.kanbanId} "${k.title}" (${k.x},${k.y}) ws=${k.workspaceKey || '-'}`);
         for (const col of k.columns) {
           console.log(`  [${col.name}] ${col.columnId}`);
-          for (const x of col.cards) console.log(`    ${x.cardId} ${one(x.text, 60)}${x.session ? `  → @${x.session.name} ${x.session.open ? x.session.state : '(닫힘)'}${x.session.unseen ? ' 검토대기' : ''}${x.session.ask ? ` 묻는 중: ${x.session.ask}` : ''}` : ''}`);
+          for (const x of col.cards) console.log(`    ${x.cardId} ${one(x.text, 60)}${x.session ? `  → @${x.session.name} ${x.session.open ? x.session.state : '(닫힘)'}${x.session.unseen ? ' 확인할 결과' : ''}${x.session.ask ? ` 묻는 중: ${x.session.ask}` : ''}` : ''}`);
         }
       }
       return true;
@@ -110,7 +110,7 @@ export async function featureCommand(cmd, rest, { c, flags, out, ts, json }) {
       const r = await c.call('mission.graph');
       if (json) { out(r); return true; }
       const name = (id) => { const n = r.nodes.find((x) => x.id === id); return n ? (n.kind === 'human' ? '사람' : `@${n.name}`) : id; };
-      console.log(`세션 ${r.counts.all}: 작업 중 ${r.counts.working}, 내 차례 ${r.counts.needs_you}, 쉼 ${r.counts.idle}, 끝(안 봄) ${r.counts.done}, 끝남 ${r.counts.exited}`);
+      console.log(`세션 ${r.counts.all}: 작업 중 ${r.counts.working}, 응답 필요 ${r.counts.needs_you}, 쉼 ${r.counts.idle}, 끝(안 봄) ${r.counts.done}, 끝남 ${r.counts.exited}`);
       for (const col of [0, 1]) console.log(`  열 ${col}: ${r.nodes.filter((n) => n.column === col).map((n) => `${name(n.id)}${n.state ? `(${n.state})` : ''}`).join(', ') || '-'}`);
       for (const e of r.edges) console.log(`  ${e.kind.padEnd(6)} ${name(e.from)} → ${name(e.to)}${e.label ? `  "${e.label}"` : ''}${e.count ? ` ×${e.count}` : ''}${e.active ? ' (도는 중)' : ''}`);
       return true;

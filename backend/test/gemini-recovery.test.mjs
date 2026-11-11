@@ -106,6 +106,21 @@ function fixture(t, kind = 'gemini') {
 }
 
 const call = (f, name) => f.calls.filter(([n]) => n === name).map(([, p]) => p);
+
+for (const kind of ['gemini', 'agy']) for (const action of ['reopen', 'restoreGone', 'recoverHookless']) {
+  test(`board auto approval on ${kind} ${action} preserves exact native conversation and model`, async (t) => {
+    const f = fixture(t, kind);
+    f.store.setMeta('settings', { agentAutoApprove: true });
+    const s = f.session({ closed: action === 'reopen', args: kind === 'gemini' ? ['--approval-mode', 'default'] : ['--mode', 'ask'] });
+    await f.r[action](action === 'reopen' ? { session: s.sessionId } : [s]);
+    const launch = call(f, 'startAgent')[0]; assert.ok(launch);
+    assert.ok(launch.args.includes(ID(101))); assert.ok(launch.args.includes(`${kind}-test-model`));
+    if (kind === 'gemini') { assert.ok(launch.args.includes('yolo')); assert.ok(!launch.args.includes('default')); }
+    else { assert.ok(launch.args.includes('--dangerously-skip-permissions')); assert.ok(!launch.args.includes('--mode')); }
+    assert.equal(f.store.getSession(s.sessionId).permissionMode, 'bypassPermissions');
+  });
+}
+
 function assertIntegration(f, s, oldToken = 'old-token') {
   const settings = call(f, `${s.kind}Settings`).at(-1);
   assert.equal(settings.sessionId, s.sessionId);

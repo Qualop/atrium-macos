@@ -18,6 +18,8 @@ export const WAIT_REASON_LABEL = labelMap('waitReason', ['waiting', 'starting', 
 export function deliveryText(d) {
   const base = DELIVERY_LABEL[d.status] || d.status;
   if (!d.reason) return base;
+  if (d.reason === 'typed') return t('delivery.withReason', { base, reason: t('typeNow.typed') }); // P90: 일하는 중에 Claude Code 대기 메시지로 넣었다
+  if (d.status === 'queued' && d.reason === 'draft') return t('delivery.withReason', { base, reason: t('typeNow.draft') });
   if (d.status === 'queued') return t('delivery.withReason', { base, reason: WAIT_REASON_LABEL[d.reason] || d.reason });
   if (d.status === 'cancelled' && d.reason === 'user') return base;
   return t('delivery.withReason', { base, reason: d.reason });
@@ -43,6 +45,7 @@ export function askLine(s) {
   if (a.kind === 'question') return t('ask.question', { q: (a.questions || []).map((q) => q.question).join(' / ') });
   if (a.kind === 'plan') return t('ask.plan');
   if (a.kind === 'unknown_dialog') return t('ask.unknownDialog');
+  if (a.kind === 'worktree_exit') return t('wtExit.title');
   if (a.kind === 'screen') return t('ask.screen', { kind: s.kind || t('ask.agent') });
   return t('ask.permission', { what: a.summary || a.tool });
 }

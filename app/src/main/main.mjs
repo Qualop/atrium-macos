@@ -14,6 +14,8 @@ import { startTray, whenBoardReady } from './tray.mjs'; // I7(P6b): 트레이 �
 import { translate, DEFAULT_LANGUAGE } from '../renderer/lib/i18n.js'; // P16: 대화상자 글. 언어는 트레이가 받은 판 설정
 import { macCliDirectories } from './cli-paths.mjs';
 import { migrateAppProfile } from './profile.mjs'; // P18: 옛 창 프로필 옮기기
+import { noticeWay } from '../renderer/lib/remote.js'; // P58: 원격 붙음 알림은 창이 숨었을 때만 OS 알림
+import { windowTitle } from '../renderer/lib/update-notice.js'; // P71: 창 제목에 버전
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(HERE, '..', '..');
@@ -30,6 +32,8 @@ if (process.platform === 'darwin') process.env.PATH = [...new Set([...(fs.exists
 const WINDOW_ICON = path.join(APP_ROOT, 'assets', process.platform === 'win32' ? 'icon.ico' : 'atrium-icon-256.png');
 const NOTIFY_ICON = path.join(APP_ROOT, 'assets', 'atrium-icon-256.png');
 const cfg = loadConfig({ argv: process.argv });
+const APP_VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8')).version; } catch { return null; } })(); // P69
+let updating = false; // P69: 업데이트로 끝나는 중
 
 // 프로필마다 Electron 사용자 데이터를 따로 둔다(개발용 창과 실제 판 창이 섞이지 않게)
 app.setPath('userData', path.join(app.getPath('appData'), `${APP_ID}-app-${cfg.profile}`));
@@ -49,6 +53,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 
 let starting = null;
 async function ensureBackend() {
+  if (updating) return new Promise(() => {}); // P69: 옛 백엔드를 다시 띄우지 않는다(앱이 곧 끝난다)
   const info = backendInfo(cfg);
   if (info && (await health(info.port))) return info;
   starting ||= startBackend(cfg, { nodePath: envVar('NODE') || (fs.existsSync(bundledNode) ? bundledNode : 'node') })
@@ -66,6 +71,7 @@ ipcMain.handle('mt:backend', async () => {
     defaultCwd: cfg.profile === 'dev' ? path.join(BACKEND_ROOT, '.dev', 'proj') : app.getPath('home'),
     defaultModel: cfg.profile === 'dev' ? 'haiku' : '',
     deviceName: os.hostname(), clientKind: 'desktop', // P47: 백엔드에 알리는 기기 이름과 클라이언트 종류
+    appVersion: APP_VERSION, // P69: 이 창의 버전(설정 › 업데이트)
   };
 });
 // E5: Electron 프로세스(main, renderer, GPU 등)의 메모리와 CPU
@@ -83,6 +89,8 @@ const notifications = [];
 global.__mtNotifications = notifications; // 시험(Playwright)이 눌림을 흉내 낸다
 ipcMain.handle('mt:notify', (_e, n) => {
   if (!Notification.isSupported()) return { shown: false, reason: 'unsupported' };
+  // P58: ifHidden이면 창이 보이고 초점이 있을 때 띄우지 않는다(창의 실제 상태는 main이 안다)
+  if (n.ifHidden && win && !win.isDestroyed() && !noticeWay({ visible: win.isVisible() && !win.isMinimized(), focused: win.isFocused() }).os) return { shown: false, reason: 'window-visible' };
   const note = new Notification({ title: String(n.title || APP_NAME).slice(0, 120), body: String(n.body || '').slice(0, 240), icon: NOTIFY_ICON, silent: false });
   const rec = { sessionId: n.sessionId, key: n.key, at: Date.now(), shown: false, clicked: false, note };
   note.on('show', () => { rec.shown = true; log(`notification shown ${n.sessionId} ${n.key}`); });
@@ -113,7 +121,7 @@ function showNode(sessionId) {
 function createWindow() {
   win = new BrowserWindow({
     width: 1600, height: 960, minWidth: 900, minHeight: 600, icon: WINDOW_ICON,
-    title: `${APP_NAME}${cfg.profile === 'dev' ? ' (dev)' : ''}`,
+    title: windowTitle(APP_NAME, APP_VERSION, cfg.profile), // P71: "Atrium 0.1.2", 개발용 판은 " (dev)"
     backgroundColor: '#070705', // P11·P28: 판 바탕(renderer tokens.css --canvas). 창이 뜰 때 다른 색이 번쩍이지 않게
     webPreferences: { preload: path.join(HERE, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
   });
@@ -130,7 +138,7 @@ function createWindow() {
   win.on('closed', () => { win = null; });
 }
 
-app.on('second-instance', () => showNode(null)); // 트레이에 남아 있을 때 다시 실행하면 창을 다시 연다(I7)
+app.on('second-instance', () => { if (!updating) showNode(null); }); // 트레이에 남아 있을 때 다시 실행하면 창을 다시 연다(I7)
 // Windows 알림의 앱 이름. 실제 판과 개발용을 나눈다
 if (process.platform === 'win32') app.setAppUserModelId(`${APP_ID}.${cfg.profile}`);
 app.on('activate', () => showNode(null));
@@ -141,15 +149,23 @@ async function trayConfirm({ message, detail, ok }) {
   const r = await dialog.showMessageBox({ type: 'warning', title: tr('app.name'), message, detail, buttons: [ok || tr('common.ok'), tr('common.cancel')], defaultId: 1, cancelId: 1, noLink: true });
   return r.response === 0;
 }
+// P69: 업데이트로 백엔드를 바꾼다. 창을 닫고 앱을 끝낸다(트레이 상주여도). 새 버전의 창은 바꾸기 프로세스가 띄운다
+function onUpdateRestart(d) {
+  updating = true;
+  log(`update restart: quitting for ${d && d.to ? d.to.tag : '?'}`);
+  if (tray) tray.stop();
+  if (win && !win.isDestroyed()) win.destroy();
+  app.quit();
+}
 app.whenReady().then(() => {
   if (process.platform === 'darwin') {
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]));
     app.dock?.setIcon(NOTIFY_ICON);
   }
-  log(`app start profile=${cfg.profile} pid=${process.pid}`);
+  log(`app start profile=${cfg.profile} pid=${process.pid} version=${APP_VERSION} root=${path.basename(path.resolve(APP_ROOT, '..'))}`);
   for (const l of early) log(l);
   createWindow();
-  tray = startTray({ cfg, log, hasWindow: () => !!win, showNode, quit: () => app.quit(), notifications, closeWindow: () => { if (win) win.close(); }, startBackend: ensureBackend, stopBackend: () => stopBackend(cfg), confirm: trayConfirm });
+  tray = startTray({ cfg, log, hasWindow: () => !!win, showNode, quit: () => app.quit(), notifications, closeWindow: () => { if (win) win.close(); }, startBackend: ensureBackend, stopBackend: () => stopBackend(cfg), confirm: trayConfirm, onUpdateRestart, appVersion: APP_VERSION });
   global.__mtTray = tray;
   global.__mtAppMigration = appMigration; // 시험이 읽는다
   if (appMigration && appMigration.failed.length) tray.noteError(tr('tray.profileCopyFailed', { n: appMigration.failed.length }));

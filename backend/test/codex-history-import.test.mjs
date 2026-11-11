@@ -210,6 +210,41 @@ test('managed Codex reopen uses exact copy ID, private runtime env/args and pres
   assert.deepEqual(f.b.sessions.get(sid).rt.launcherEnv, { PRIVATE: 'runtime-value' });
 });
 
+for (const action of ['reopen', 'wake']) test(`board auto approval on Codex ${action} keeps exact copy UUID, model and config`, async (t) => {
+  const f = fixture(t), imported = (await f.imp.importMany(pick('codex', id(1)))).imported[0], s = f.b.sessions.get(imported.sessionId);
+  const args = ['--sandbox', 'read-only', '--ask-for-approval', 'on-request', '-c', 'developer_instructions="synthetic existing instruction"'];
+  Object.assign(s.rt, { extraArgs: args, launcherEnv: { PRIVATE: 'synthetic-env' }, codexBriefed: true });
+  f.store.setMeta('settings', { agentAutoApprove: true });
+  f.store.saveRuntime(s.sessionId, s.rt);
+  const calls = [];
+  Object.assign(f.b, { bus: new EventEmitter(), log() {}, requireHerdr() {}, probeGit() {}, hooked: () => false,
+    withNewPane: async (make, register) => { const result = await make(); await register(result); return result; },
+    adapter: { createWorkspace: async (options) => { assert.equal(options.env.PRIVATE, 'synthetic-env'); return { paneId: 'copy-pane', workspaceId: 'copy-ws' }; }, refreshSubscription: async () => {}, waitShellReady: async () => true,
+      startAgent: async (options) => { calls.push(options); return { agent: { launchPending: true } }; }, closePane: async () => {} } });
+  const recall = new Recall(f.b, { readProcs: async () => [] }); recall.changed = async () => {}; t.after(() => recall.stop());
+  assert.equal(recall.restorable(s), false, 'sleeping imports are never automatically recovered');
+  await recall.restoreGone([s]); assert.equal(calls.length, 0);
+  if (action === 'reopen') { f.store.updateSession(s.sessionId, { closedAt: 200 }); f.b.sessions.delete(s.sessionId); await recall.reopen({ session: s.sessionId }); }
+  else await wakeCodexSession(f.b, s);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args.slice(0, 2), ['resume', id(2)]);
+  assert.ok(calls[0].args.includes('--dangerously-bypass-approvals-and-sandbox'));
+  assert.ok(calls[0].args.includes('developer_instructions="synthetic existing instruction"'));
+  assert.ok(calls[0].args.includes('fixture-model'));
+  assert.ok(!calls[0].args.includes('--sandbox') && !calls[0].args.includes('--ask-for-approval'));
+  assert.equal(f.b.sessions.get(s.sessionId).rt.codexBriefed, true);
+});
+
+test('a late Codex verification never overwrites a replacement runtime', async (t) => {
+  const f = fixture(t), imported = (await f.imp.importMany(pick('codex', id(1)))).imported[0], s = f.b.sessions.get(imported.sessionId);
+  const replacement = { ...s.rt, sleep: { at: 99, convId: id(2) }, sentinel: 'replacement' };
+  f.b.requireHerdr = () => {};
+  f.imp.codex.read = async () => { s.rt = replacement; return nativeThread(f.repo, 2); };
+  f.b.adapter = { createWorkspace: async () => assert.fail('stale wake cannot create a pane') };
+  await assert.rejects(wakeCodexSession(f.b, s), { code: 'closed' });
+  assert.equal(s.rt, replacement); assert.equal(s.rt.sentinel, 'replacement');
+});
+
 for (const paginated of [false, true]) test(`history adapter reads ${paginated ? 'paginated' : 'legacy'} messages without tools/secrets or resuming`, async (t) => {
   const root = temp(t), f = fakeHistory(root, { source: { historyMode: paginated ? 'paginated' : 'legacy' }, turns: [{ id: 't1', startedAt: 10, items: [{ type: 'userMessage', content: [{ type: 'text', text: 'hello' }] }, { type: 'reasoning', text: 'private' }, { type: 'agentMessage', text: 'world' }] }] });
   const r = await readCodexMessages(f.history, id(1));

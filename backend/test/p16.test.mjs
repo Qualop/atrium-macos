@@ -47,7 +47,7 @@ test('복귀 요약 줄에도 열쇠가 붙는다(사용자 내용인 마지막 
 
 test('루프 확인 문구: 한국어 글과 같은 짜임의 열쇠', () => {
   const trigger = { type: 'interval', everyMs: 300000, immediate: true }, stop = { maxRuns: 3 };
-  assert.match(describeLoop({ targetLabel: '@w', prompt: 'go', trigger, stop }), /5분마다\(지금 한 번 먼저\)/);
+  assert.match(describeLoop({ targetLabel: '@w', prompt: 'go', trigger, stop }), /5분마다\(지금 한 번 전송한 뒤\)/);
   const msg = describeLoopMsg({ target: '@w', prompt: 'go', trigger, stop });
   assert.equal(msg.key, 'loopConfirm');
   assert.deepEqual(msg.vars.when, { key: 'loopEveryNow', vars: { every: { key: 'dur.m', vars: { n: 5 } } } });

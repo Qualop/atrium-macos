@@ -66,7 +66,7 @@ function render(which, props = {}) {
   flushSync(() => root.render(which === 'spawn' ? <SpawnDialog onClose={onClose} {...props} />
     : which === 'search' ? <SearchBox /> : which === 'settings' ? <SettingsDialog onClose={onClose} />
     : which === 'link' ? <LinkPanel linkId="role" onClose={onClose} />
-    : which === 'terminal' ? <div style={{ position: 'relative', width: 600, height: 400 }}><TerminalView sessionId="a" width={600} height={400} {...props} /></div>
+    : which === 'terminal' ? <ReactFlowProvider><div style={{ position: 'relative', width: 600, height: 400 }}><TerminalView sessionId="a" width={600} height={400} {...props} /></div></ReactFlowProvider>
     : which === 'canvas' ? <ReactFlowProvider><div className="mt-app"><div className="mt-stage"><Canvas /></div></div></ReactFlowProvider>
     : which === 'chrome' ? <><LeftRail linking={false} setLinking={() => {}} /><TopRight maxControllers={8} /></>
     : which === 'divider' ? <ReactFlowProvider><DividerNode data={{ dockId: 'dock', path: [], index: 0, dir: 'row' }} /></ReactFlowProvider>

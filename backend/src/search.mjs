@@ -2,7 +2,7 @@
 // 대화 기록 파일 전체는 뒤지지 않는다(PLAN 열린 결정). 결과는 세션마다 하나(가장 잘 맞은 곳)와 워크스페이스 이름.
 // P6c: 출력(hook이 없는 세션의 화면 답), 메모 노드, 칸반(제목, 열, 카드)도 찾는다. 메모·칸반은 노드마다 하나.
 
-export const FIELD_LABEL = { name: '이름', workspace: '워크스페이스', ask: '질문', prompt: '요청', answer: '답', history: '지난 요청', reply: '지난 답', linked: '받은 지시', output: '출력', memo: '메모 노드', kanban: '칸반', card: '카드' };
+export const FIELD_LABEL = { name: '이름', workspace: '프로젝트', ask: '질문', prompt: '요청', answer: "응답", history: "이전 요청", reply: "이전 응답", linked: "받은 요청", output: '출력', memo: '메모 카드', kanban: '칸반', card: '카드' };
 const WEIGHT = { name: 100, ask: 80, prompt: 60, workspace: 45, answer: 40, linked: 35, history: 30, reply: 25, output: 25, memo: 50, kanban: 55, card: 50 };
 
 const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
@@ -46,6 +46,7 @@ export function searchBoard({ q, sessions = [], workspaces = [], texts = [], lim
   const byId = new Map(sessions.map((s) => [s.sessionId, s]));
   for (const s of sessions) {
     hit(s, 'name', s.name);
+    if (s.address && s.address !== s.name) hit(s, 'name', s.address); // P66: 판의 이름을 바꿔도 옛 주소로 찾는다
     hit(s, 'workspace', wsName.get(s.workspaceKey) || '');
     if (s.ask) hit(s, 'ask', [s.ask.question, ...(s.ask.questions || []).map((x) => x.question), s.ask.summary].filter(Boolean).join(' / '), 10);
     hit(s, 'prompt', s.lastPrompt);

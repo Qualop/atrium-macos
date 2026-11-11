@@ -45,7 +45,7 @@ export class ApiClient {
 
 export async function connect(cfg) {
   const info = backendInfo(cfg);
-  if (!info || !(await health(info.port))) throw new Error(`백엔드가 돌지 않는다(프로필 ${cfg.profile}, 데이터 ${cfg.dataDir}). 먼저: atrium${cfg.profile === 'dev' ? ' --dev' : ''} backend start`);
+  if (!info || !(await health(info.port))) throw new Error(`백엔드가 실행 중이 아닙니다 (프로필 ${cfg.profile}, 데이터 ${cfg.dataDir}). 먼저: atrium${cfg.profile === 'dev' ? ' --dev' : ''} backend start`);
   const c = new ApiClient(info); await c.open(); return c;
 }
 
@@ -82,8 +82,8 @@ export async function startBackend(cfg, { nodePath = process.execPath } = {}) {
   }
   // P18: 백엔드가 까닭을 남기고 끝났으면(예: 옛 판을 옮기지 못함) 그 줄을 함께 알린다
   let why = '';
-  try { why = fs.readFileSync(path.join(cfg.logDir, 'backend.out'), 'utf8').split(/\r?\n/).reverse().find((l) => l.startsWith('백엔드를 시작하지 못했다')) || ''; } catch {}
-  throw new Error(`백엔드가 뜨지 않았다${why ? `: ${why.replace(/^백엔드를 시작하지 못했다:\s*/, '')}` : ''}. 로그: ${path.join(cfg.logDir, 'backend.out')}`);
+  try { why = fs.readFileSync(path.join(cfg.logDir, 'backend.out'), 'utf8').split(/\r?\n/).reverse().find((l) => /^백엔드를 시작하지 못(?:했다|했습니다):/.test(l)) || ''; } catch {}
+  throw new Error(`백엔드가 시작되지 않았습니다${why ? `: ${why.replace(/^백엔드를 시작하지 못(?:했다|했습니다):\s*/, '')}` : ''}. 로그: ${path.join(cfg.logDir, 'backend.out')}`);
 }
 
 export async function stopBackend(cfg) {

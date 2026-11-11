@@ -1,7 +1,8 @@
 // Pure launch planning. Runtime hooks, pane ownership and trust remain Backend's
 // responsibility. env/command are launch data and must not be copied to events.
+import { applyAgentAutoApprove } from './auto-approval.mjs';
 import { DEFAULTS, EFFORTS, PERMISSION_MODES } from './settings.mjs';
-import { resolveLauncher, exampleDeepseek, splitArgs, MODEL_RE, normalizeLauncher } from './launchers.mjs';
+import { resolveLauncher, exampleDeepseek, splitArgs, MODEL_RE, normalizeLauncher, normalizeStartCommand } from './launchers.mjs';
 import { modelFromArgs, withCodexModel } from './codex-args.mjs';
 import { geminiModelFromArgs, withGeminiModel } from './gemini-args.mjs';
 import { agyModelFromArgs, withAgyModel } from './agy.mjs';
@@ -10,17 +11,25 @@ import { FLAVOR as DEEPSEEK, checkCommand } from './deepseek.mjs';
 const bad = (message) => Object.assign(new Error(message), { code: 'bad_request' });
 const shape = (p) => ({ kind: 'claude', flavor: null, launcher: null, launcherId: null,
   command: '', model: null, effort: null, permissionMode: 'manual', allowHerdr: false,
-  extraArgs: [], env: {}, gateway: null, args: [], ...p });
+  extraArgs: [], env: {}, gateway: null, args: [], startCommand: null, ...p });
 
 // Stable integration API used by Backend.spawn and delegation. All args are argv
 // arrays. Empty/null model explicitly clears a non-Claude provider's model flag.
 export function spawnPlanOf(b, p = {}) {
+  const settings = { ...(b.store?.getMeta?.('settings') || {}), ...(b.features?.settings?.get?.() || {}) };
+  return applyAgentAutoApprove(rawSpawnPlanOf(b, p), settings);
+}
+
+function rawSpawnPlanOf(b, p = {}) {
   const L = b.features?.launchers;
   const over = { model: p.model, effort: p.effort, permissionMode: p.permissionMode,
-    allowHerdr: p.allowHerdr, args: p.args, command: p.command };
+    allowHerdr: p.allowHerdr, args: p.args, command: p.command, startCommand: p.startCommand };
   if (p.launcherDef || p.launcher) {
     if (!p.launcherDef && !L) throw Object.assign(new Error(`없는 호출자: ${p.launcher}`), { code: 'no_launcher' });
-    return finalize(shape(resolveLauncher(p.launcherDef || L.get(p.launcher), over)));
+    const result = resolveLauncher(p.launcherDef || L.get(p.launcher), over);
+    if (result.kind === 'claude' && p.startCommand !== undefined) result.startCommand = normalizeStartCommand(p.startCommand);
+    if (result.kind === 'claude' && p.launcherDef && !Object.hasOwn(p.launcherDef, 'startCommand') && p.startCommand === undefined) result.startCommand = null;
+    return finalize(shape({ ...result, ...(p.permissionMode ? { permissionMode: p.permissionMode } : {}) }));
   }
   // Old API callers still use settings defaults. Reading the stored legacy keys
   // also supports Settings implementations which hide them from their UI schema.
@@ -35,16 +44,16 @@ export function spawnPlanOf(b, p = {}) {
   const kind = p.kind || 'claude';
   if (!/^[a-z][a-z0-9_-]{0,31}$/.test(kind)) throw bad('에이전트 종류가 올바르지 않다');
   if (kind === 'claude') {
-    const def = normalizeLauncher({ name: 'Claude Code', harness: 'claude',
+    const def = normalizeLauncher({ name: 'Claude Code', harness: 'claude', startCommand: p.startCommand,
       model: p.model || defaults.claudeModel || '', effort: p.effort || defaults.claudeEffort || '',
       permissionMode: p.permissionMode || defaults.claudePermissionMode || 'manual',
       allowHerdr: p.allowHerdr ?? defaults.claudeAllowHerdr, args: p.extraArgs || [] });
-    return finalize(shape({ ...resolveLauncher(def), launcher: null, launcherId: null, flavor: p.flavor || null }));
+    return finalize(shape({ ...resolveLauncher(def), launcher: null, launcherId: null, flavor: p.flavor || null, startCommand: p.startCommand === undefined ? null : def.startCommand || '' }));
   }
   const raw = p.args ?? (kind === 'codex' ? defaults.codexArgs : '');
   const withModel = kind === 'codex' ? withCodexModel : kind === 'gemini' ? withGeminiModel : kind === 'agy' ? withAgyModel : null;
   return finalize(shape({ kind, flavor: p.flavor || null, permissionMode: p.permissionMode || 'manual',
-    args: withModel ? withModel(raw, p.model) : splitArgs(raw) }));
+    env: { ...(p.env || {}) }, args: withModel ? withModel(raw, p.model) : splitArgs(raw) }));
 }
 
 function finalize(p) {

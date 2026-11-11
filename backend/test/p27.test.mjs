@@ -18,7 +18,7 @@ import { pathKey, normPath } from '../src/workspaces.mjs';
 import { attachWorktrees } from '../src/worktrees.mjs';
 import { parseWorktreeList, liveWorktrees, worktreeOfPath, areaKey, parseArea, wsOfArea, worktreeLabel, areaAnchorList, areaResolverOf, regionConflicts, WT_EMPTY } from '../src/worktree-areas.mjs';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'p27u-'));
+const tmp = () => fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'p27u-')));
 const R = (x, y, w = NODE.w, h = NODE.h) => ({ x, y, w, h });
 const conflicts = (b) => [...regionConflicts(ops.regions(b), ops.canvasItems(b))]; // P35: 리포 영역과 그 안의 상자는 겹침이 아니다
 const inside = (r, q) => r.x >= q.x && r.y >= q.y && r.x + r.w <= q.x + q.w && r.y + r.h <= q.y + q.h;
@@ -157,9 +157,9 @@ test('P27 판(P35 상자): 워크트리 둘이 생기면 리포 영역 안에 �
   const m1 = nodeOf(b, 'main');
   assert.throws(() => ops.worktreeMove(b, { workspace: ws.key, worktree: 'worktree-p1', dx: m1.x - ops.regions(b).get(k1).x + 40, dy: m1.y - ops.regions(b).get(k1).y + 40 }), (e) => e.code === 'overlap');
   assert.throws(() => ops.worktreeMove(b, { workspace: ws.key, worktree: 'nope', dx: 1, dy: 1 }), (e) => e.code === 'not_found');
-  // 정리는 본 저장소 영역 안의 것만
+  // P75: 상자는 안의 세션을 싣는 블록이다. 정리 계획은 본 저장소와 상자 안 세션을 모두 싣는다.
   const plan = ops.arrange(b, { workspace: ws.key });
-  assert.deepEqual(plan.plan.map((x) => x.names).flat(), ['main']);
+  assert.deepEqual(plan.plan.map((x) => x.names).flat().sort(), ['main', 's1', 's2']);
 });
 
 test('P27 판: 워크트리를 지우면 그 상자가 사라지고, 남은 노드는 본 영역으로 온다. 다시 켜도(새 Store) 자리가 같다', async () => {

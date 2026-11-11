@@ -74,7 +74,7 @@ export function trashPlan(items, { roots = [], dirExists = () => false } = {}) {
   }
   return { ok, refused };
 }
-export const REFUSE_LABEL = { trash_failed: '휴지통으로 보내지 못했다', bad_path: '경로가 이상하다', outside_root: '대화 기록 폴더 밖', not_uuid: '이름이 대화 ID(UUID)가 아니다', desktop: '데스크톱 앱 대화', board_session: '판 세션의 대화', running: '지금 도는 대화', bound: '다른 터미널에 묶인 대화', not_missed: 'missed가 아니다', not_found: '색인에 없다' };
+export const REFUSE_LABEL = { trash_failed: "휴지통으로 이동 실패", bad_path: "유효하지 않은 경로", outside_root: "대화 기록 폴더 외부의 파일", not_uuid: "파일명이 대화 ID(UUID) 형식과 다름", desktop: '데스크톱 앱 대화', board_session: '보드 세션의 대화', running: "실행 중인 대화", bound: "다른 터미널에서 사용 중인 대화", not_missed: "정리 대상이 아닌 대화", not_found: "대화 목록에서 찾을 수 없음" };
 
 // 파일과 폴더를 Windows 휴지통으로(Microsoft.VisualBasic FileSystem, 대화상자 없이). 경로 목록은 JSON 파일로 넘긴다(따옴표 문제 없이).
 // → { trashed: [path], failed: [{ path, error }] }. 지운 뒤 그 경로가 남아 있으면 실패로 본다

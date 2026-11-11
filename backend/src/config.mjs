@@ -72,6 +72,7 @@ export function loadConfig({ argv = process.argv.slice(2), env = process.env } =
     codexCommand: E('CODEX_COMMAND') || null,
     ocxHealthUrl: E('OCX_HEALTH') || DEEPSEEK_HEALTH_URL, // P25: DeepSeek 세션 전에 opencodex 프록시가 도는지 보는 주소(`ocx status`의 Health)
     ocxBaseUrl: E('OCX_BASE_URL') || null, // P25: DeepSeek 세션의 ANTHROPIC_BASE_URL. 비우면 health 주소의 origin(deepseek.mjs baseUrlOf)
+    ocxConfigured: !!(E('OCX_HEALTH') || E('OCX_BASE_URL')), // P72: opencodex 주소를 직접 줬는가. 아니면 DeepSeek 호출자가 없는 판(새 판)의 atrium models는 opencodex를 묻지 않는다
     claudeJson: E('CLAUDE_JSON') || path.join(os.homedir(), '.claude.json'),
     claudeProjects: path.join(os.homedir(), '.claude', 'projects'),
     // P7(J3·J4): 판 밖 대화 목록이 읽는 대화 기록 폴더(;로 여럿), Claude Code의 세션 파일 폴더, 데스크톱 앱 세션 목록 폴더. 시험은 고정 자료를 가리킨다.
@@ -92,21 +93,24 @@ export function loadConfig({ argv = process.argv.slice(2), env = process.env } =
     deliveryMaxWaitMs: 15 * 60 * 1000, // B1 규칙 2: 최대 15분
     inputQuietMs: 3000, // B1 규칙 4: 사용자가 터미널에 입력한 뒤 이만큼 기다린다
     submitConfirmMs: 30000, // 보낸 뒤 UserPromptSubmit을 기다리는 시간
+    submitRetryMs: 6000, // P79: 보낸 뒤 이만큼 확인이 없으면 입력 칸을 보고 Enter나 다시 보내기
+    submitRetries: 2, // P79: 그 손쓰기의 최대 횟수(다시 보내기는 그 가운데 한 번뿐)
     quietMs: Number(E('QUIET_MS') || 10 * 60 * 1000), // 3절 조용함, 후보 10분
     killWaitMs: 10000,
     answerStepMs: 250, // 답하기에서 키 묶음 사이(tab → 글 → enter)에 화면이 바뀔 시간
     // P3
     resourcesIntervalMs: Number(E('RESOURCES_MS') || 30000), // D1: 약 30초마다
     sleepTickMs: Number(E('SLEEP_TICK_MS') || 30000), // P21(D4): 저절로 잠재울 세션을 보는 간격(시험은 짧게)
+    sleepBgPrecheck: !(profile === 'dev' && E('SLEEP_BG_PRECHECK') === 'off'), // P105 판 시험만(개발용 판): 뒤 일 미리 보기를 끄고 /exit 확인 창 처리를 시험한다
     recoverGraceMs: 15000, // C3: herdr가 다시 뜬 뒤 이만큼 기다려도 claude가 없으면 판이 이어 간다
     // P4
     adoptSpawnMatchMs: 120000, // F3: 세션이 herdr로 새 에이전트를 띄운 명령(hook)과 새로 나타난 에이전트를 이 시간 안에서 맞춘다
     gitPollMs: Number(E('GIT_POLL_MS') || 15000), // F4: hook이 없는 세션의 폴더(herdr cwd)와 git을 다시 보는 간격
   };
   // 기본 herdr 세션은 이름이 없다. 판은 반드시 이름 있는 세션을 쓴다.
-  if (!cfg.herdrSession || cfg.herdrSession === 'default') throw new Error('herdr 세션 이름이 필요하다(기본 세션은 쓰지 않는다)');
-  if (profile === 'dev' && [PROFILES.real.herdrSession, LEGACY_REAL.herdrSession].includes(cfg.herdrSession)) throw new Error('dev 프로필이 실제 판의 herdr 세션을 가리킨다');
-  if (profile === 'dev' && [PROFILES.real.dataDir, LEGACY_REAL.dataDir].some((d) => samePath(d, cfg.dataDir))) throw new Error('dev 프로필이 실제 판의 데이터 폴더를 가리킨다');
+  if (!cfg.herdrSession || cfg.herdrSession === 'default') throw new Error("herdr 세션 이름을 지정하세요. 기본 세션은 사용하지 않습니다.");
+  if (profile === 'dev' && [PROFILES.real.herdrSession, LEGACY_REAL.herdrSession].includes(cfg.herdrSession)) throw new Error("개발용 프로필이 실제 보드의 herdr 세션을 가리킵니다.");
+  if (profile === 'dev' && [PROFILES.real.dataDir, LEGACY_REAL.dataDir].some((d) => samePath(d, cfg.dataDir))) throw new Error("개발용 프로필이 실제 보드의 데이터 폴더를 가리킵니다.");
   cfg.sessionsDir = path.join(cfg.dataDir, 'sessions');
   cfg.dbFile = path.join(cfg.dataDir, 'board.db');
   cfg.backendFile = path.join(cfg.dataDir, 'backend.json');

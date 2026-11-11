@@ -13,6 +13,8 @@ import {
   Devices, Pairing, WebServer, StaticFiles, isLocalProcess, originOk, allowedHosts, listDirs, parseDrives, driveRoots, safeUploadName, uploadPath, cleanupUploads, cacheControl, sha256,
   PAIR_CODE_TTL_MS, PAIR_REQUEST_TTL_MS, PAIR_FAIL_PER_IP, PAIR_FAIL_GLOBAL, PAIR_CODE_MAX_FAILS, UPLOAD_MAX_BYTES,
 } from '../src/web.mjs';
+import { Grants } from '../src/web-auth.mjs';
+import { pairAndRegister, registerWithGrant, raw } from './fake-authenticator.mjs'; // P56: 짝 맺기 뒤 패스키 등록
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p48-'));
 const clock = (t0 = 1_000_000) => { const c = { t: t0, now: () => c.t }; return c; };
@@ -20,31 +22,30 @@ const fakeReq = (headers, remoteAddress = '127.0.0.1') => ({ headers, socket: { 
 
 function storeIn(dir) { return new Store(path.join(dir, 'board.db')); }
 
-test('기기 토큰은 해시만 저장하고, 확인·끊기가 된다', () => {
+test('기기: P56부터 패스키(공개 키)를 두고, 목록에는 공개 키를 싣지 않으며, credential ID로 찾고 끊는다', () => {
   const dir = tmp(); const store = storeIn(dir);
   const d = new Devices({ store });
-  const { token, device } = d.add({ name: '  laptop\n chrome ', via: 'code', userAgent: 'UA' });
+  const device = d.add({ name: '  laptop\n chrome ', via: 'code', userAgent: 'UA', passkey: { credId: 'cred-1', publicKey: { kty: 'EC' }, alg: -7, signCount: 0, rpId: 'localhost' }, extra: { origin: 'local' } }); // P59: P57 기기 기록(이 PC 안)
   assert.equal(device.name, 'laptop chrome');
-  const raw = JSON.stringify(store.getMeta('webDevices'));
-  assert.ok(!raw.includes(token), '토큰 원문은 저장하지 않는다');
-  assert.ok(raw.includes(sha256(token)));
-  assert.equal(d.verify(token).id, device.id);
-  assert.equal(d.verify(token + 'x'), null);
-  assert.equal(d.verify(''), null);
-  assert.ok(!('hash' in d.list()[0]), '목록에 해시를 싣지 않는다');
+  assert.equal(d.byCred('cred-1').id, device.id);
+  assert.equal(d.byCred('cred-2'), null);
+  assert.equal(d.byCred(''), null);
+  const l = d.list()[0];
+  assert.ok(!('hash' in l) && !('publicKey' in l.passkey) && !('credId' in l.passkey), '목록에 해시·공개 키를 싣지 않는다');
+  assert.equal(l.needsRepair, false);
   assert.equal(d.revoke(device.id), true);
-  assert.equal(d.verify(token), null);
+  assert.equal(d.byCred('cred-1'), null);
   store.close();
 });
 
 test('코드 짝 맺기: 한 번만, 만료, 틀리면 코드를 버리고, 횟수를 제한한다', () => {
   const dir = tmp(); const store = storeIn(dir); const c = clock();
-  const p = new Pairing({ devices: new Devices({ store, now: c.now }), now: c.now });
+  const p = new Pairing({ devices: new Devices({ store, now: c.now }), grants: new Grants({ now: c.now }), now: c.now });
   assert.throws(() => p.redeem({ code: '000000', ip: 'a' }), (e) => e.code === 'no_code');
   const { code } = p.newCode();
   assert.match(code, /^\d{6}$/);
   const r = p.redeem({ code, name: 'tab', ip: 'a' });
-  assert.ok(r.token && r.device.id);
+  assert.ok(r.grant && r.expiresAt && !r.token, 'P56: 기기 토큰이 아니라 등록 허가');
   assert.throws(() => p.redeem({ code, ip: 'b' }), (e) => e.code === 'no_code', '같은 코드는 두 번 쓰지 못한다');
   // 만료
   const c2 = p.newCode(); c.t += PAIR_CODE_TTL_MS + 1;
@@ -73,7 +74,8 @@ test('허락 짝 맺기: 요청, 허락, 토큰은 한 번만, 거절, 만료, �
   const dir = tmp(); const store = storeIn(dir); const c = clock();
   const devices = new Devices({ store, now: c.now });
   let changes = 0;
-  const p = new Pairing({ devices, now: c.now, onChange: () => changes++ });
+  const grants = new Grants({ now: c.now });
+  const p = new Pairing({ devices, grants, now: c.now, onChange: () => changes++ });
   const q = p.request({ name: 'phone', ip: 'x' });
   assert.match(q.check, /^\d{4}$/);
   assert.equal(p.pending().length, 1);
@@ -83,7 +85,7 @@ test('허락 짝 맺기: 요청, 허락, 토큰은 한 번만, 거절, 만료, �
   p.decide(q.requestId, true);
   const got = p.poll(q.requestId, q.secret);
   assert.equal(got.status, 'approved');
-  assert.equal(devices.verify(got.token).name, 'phone');
+  assert.equal(grants.peek(got.grant).name, 'phone');
   assert.equal(p.poll(q.requestId, q.secret).status, 'expired', '토큰은 한 번만 내준다');
   const q2 = p.request({ name: 'b', ip: 'x' });
   p.decide(q2.requestId, false);
@@ -110,8 +112,9 @@ test('이 PC의 프로세스 판정과 Origin', () => {
   assert.equal(isLocalProcess(fakeReq({ host: `127.0.0.1:${port}`, origin: 'file://' }), port, { allowFileOrigin: true }), true, 'Electron 창');
   assert.equal(isLocalProcess(fakeReq({ host: `127.0.0.1:${port}`, origin: 'file://' }), port), false);
   const hosts = allowedHosts(port, 'pc.tail.ts.net');
-  assert.equal(originOk(fakeReq({ origin: `http://127.0.0.1:${port}` }), hosts), true);
-  assert.equal(originOk(fakeReq({ origin: 'https://pc.tail.ts.net' }), hosts), true);
+  assert.equal(originOk(fakeReq({ host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}` }), hosts), true);
+  assert.equal(originOk(fakeReq({ host: 'pc.tail.ts.net', origin: 'https://pc.tail.ts.net' }), hosts), true);
+  assert.equal(originOk(fakeReq({ host: `localhost:${port}`, origin: `http://127.0.0.1:${port}` }), hosts), false, 'P59: Origin은 요청 Host와 같아야 한다');
   assert.equal(originOk(fakeReq({ origin: 'http://evil.example' }), hosts), false);
   assert.equal(originOk(fakeReq({}), hosts), false);
 });
@@ -202,17 +205,19 @@ test('짝 맺기 전에는 API가 거부되고, 코드로 맺은 기기는 붙�
     await wsCall(local.ws, 'events.subscribe');
     // PC가 코드를 만들고 브라우저가 넣는다
     const code = (await wsCall(local.ws, 'device.code')).result.code;
-    const pr = await req(b.base, '/web/pair/code', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ code, name: 'test browser' }) });
-    assert.equal(pr.status, 200);
-    const { token, device } = await pr.json();
-    const me = await (await req(b.base, '/web/me', { headers: { authorization: `Bearer ${token}`, origin } })).json();
+    // P56: 코드 → 등록 허가 → 패스키 등록 → 세션 쿠키(localhost: 패스키는 IP 주소에서 쓰지 못한다)
+    const H = { host: `localhost:${b.port}`, origin: `http://localhost:${b.port}` };
+    const reg = await pairAndRegister(b.port, code, H);
+    assert.equal(reg.res.status, 200);
+    const { device } = reg; const cookie = reg.cookie;
+    const me = (await raw(b.port, '/web/me', { headers: { host: H.host, cookie } })).body;
     assert.equal(me.device.id, device.id);
     assert.equal(me.profile, 'dev');
     assert.ok(!JSON.stringify(me).includes(b.apiToken), '판 API 토큰을 내주지 않는다');
     // 기기로 WebSocket: Origin이 같아야 한다
-    assert.equal((await wsOpen(`ws://127.0.0.1:${b.port}/api?device=${token}`)).ok, false, 'Origin 없음');
-    assert.equal((await wsOpen(`ws://127.0.0.1:${b.port}/api?device=${token}`, { origin: 'http://evil.example' })).ok, false);
-    const dev = await wsOpen(`ws://127.0.0.1:${b.port}/api?device=${token}`, { origin });
+    assert.equal((await wsOpen(`ws://127.0.0.1:${b.port}/api`, { cookie })).ok, false, 'Origin 없음');
+    assert.equal((await wsOpen(`ws://127.0.0.1:${b.port}/api`, { cookie, origin: 'http://evil.example' })).ok, false);
+    const dev = await wsOpen(`ws://127.0.0.1:${b.port}/api`, { host: H.host, origin: H.origin, cookie });
     assert.equal(dev.ok, true);
     assert.equal((await wsCall(dev.ws, 'ping')).result.kind, 'device');
     // 기기는 코드를 만들거나 허락하지 못한다
@@ -221,8 +226,8 @@ test('짝 맺기 전에는 API가 거부되고, 코드로 맺은 기기는 붙�
     const dl = (await wsCall(dev.ws, 'device.list')).result;
     assert.equal(dl.me.id, device.id); assert.ok(!('requests' in dl));
     // 기기 토큰으로 hook·branch는 못 부른다(브라우저 요청, 다른 출처)
-    assert.equal((await req(b.base, '/hooks/claude', { method: 'POST', headers: { origin, authorization: `Bearer ${token}` }, body: '{}' })).status, 403);
-    assert.equal((await req(b.base, '/branch/spawn', { method: 'POST', headers: { origin, authorization: `Bearer ${token}` }, body: '{}' })).status, 403);
+    assert.equal((await req(b.base, '/hooks/claude', { method: 'POST', headers: { origin, cookie }, body: '{}' })).status, 403);
+    assert.equal((await req(b.base, '/branch/spawn', { method: 'POST', headers: { origin, cookie }, body: '{}' })).status, 403);
     assert.equal((await req(b.base, '/branch/spawn', { method: 'POST', headers: { 'x-forwarded-for': '100.64.0.2' }, body: '{}' })).status, 403);
     assert.equal((await req(b.base, '/hooks/claude', { method: 'POST', body: '{}' })).status, 200, '이 PC의 프로세스(Origin 없음)는 그대로');
     assert.deepEqual(b.counts(), { hooks: 1, branches: 0 });
@@ -230,13 +235,13 @@ test('짝 맺기 전에는 API가 거부되고, 코드로 맺은 기기는 붙�
     const closed = new Promise((r) => dev.ws.on('close', (c) => r(c)));
     assert.equal((await wsCall(local.ws, 'device.revoke', { id: device.id })).result.revoked, true);
     assert.equal(await closed, 4401);
-    assert.equal((await req(b.base, '/web/me', { headers: { authorization: `Bearer ${token}` } })).status, 401);
-    assert.equal((await wsOpen(`ws://127.0.0.1:${b.port}/api?device=${token}`, { origin })).ok, false);
+    assert.equal((await raw(b.port, '/web/me', { headers: { host: H.host, cookie } })).status, 401);
+    assert.equal((await wsOpen(`ws://127.0.0.1:${b.port}/api`, { origin: H.origin, cookie })).ok, false);
     local.ws.close();
   } finally { await b.close(); }
 });
 
-test('허락 짝 맺기를 HTTP로: PC 창에 요청이 가고, 허락하면 브라우저가 토큰을 받는다', async () => {
+test('허락 짝 맺기를 HTTP로: PC 창에 요청이 가고, 허락하면 브라우저가 등록 허가를 받는다', async () => {
   const b = await boot();
   const origin = b.base;
   try {
@@ -250,7 +255,8 @@ test('허락 짝 맺기를 HTTP로: PC 창에 요청이 가고, 허락하면 브
     await wsCall(local.ws, 'device.approve', { id: q.requestId });
     const got = await (await req(b.base, `/web/pair/poll?id=${q.requestId}&secret=${q.secret}`, { headers: { origin } })).json();
     assert.equal(got.status, 'approved');
-    assert.equal((await req(b.base, '/web/me', { headers: { authorization: `Bearer ${got.token}` } })).status, 200);
+    const reg = await registerWithGrant(b.port, got.grant, { host: `127.0.0.1:${b.port}`, origin }); // 허가는 짝 맺기를 청한 출처에서만
+    assert.equal(reg.res.status, 400, 'IP 주소의 페이지는 패스키를 쓰지 못한다'); assert.equal(reg.res.body.error.code, 'ip_host');
     local.ws.close();
   } finally { await b.close(); }
 });
@@ -259,15 +265,16 @@ test('업로드: 기기만, 데이터 폴더 uploads/에 저장하고 PC 경로�
   const b = await boot();
   const origin = b.base;
   try {
-    const { token } = b.web.devices.add({ name: 't', via: 'code' });
+    const d = b.web.devices.add({ name: 't', via: 'code', passkey: { credId: 'c', rpId: 'localhost' }, extra: { origin: 'local' } });
+    const cookie = `atrium_${b.port}=${b.web.auth.sessions.create(d.id).id}`; // P56: 세션 쿠키
     assert.equal((await req(b.base, '/web/upload?name=a.png', { method: 'POST', headers: { origin }, body: 'x' })).status, 401);
-    const r = await req(b.base, '/web/upload?name=' + encodeURIComponent('../../스크린 샷.png'), { method: 'POST', headers: { origin, authorization: `Bearer ${token}`, 'content-type': 'image/png' }, body: Buffer.from([1, 2, 3]) });
+    const r = await req(b.base, '/web/upload?name=' + encodeURIComponent('../../스크린 샷.png'), { method: 'POST', headers: { origin, cookie, 'content-type': 'image/png' }, body: Buffer.from([1, 2, 3]) });
     assert.equal(r.status, 200);
     const j = await r.json();
     assert.equal(path.dirname(j.path), path.join(b.dir, 'uploads'));
     assert.match(path.basename(j.path), /^\d{8}-\d{6}-[0-9a-f]{6}-스크린 샷\.png$/);
     assert.deepEqual([...fs.readFileSync(j.path)], [1, 2, 3]);
-    const big = await req(b.base, '/web/upload?name=big.bin', { method: 'POST', headers: { origin, authorization: `Bearer ${token}`, 'content-length': String(UPLOAD_MAX_BYTES + 1) }, body: Buffer.alloc(UPLOAD_MAX_BYTES + 1) }).catch((e) => ({ status: 'err', e }));
+    const big = await req(b.base, '/web/upload?name=big.bin', { method: 'POST', headers: { origin, cookie, 'content-length': String(UPLOAD_MAX_BYTES + 1) }, body: Buffer.alloc(UPLOAD_MAX_BYTES + 1) }).catch((e) => ({ status: 'err', e }));
     assert.ok(big.status === 413 || big.status === 'err');
     assert.equal(fs.readdirSync(path.join(b.dir, 'uploads')).length, 1, '넘친 파일은 남기지 않는다');
   } finally { await b.close(); }

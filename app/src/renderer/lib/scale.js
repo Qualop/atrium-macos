@@ -36,5 +36,16 @@ export function saveScale(storage, key, f) {
   return v;
 }
 
-// 터미널 글자 크기(px). 0.1px 단위
-export const termFontSize = (base, f) => Math.round(base * clampScale(f) * 10) / 10;
+// 터미널 글자 크기(px). 0.1px 단위. clamp: 배율을 맞추는 함수(휴대폰은 clampPhoneScale)
+export const termFontSize = (base, f, clamp = clampScale) => Math.round(base * clamp(f) * 10) / 10;
+
+// P83: 휴대폰 화면(목록의 세션 화면, 전체 보기)의 글자 배율은 40%까지 줄인다. 세로 iPhone(390px)에서 110칸 안팎(Claude Code가 diff를 보이는 폭).
+// PC 창의 터미널 글자 배율(70~150%)은 그대로다. 저장값이 없거나 이상하면 기본(80%), 범위 밖이면 끝 값으로 맞춘다
+export const PHONE_SCALE_MIN = 0.4;
+export const PHONE_SCALE_DEFAULT = 0.8;
+export function clampPhoneScale(v) {
+  const n = Number(v);
+  if (v === null || v === undefined || v === '' || !Number.isFinite(n) || n <= 0) return PHONE_SCALE_DEFAULT;
+  const stepped = Math.round(n / SCALE_STEP) * SCALE_STEP;
+  return Math.round(Math.min(SCALE_MAX, Math.max(PHONE_SCALE_MIN, stepped)) * 100) / 100;
+}

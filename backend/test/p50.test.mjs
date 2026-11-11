@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { NODE, GAP, overlaps, dockSpot, regionRect } from '../src/canvas.mjs';
+import { NODE, NEW_NODE, GAP, overlaps, dockSpot, regionRect } from '../src/canvas.mjs';
 import { newRuntime } from '../src/state.mjs';
 import { Store } from '../src/store.mjs';
 import * as ops from '../src/canvas-ops.mjs';
@@ -26,6 +26,21 @@ function fakeBackend() {
   };
   const at = (name) => { const n = store.nodes().find((x) => x.session_id === `id-${name}`); return n && R(n.x, n.y, n.w, n.h); };
   return { b, add, at };
+}
+
+function assertRow(at, names) {
+  const rects = names.map(at), first = rects[0];
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i];
+    assert.equal(r.y, first.y, '같은 줄');
+    assert.equal(r.h, first.h, '같은 높이');
+    assert.ok(Math.abs(r.w - first.w) <= 1, '정수 반올림 안에서 같은 너비');
+    if (i) assert.equal(r.x, rects[i - 1].x + rects[i - 1].w, '틈과 겹침 없는 이웃');
+    assert.ok(Math.abs(r.w / r.h - 16 / 9) < 0.005, 'P80: 칸의 모양은 단독 세션의 16:9');
+  }
+  const totalArea = rects.reduce((sum, r) => sum + r.w * r.h, 0);
+  assert.ok(Math.abs(totalArea / (NEW_NODE.w * NEW_NODE.h * Math.sqrt(rects.length)) - 1) < 0.003, 'P80: 전체 넓이는 단독 세션 넓이 × √세션 수');
+  return rects;
 }
 
 test('dockSpot: 원하는 자리가 비면 그대로, 막히면 가장 가까운 빈자리(같으면 위)', () => {
@@ -59,19 +74,35 @@ test('dockLayout: 노드 둘을 가로 2개로 짜도 셋째 노드를 덮지 �
   const { b, add, at } = fakeBackend();
   // 새 노드 자리 그대로: pa(왼쪽), pb(pa 오른쪽), pc(pa 위)
   add('pa', R(40, -388)); add('pb', R(800, -388)); add('pc', R(40, -888));
+  const thirdBefore = at('pb');
   ops.dockLayout(b, { members: ['pa', 'pc'], preset: 'row' });
   const pa = at('pa'), pc = at('pc'), pb = at('pb');
-  assert.deepEqual(pb, R(800, -388), '셋째 노드는 그대로');
-  assert.equal(pa.y, pc.y); assert.equal(pc.x, pa.x + pa.w);
+  assert.deepEqual(pb, thirdBefore, '셋째 노드의 위치와 크기는 그대로');
+  assertRow(at, ['pa', 'pc']);
   for (const r of [pa, pc]) assert.ok(!overlaps(r, pb, GAP - 1), `덩어리가 pb를 덮지 않는다: ${JSON.stringify(r)}`);
-  assert.deepEqual(pa, R(40, -888), '고른 노드가 있던 자리(pc 자리)에 짠다');
+  assert.equal(pa.x, 40);
+  assert.equal(pa.y, pb.y + pb.h + GAP, '커진 덩어리가 들어갈 가장 가까운 아래 빈자리');
+  // null과 빈 크기 열쇠는 모두 사용자가 고른 단계가 없다는 저장 형식이다.
+  const geometry = () => b.store.nodes().map((n) => ({ ...n, size: n.size || null }));
+  const beforeArrange = geometry();
+  const treeBefore = b.store.docks()[0].tree;
+  ops.arrange(b, { workspace: 'ws', apply: true });
+  ops.arrange(b, { workspace: 'ws', undo: true });
+  assert.deepEqual(geometry(), beforeArrange, '정리 후 되돌리면 셋째 노드를 포함한 모든 위치·크기·크기 기록이 돌아온다');
+  assert.deepEqual(b.store.docks()[0].tree, treeBefore, '되돌린 뒤 분할 나무도 그대로');
+  b.store.close();
 });
 
 test('dockLayout: 창 시험 자리(pc가 pa 아래)면 비워지는 아래 자리에 짠다', () => {
   const { b, add, at } = fakeBackend();
   add('pa', R(40, 112)); add('pb', R(800, 112)); add('pc', R(40, 612));
+  const thirdBefore = at('pb'), freed = at('pc');
   ops.dockLayout(b, { members: ['pa', 'pc'], preset: 'row' });
-  assert.deepEqual([at('pa'), at('pc'), at('pb')], [R(40, 612), R(760, 612), R(800, 112)]);
+  const row = assertRow(at, ['pa', 'pc']);
+  assert.deepEqual(at('pb'), thirdBefore, '셋째 노드의 위치와 크기를 보존한다');
+  assert.deepEqual([row[0].x, row[0].y], [freed.x, freed.y], '비워지는 아래 자리에서 시작한다');
+  for (const r of row) assert.ok(!overlaps(r, thirdBefore, GAP - 1), 'P80 크기에서도 셋째 노드와 겹치지 않는다');
+  b.store.close();
 });
 
 test('dockLayout: 고른 노드 자리에 메모가 있으면 메모도 피한다', () => {
@@ -88,5 +119,7 @@ test('dockLayout: 원하는 자리가 비면 옛날처럼 첫 노드 자리에�
   const { b, add, at } = fakeBackend();
   add('a', R(0, 0)); add('b', R(3000, 0)); add('c', R(6000, 0));
   ops.dockLayout(b, { members: ['a', 'b', 'c'], preset: 'row' });
-  assert.deepEqual([at('a'), at('b'), at('c')], [R(0, 0), R(720, 0), R(1440, 0)]);
+  const row = assertRow(at, ['a', 'b', 'c']);
+  assert.deepEqual([row[0].x, row[0].y], [0, 0], '비어 있으면 첫 노드의 위치를 지킨다');
+  b.store.close();
 });

@@ -3,21 +3,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dockRoutes, sharedEdge, outerSides, roundedPath, arrowHead, linkActive, dockFocus } from '../src/renderer/lib/dock-links.js';
 import { presetTree, presetsFor, layout } from '../../backend/src/dock-tree.mjs';
-import { flipStep, nearestStep, litStep } from '../src/renderer/lib/selbar.js';
+import { blockState, levelSize, litOf } from '../src/renderer/lib/selbar.js';
 
-test('막대 토글: 불이 없으면(붙여 막 만든 덩어리) 누른 쪽에서 가장 가까운 단계, 불이 있으면 같은 단계', () => {
-  const pair = { x: 0, y: 0, w: 1440, h: 460 }; // 720 × 460 둘을 옆으로 붙인 덩어리: 여섯 단계 어디에도 맞지 않는다
-  assert.equal(litStep([pair]), null);
-  assert.equal(flipStep(null, 'wide', pair), 'wide-normal');
-  assert.equal(flipStep(null, 'tall', pair), 'tall-normal');
-  assert.equal(nearestStep({ w: 2880, h: 920 }, 'wide'), 'wide-large', '큰 덩어리는 크게');
-  assert.equal(nearestStep({ w: 480, h: 300 }, 'tall'), 'tall-small', '작은 것은 작게');
-  const stack = { x: 0, y: 0, w: 720, h: 920 }; // 위아래로 붙인 덩어리
-  assert.equal(nearestStep(stack, 'tall'), 'tall-normal');
-  assert.equal(nearestStep(stack, 'wide'), 'wide-normal');
-  assert.equal(flipStep(null, 'tall', null), null, '대상이 여럿이면(사각형 없음) 쪽만 바꾼다');
-  assert.equal(flipStep('wide-small', 'tall', pair), 'tall-small', '불이 있으면 같은 단계');
-  assert.equal(flipStep('wide-small', 'wide', pair), null);
+// P73/P80 replaced six named steps with direction × aspect × level, including the dock's outer size.
+test('size controls retain a free dock shape until a direction, aspect or level is chosen', () => {
+  const pair = { x: 0, y: 0, w: 1440, h: 460 };
+  const free = blockState(pair);
+  assert.equal(free.aspect, null); assert.equal(free.level, null);
+  assert.deepEqual(litOf([free]), { dir: 'wide', aspect: null, level: null });
+  const wide = levelSize('normal', { dir: 'wide', aspect: '16:9', rect: pair });
+  const tall = levelSize('normal', { dir: 'tall', aspect: '16:9', rect: pair });
+  assert.equal(wide.w, tall.h); assert.equal(wide.h, tall.w);
+  assert.equal(blockState(wide, '16:9').level, 'normal');
+  assert.equal(blockState(tall, '16:9').dir, 'tall');
+  const small = levelSize('small', { dir: 'wide', aspect: '16:9' });
+  assert.equal(litOf([blockState(wide, '16:9'), blockState(small, '16:9')]).level, null);
 });
 
 const L = (from, to, linkId = `${from}>${to}`) => ({ linkId, from, to });

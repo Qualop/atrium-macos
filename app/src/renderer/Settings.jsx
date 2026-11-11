@@ -14,6 +14,8 @@ import { LaunchersTab } from './Launchers.jsx'; // P33: 호출자 탭
 import { DevicesTab } from './WebDevices.jsx'; // P48: 연결된 기기(웹 화면)
 import { useDialog } from './dialog.js'; // P52
 import { BranchSettings } from './Branch.jsx';
+import { UpdateSettings } from './Update.jsx'; // P69: 업데이트 묶음
+import { LIGHT_MODES, workLightOf, applyWorkLight } from './lib/work-light.js'; // P107: 작업 중 테두리 빛
 
 // 한 줄: 이름, 값, 풀이(짧은 글). 이름을 누르면 값 칸의 입력에 초점이 간다(label)
 export function SetRow({ name, hint, children, role }) {
@@ -28,9 +30,9 @@ export function SetRow({ name, hint, children, role }) {
 export const SetNote = ({ children }) => <p className="mt-set-note">{children}</p>;
 export const SetSub = ({ children }) => <div className="mt-set-sub">{children}</div>;
 // 체크 상자 하나와 켜짐·꺼짐 글
-function Toggle({ checked, onChange, field }) {
+function Toggle({ checked, onChange, field, disabled = false }) {
   const t = useT();
-  return <span className="mt-set-toggle"><input type="checkbox" checked={checked} data-field={field} onChange={(e) => onChange(e.target.checked)} /><span>{checked ? t('settings.on') : t('settings.off')}</span></span>;
+  return <span className="mt-set-toggle"><input type="checkbox" checked={checked} disabled={disabled} data-field={field} onChange={(e) => onChange(e.target.checked)} /><span>{checked ? t('settings.on') : t('settings.off')}</span></span>;
 }
 
 // P16: 화면 언어. 이름은 그 언어 자체로 보인다
@@ -72,20 +74,71 @@ function ScaleSetting({ kind }) {
   return (
     <div className="mt-set-row" data-role={`${field}-setting`}>
       <span className="mt-set-name">{t(`scale.${kind}Name`)}</span>
+      {/* P60: −·값·+를 판 단추 높이(30px)의 한 덩어리로. 브라우저 스핀 단추는 숨기고(styles.css .mt-nospin), 뒤 단추는 100%로 되돌리기 */}
       <span className="mt-set-value mt-scale">
-        <button type="button" className="mt-btn small ghost" data-action={`${field}-down`} disabled={value <= SCALE_MIN} title={t('scale.down')} onClick={() => set(stepScale(value, -1))}>−</button>
-        <input type="number" className="mt-set-num mt-scale-num" min={SCALE_MIN * 100} max={SCALE_MAX * 100} step={SCALE_STEP * 100} data-field={`setting-${field}`} data-value={pctOf(value)}
-          value={text ?? pctOf(value)} onChange={(e) => setText(e.target.value)} onBlur={apply} onKeyDown={(e) => { if (!e.nativeEvent.isComposing && e.keyCode !== 229 && e.key === 'Enter') { e.preventDefault(); apply(); } }} />
-        <span className="mt-scale-pct">%</span>
-        <button type="button" className="mt-btn small ghost" data-action={`${field}-up`} disabled={value >= SCALE_MAX} title={t('scale.up')} onClick={() => set(stepScale(value, 1))}>+</button>
-        <button type="button" className="mt-btn small ghost" data-action={`${field}-reset`} disabled={value === 1} onClick={() => set(1)}>{t('scale.reset')}</button>
+        <span className="mt-stepper">
+          <button type="button" className="mt-stepper-btn" data-action={`${field}-down`} disabled={value <= SCALE_MIN} title={t('scale.down')} aria-label={t('scale.down')} onClick={() => set(stepScale(value, -1))}>−</button>
+          <input type="number" inputMode="numeric" className="mt-scale-num mt-nospin" min={SCALE_MIN * 100} max={SCALE_MAX * 100} step={SCALE_STEP * 100} data-field={`setting-${field}`} data-value={pctOf(value)} aria-label={t(`scale.${kind}Name`)}
+            value={text ?? pctOf(value)} onChange={(e) => setText(e.target.value)} onBlur={apply} onKeyDown={(e) => { if (!e.nativeEvent.isComposing && e.keyCode !== 229 && e.key === 'Enter') { e.preventDefault(); apply(); } }} />
+          <span className="mt-scale-pct">%</span>
+          <button type="button" className="mt-stepper-btn" data-action={`${field}-up`} disabled={value >= SCALE_MAX} title={t('scale.up')} aria-label={t('scale.up')} onClick={() => set(stepScale(value, 1))}>+</button>
+        </span>
+        <button type="button" className="mt-btn ghost mt-scale-reset" data-action={`${field}-reset`} disabled={value === 1} title={t('settingsP60.scaleResetTitle')} onClick={() => set(1)}>{t('settingsP60.scaleReset')}</button>
       </span>
       <span className="mt-set-hint">{t(`scale.${kind}Hint`, { min: SCALE_MIN * 100, max: SCALE_MAX * 100 })}</span>
     </div>
   );
 }
 
-// 일반: 언어, 배율(P45), 트레이 상주
+// P107: 작업 중 테두리 빛(판 노드 둘레와 미션 맵 카드 테두리를 따라 도는 빛). 켬(기본) / Windows 설정 따름 / 끔. 판 설정이라 휴대폰도 따른다.
+// 누르면 백엔드 확인(settings.updated)을 기다리지 않고 곧바로 문서 뿌리에 적고, 저장이 실패하면 되돌린다
+function WorkLightSetting({ settings }) {
+  const t = useT();
+  const [pending, setPending] = useState(null);
+  const value = pending ?? workLightOf(settings);
+  const request = useRef(0);
+  const pick = async (mode) => {
+    const id = ++request.current;
+    setPending(mode);
+    applyWorkLight({ workLight: mode });
+    try { await api.call('settings.set', { key: 'workLight', value: mode }); } catch (e) { if (id !== request.current) return; applyWorkLight(getState().settings || settings); toast(t('settings.saveFailed', { error: errText(e) }), 'error'); }
+    if (id === request.current) setPending(null);
+  };
+  return <>
+    <div className="mt-set-row" data-role="work-light-setting">
+      <span className="mt-set-name">{t('workLight.name')}</span>
+      <span className="mt-set-value mt-seg-lang" data-field="setting-workLight" data-value={value} role="radiogroup" aria-label={t('workLight.name')}>
+        {LIGHT_MODES.map((m) => (
+          <button key={m} type="button" role="radio" aria-checked={value === m} className={`mt-btn small${value === m ? ' primary' : ' ghost'}`} data-light={m} onClick={() => value !== m && pick(m)}>{t(`workLight.${m}`)}</button>
+        ))}
+      </span>
+      <span className="mt-set-hint">{t('workLight.hint')}</span>
+    </div>
+    <SetNote>{t('workLight.note')}</SetNote>
+  </>;
+}
+
+// 판이 띄우는 관리 에이전트에만 적용한다. 저장 중에는 같은 설정을 겹쳐 보내지 않는다.
+function AutoApprovalSetting({ settings }) {
+  const t = useT();
+  const [pending, setPending] = useState(null);
+  const busy = useRef(false);
+  const set = async (value) => {
+    if (busy.current) return;
+    busy.current = true; setPending(value);
+    try { await api.call('settings.set', { key: 'agentAutoApprove', value }); }
+    catch (e) { toast(t('settings.saveFailed', { error: errText(e) }), 'error'); }
+    busy.current = false; setPending(null);
+  };
+  return <>
+    <SetRow name={t('autoApproval.name')} hint={t('autoApproval.hint')} role="auto-approval-setting">
+      <Toggle checked={pending ?? !!settings.agentAutoApprove} onChange={set} field="setting-agentAutoApprove" disabled={pending != null} />
+    </SetRow>
+    <SetNote>{t('autoApproval.note')}</SetNote>
+  </>;
+}
+
+// 일반: 언어, 배율(P45), 작업 중 테두리 빛(P107), 트레이 상주
 function GeneralTab({ settings }) {
   const t = useT();
   const [pending, setPending] = useState(null); // 누른 값(백엔드가 settings.updated로 확정할 때까지 먼저 보인다)
@@ -102,9 +155,12 @@ function GeneralTab({ settings }) {
       <ScaleSetting kind="ui" />
       <ScaleSetting kind="term" />
       {settings && <>
+        <WorkLightSetting settings={settings} />
+        {'agentAutoApprove' in settings && <AutoApprovalSetting settings={settings} />}
         <SetRow name={t('settings.trayName')} hint={t('settings.tray')} role="tray-setting"><Toggle checked={pending ?? !!settings.tray} onChange={set} field="setting-tray" /></SetRow>
         <SetNote>{t('settings.trayNote')}</SetNote>
         {'herdrPath' in settings && <HerdrPathSetting settings={settings} />}
+        {'updateCheck' in settings && <UpdateSettings settings={settings} />}
       </>}
     </div>
   );
@@ -160,18 +216,28 @@ function RecallSettings({ settings, schema }) {
   );
 }
 
-// P21(D4): 쉬면 잠재우기(분)
-function SleepSetting({ settings, schema }) {
+// P21(D4): 쉬면 잠재우기(분). P111: 리포 전체(sleepAfterMin)와 세션 하나(sessionSleepAfterMin) 두 칸
+function SleepMinutes({ settings, schema, k, label, hint, set, off }) {
   const t = useT();
   const [v, setV] = useState(null);
-  const sc = (schema && schema.sleepAfterMin) || { min: 0, max: 1440, default: 30 };
-  const save = async (value) => { try { await api.call('settings.set', { key: 'sleepAfterMin', value }); setV((current) => current != null && Number(current) === value ? null : current); toast(value ? t('sleep.afterSet', { n: value }) : t('sleep.afterOff')); } catch (e) { toast(t('settings.saveFailed', { error: errText(e) }), 'error'); } };
+  const sc = (schema && schema[k]) || { min: 0, max: 1440, default: 30 };
+  const save = async (value) => { try { await api.call('settings.set', { key: k, value }); setV((current) => current != null && Number(current) === value ? null : current); toast(value ? t(set, { n: value }) : t(off)); } catch (e) { toast(t('settings.saveFailed', { error: errText(e) }), 'error'); } };
+  return (
+    <SetRow name={t(label)} hint={t(hint, { n: sc.default })}>
+      <input type="number" className="mt-set-num" min={sc.min} max={sc.max} data-field={`setting-${k}`} value={v ?? settings[k] ?? sc.default} onChange={(e) => setV(e.target.value)} onBlur={() => v != null && v !== '' && save(Number(v))} onKeyDown={(e) => { if (!e.nativeEvent.isComposing && e.keyCode !== 229 && e.key === 'Enter' && v != null && v !== '') save(Number(v)); }} />
+    </SetRow>
+  );
+}
+function SleepSetting({ settings, schema }) {
+  const t = useT();
   return (
     <div className="mt-set-grid" data-role="sleep-settings">
-      <SetRow name={t('sleep.afterLabel')} hint={t('sleep.afterHint', { n: sc.default })}>
-        <input type="number" className="mt-set-num" min={sc.min} max={sc.max} data-field="setting-sleepAfterMin" value={v ?? settings.sleepAfterMin} onChange={(e) => setV(e.target.value)} onBlur={() => v != null && v !== '' && save(Number(v))} onKeyDown={(e) => { if (!e.nativeEvent.isComposing && e.keyCode !== 229 && e.key === 'Enter' && v != null && v !== '') save(Number(v)); }} />
-      </SetRow>
+      <SleepMinutes settings={settings} schema={schema} k="sleepAfterMin" label="sleep.afterLabel" hint="sleep.afterHint" set="sleep.afterSet" off="sleep.afterOff" />
       <SetNote>{t('sleep.afterNote')}</SetNote>
+      {settings.sessionSleepAfterMin != null && <>
+        <SleepMinutes settings={settings} schema={schema} k="sessionSleepAfterMin" label="sessionSleep.afterLabel" hint="sessionSleep.afterHint" set="sessionSleep.afterSet" off="sessionSleep.afterOff" />
+        <SetNote>{t('sessionSleep.afterNote')}</SetNote>
+      </>}
     </div>
   );
 }
@@ -186,12 +252,12 @@ const TABS = [
   { key: 'devices', has: () => true, label: 'webDevices.tab' }, // P48
 ];
 
-export function SettingsDialog({ onClose }) {
+export function SettingsDialog({ onClose, tab: tab0 = null, newLauncher = false }) {
   const t = useT();
   const settings = useStore((st) => st.settings);
   const launchers = useStore((st) => st.launchers);
   const [schema, setSchema] = useState(null);
-  const [tab, setTab] = useState('general');
+  const [tab, setTab] = useState(tab0 || 'general'); // P97: 연 곳이 정한 탭(레일 + → 런처)
   useEffect(() => { api.call('settings.get').then((r) => setSchema(r.schema)).catch((e) => toast(t('settings.saveFailed', { error: errText(e) }), 'error')); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const box = useDialog(onClose); // P52: Esc 닫기는 공용(dialog.js). 열면 상자에 초점, Tab은 안에서 돈다
   const tabs = TABS.filter((x) => x.has(settings, launchers));
@@ -206,7 +272,7 @@ export function SettingsDialog({ onClose }) {
         <div className="mt-set-body" role="tabpanel">
           {!settings && <div className="dim">{t('settings.loading')}</div>}
           {cur === 'general' && <GeneralTab settings={settings} />}
-          {cur === 'launchers' && <LaunchersTab />}
+          {cur === 'launchers' && <LaunchersTab startNew={newLauncher} />}
           {settings && cur === 'sleep' && <SleepSetting settings={settings} schema={schema} />}
           {settings && cur === 'branch' && <BranchSettings settings={settings} schema={schema} />}
           {settings && cur === 'recall' && <RecallSettings settings={settings} schema={schema} />}

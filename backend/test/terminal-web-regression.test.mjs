@@ -67,9 +67,9 @@ test('remote defaults off but desktop auth and diagnostics remain available with
   for (const url of ['/web/pair/code', '/web/pair/request', '/web/pair/poll', '/web/me', '/web/upload']) {
     const res = { writeHead(status) { this.status = status; }, end(body) { this.body = JSON.parse(body); } };
     assert.equal(web.handleHttp(request(url), res), true);
-    assert.equal(res.status, 403); assert.equal(res.body.error.code, 'remote_disabled');
+    assert.equal(res.status, 403); assert.equal(res.body.error.code, 'remote_blocked');
   }
-  assert.throws(() => web.handlers()['device.code']({}, local), { code: 'remote_disabled' });
+  assert.throws(() => web.handlers()['device.code']({}, local), { code: 'remote_blocked' });
   assert.equal((await web.remoteStatus({ fresh: true })).ready, false); assert.equal(watcher.reads, 0);
 });
 
@@ -80,12 +80,14 @@ test('local-only saved opt-in enables pairing; disabling cancels pairing and clo
   assert.throws(() => configure({ enabled: 'true' }, local), { code: 'bad_request' });
   assert.equal(configure({ enabled: true }, local).enabled, true); assert.equal(store.getMeta('remoteEnabled'), true); assert.equal(watcher.starts, 1);
   const code = web.handlers()['device.code']({}, local).code;
-  const device = web.pairing.redeem({ code, name: 'browser', ip: 'test' });
-  assert.equal(web.authorize(request(`/api?device=${device.token}`, { origin: 'http://127.0.0.1:47899' }), 'desktop').kind, 'device');
+  const grant = web.pairing.redeem({ code, name: 'browser', ip: 'test', origin: 'http://localhost:47899' });
+  const { device, session } = web.auth.pairWithoutPasskey({ grant: grant.grant, origin: 'http://localhost:47899' });
+  assert.equal(web.authorize(request(`/api?device=old-token`, { origin: 'http://127.0.0.1:47899' }), 'desktop'), null);
+  assert.ok(session.id); assert.ok(device.id);
   web.pairing.newCode(); web.pairing.request({ name: 'pending', ip: 'test' });
-  const closed = []; api.clients.add({ auth: { kind: 'device' }, ws: { close: (...args) => closed.push(args) } });
+  const closed = []; api.clients.add({ auth: { kind: 'device', device: { id: device.id } }, ws: { close: (...args) => closed.push(args) } });
   assert.equal(configure({ enabled: false }, local).enabled, false);
-  assert.equal(closed[0][0], 4401); assert.equal(web.pairing.code, null); assert.equal(web.pairing.requests.size, 0); assert.equal(watcher.stops, 1);
+  assert.equal(closed[0][0], 4403); assert.equal(web.pairing.code, null); assert.equal(web.pairing.requests.size, 0); assert.equal(watcher.stops, 1);
 });
 
 test('an explicit environment setting overrides saved remote opt-in', t => {

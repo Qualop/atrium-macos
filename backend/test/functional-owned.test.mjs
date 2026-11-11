@@ -193,7 +193,7 @@ test('출력 이력의 이전 화면 답과 새 hook 답을 함께 선택하고 
   assert.equal(o.get({ session: 'a', turn: -1 }).turn.answer, 'new transcript');
   const saved = o.save({ session: 'a', turn: 1 });
   assert.match(fs.readFileSync(saved.file, 'utf8'), /old screen/);
-  assert.match(fs.readFileSync(saved.file, 'utf8'), /화면에서 고른 답/);
+  assert.match(fs.readFileSync(saved.file, 'utf8'), /터미널 화면에서 가져온 응답/);
 });
 
 test('한 사용자 메시지의 여러 text 블록은 출력 턴 하나로 합친다', (t) => {

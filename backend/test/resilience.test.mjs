@@ -35,7 +35,7 @@ test('실패한 시도의 working 이벤트로 다음 시도를 잘못 확정하
   const { q } = queue(() => (++n === 1 ? first : second).promise);
   const d = q.enqueue('s', 'hello'); await turn();
   q.onAgentWorking('s'); first.reject(Object.assign(new Error('blocked'), { code: 'agent_blocked' })); await turn();
-  q.pump(); second.resolve(); await turn();
+  q.poke('s'); await turn(); second.resolve(); await turn();
   assert.equal(d.status, 'sent');
 });
 

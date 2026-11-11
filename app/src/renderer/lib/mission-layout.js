@@ -1,242 +1,224 @@
-// 미션 맵 배치(I6, P32): 왼쪽에서 오른쪽으로 펼치는 나무. 순수 함수만 둔다(단위 시험: test/p32-lib.test.mjs).
-// - 0열은 사람(명령 바). 세션은 "지시하는 쪽" 오른쪽에 놓인다(부모 → 자식). 부모는 자식들의 가운데 높이에 온다(정돈된 나무라 상자가 겹치지 않는다).
-// - 한 쌍(A → B) 사이의 선 여럿(역할, 지시, 띄움, 명령 바, 루프)은 선 하나로 모은다. 모양은 가장 앞선 종류(역할 > 지시 > 띄움 > 명령 바 > 루프)를 따른다.
-// - 나무 부모: 하위 세션의 부모(parentId) > 역할 > 띄움 > 지시 > 사람(명령 바, 루프). 고리가 생기는 부모는 고르지 않는다.
-//   지시를 내리지만 받지는 않는 세션은 사람 아래(선 없이) 1열에 둔다. 선이 하나도 없는 세션은 아래 "연결 없음" 칸에 격자로 놓는다.
-// - 나무에 들지 못한 선(두 번째 지시자, 같은 열, 뒤로 가는 선)도 긋되 이름표 없이 점만 둔다(올리면 풀이).
-// - 이름표는 받는 상자 바로 왼쪽, 선의 끝 높이에 둔다. 받는 쪽마다 끝 높이를 나눠(최대 maxPorts) 이름표끼리 겹치지 않는다.
-// - 거르기(filter)를 받으면 그 분류의 세션과 그 조상(흐리게, ghost)만 남긴다.
-// - P46: 세션은 워크스페이스(저장소)별 무리로 묶는다. 무리는 위에서 아래로 쌓이는 띠이고, 열(깊이)은 판 전체에서 같다.
-//   나무 자식은 같은 무리 안에서만 부모 옆에 모이고, 다른 무리의 워커는 자기 무리에서 뿌리가 된다. 그 선(cross)은 열 사이 틈으로만 무리를 건넌다.
-//   선이 없는 세션은 그 무리 아래쪽 격자. 접은 무리(collapsed)는 머리줄만 남고, 그 세션들로 가는 선은 머리줄의 대리 상자(proxy)로 모인다.
-// → { boxes: Map id → { x, y, w, h, node, ghost, depth, group, proxy? }, edges: [... cross, fromGroup, toGroup], groups: [{ key, x, y, w, h, count, needs, shown, collapsed, looseAt }], loose: [id], width, height, columns }
+// 미션 맵 배치(I6, P32 → P95에서 다시 그림 → P101 다듬음): 왼쪽 → 오른쪽 열. 순수 함수만 둔다(단위 시험 test/p95-lib.test.mjs, p101-lib.test.mjs 등).
+// - 열: 0 = 나(사람, 작은 동그라미), 1 = 팀의 맨 위(리드), 2 = 그 하위 세션, 3 = 그 아래 … 열은 지도 전체에서 같다.
+// - 팀(하위가 있는 뿌리)은 워크스페이스마다 위에서 아래로 쌓는다. 다른 워크스페이스의 하위 세션도 부모 옆에 놓는다(선이 지도를 가르지 않는다).
+// - 팀이 없는 워크스페이스(혼자인 세션뿐)는 팀 흐름 오른쪽 빈 열에 짧은 기둥으로 채운다(가장 낮은 기둥부터). 오른쪽에 자리가 없으면 아래에 채운다. 세로 한 줄로 늘어서지 않는다.
+// - P101: 워크스페이스마다 옅은 판(plate: 머리 글과 그 아래 놓인 상자들을 감싸는 바탕 면)이 있다. 판 사이 틈은 가로·세로 모두 같다(gutter).
+//   간격은 4·8 단위로 고르게(카드 64, 알약 28, 상자 사이 8, 판 안 여백 10, 판 사이 16).
+// - 세션 하나는 카드(일함·응답 필요·오류·결과, 하위가 있는 세션) 또는 테두리 있는 알약(쉼·잠듦·끝남)이다. 하위가 dotsMin개 이상이고 그중 쉬는 것이 dotsFold개 이상이면,
+//   쉬는 하위들은 작은 동그라미 줄(종류 기호와 상태 배지)로 접는다. 동그라미마다 상자가 있어 가리키기·누르기가 된다.
+// - 부모는 하위들의 세로 가운데에 온다. 선은 이름표 없는 가는 곡선: 부모 오른쪽 가장자리(하위 쪽으로 살짝 펼친 높이)에서 나가 받는 쪽 왼쪽으로 들어간다.
+// - P101: 선은 두 상자가 마주 보는 가장자리 사이로 간다(lib/mission-wire.js). 서로 이은 두 세션(A → B, B → A)은 짧은 두 줄과 화살촉,
+//   같은 열의 이웃은 아래·위 가장자리 사이 짧은 줄(이은 이웃 형제 사이는 linkGap만큼 벌린다), 뒤로 가는 선은 받는 쪽 오른쪽으로. 사이에 카드가 있는 같은 열은 오른쪽 짧은 괄호.
+//   사람 선은 팀의 맨 위로만 긋고, 그 밖의 사람 선은 quiet(가리킬 때만).
+// - 접은 워크스페이스는 머리 글만 남고, 그 세션으로 가는 선은 머리 글(대리 상자)로 모인다.
+// - 거르기는 배치를 바꾸지 않는다(자리가 움직이지 않는다). 창이 맞지 않는 세션을 흐리게 한다(mission-model.js filterMatch).
+// → { boxes: Map id → { x, y, w, h, node, depth, group, kind: 'you'|'card'|'row'|'dot'|'dots'|'group', loose?, proxy?, parent? },
+//     edges: [{ id, from, to, d, tip, route, pair, kinds, primary, rel, tree, cross, back, quiet, active, count, lastAt, text, role }],
+//     groups: [{ key, x, y, w, count, needs, collapsed, vg, packed, plate: { x, y, w, h } }], loose: [id], teamNo: Map 뿌리 id → 번호, order: [id](놓은 차례), width, height, columns, tree }
+import { EDGE_ORDER, mergeEdges, missionTree, relOf, groupedOrder, bySpawn, nodeTier, restTier } from './mission-model.js';
+import { wire, facing, pairOff, blocked, portY } from './mission-wire.js';
 
-export const MISSION = { boxW: 236, boxH: 56, colGap: 156, rowGap: 12, pad: 28, sectionHead: 28, gridGap: 20, portGap: 18, maxPorts: 3, labelW: 116, minGridCols: 3, groupHead: 30, groupPad: 14, groupGap: 22, looseGap: 16 };
-export const EDGE_ORDER = ['role', 'prompt', 'spawn', 'bar', 'loop'];
-const PARENT_RANK = { parent: 0, role: 1, spawn: 2, prompt: 3, bar: 4, loop: 5 };
-const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || '')) || String(a.id).localeCompare(String(b.id));
-
-// 한 쌍의 선들을 하나로: { id, from, to, kinds, primary, role, text, count, lastAt, active, status }
-export function mergeEdges(edges, has = () => true) {
-  const pairs = new Map();
-  for (const e of edges || []) {
-    if (!e || e.from === e.to || !has(e.from) || !has(e.to)) continue;
-    const k = `${e.from}>${e.to}`;
-    const p = pairs.get(k) || { id: k, from: e.from, to: e.to, kinds: [], parts: [], role: null, text: null, count: 0, lastAt: 0, active: false };
-    if (!p.kinds.includes(e.kind)) p.kinds.push(e.kind);
-    p.parts.push(e);
-    if (e.kind === 'role' && e.label) p.role = e.label;
-    if ((e.kind === 'prompt' || e.kind === 'bar' || e.kind === 'loop') && e.label && (e.lastAt || 0) >= p.lastAt) p.text = e.label;
-    if (e.kind !== 'spawn') p.count += e.count || 0;
-    p.lastAt = Math.max(p.lastAt, e.lastAt || 0);
-    if (e.active) p.active = true;
-    pairs.set(k, p);
-  }
-  for (const p of pairs.values()) {
-    p.kinds.sort((a, b) => rank(a) - rank(b));
-    p.primary = p.kinds[0];
-  }
-  return [...pairs.values()];
-}
+// P101: 4·8 단위로 고르게. plate = 판 안 여백, wsGap = 판 여백 둘 + 판 사이 16, slotGap = 기둥 사이(판 사이도 16), linkGap = 이은 이웃 형제 사이(짧은 줄 자리)
+export const MISSION = { boxW: 216, boxH: 64, rowH: 28, dot: 18, dotGap: 6, dotsPerRow: 8, dotsMin: 6, dotsFold: 3, colGap: 72, cardGap: 8, rowGap: 8, linkGap: 24, pad: 28, you: 40, youGap: 52, wsHead: 30, wsGap: 36, slotGap: 36, plate: 10, quietSpan: 240 };
+export { EDGE_ORDER, mergeEdges }; // P94: 공용 모델(lib/mission-model.js)로 옮겼다
 const rank = (k) => { const i = EDGE_ORDER.indexOf(k); return i < 0 ? EDGE_ORDER.length : i; };
+const r1 = (v) => Math.round(v * 10) / 10;
 
-// opt: filter(분류 거르기), collapsed(접은 무리의 워크스페이스 키들), order(무리 차례: 워크스페이스 키들, 판의 영역 차례)
-export function missionLayout(graph, { filter = 'all', collapsed = [], order = [] } = {}) {
+// opt: collapsed(접은 워크스페이스 키들), order(워크스페이스 차례, 판의 영역 차례), vgroups(P44 가상 그룹), tiers(Map id → 강조 등급, 없으면 노드의 상태), width(지도 칸 폭, 혼자인 워크스페이스를 채울 열 수)
+export function missionLayout(graph, { collapsed = [], order: order0 = [], vgroups = [], tiers = null, width = 1300 } = {}) {
   const L = MISSION;
-  const all = graph.nodes || [];
+  const { order, groupOf: vgOf } = groupedOrder(order0, vgroups);
+  const all = (graph && graph.nodes) || [];
   const human = all.find((n) => n.kind === 'human') || null;
-  const sessions = all.filter((n) => n.kind === 'session');
-  const byId = new Map(all.map((n) => [n.id, n]));
-  const pairs = mergeEdges(graph.edges, (id) => byId.has(id));
-  // 하위 세션인데 띄움 선이 없으면(옛 판) 부모 → 자식 쌍을 하나 만든다
-  for (const s of sessions) if (s.parentId && byId.has(s.parentId) && !pairs.some((p) => p.from === s.parentId && p.to === s.id)) pairs.push({ id: `${s.parentId}>${s.id}`, from: s.parentId, to: s.id, kinds: ['spawn'], primary: 'spawn', parts: [], role: s.role || null, text: null, count: 0, lastAt: 0, active: false, synthetic: true });
-
-  // 나무 부모 고르기(고리 막기)
-  const parent = new Map();
-  const ancestorOf = (a, b) => { for (let x = b, i = 0; x && i < 1000; x = parent.get(x), i++) if (x === a) return true; return false; };
-  const incoming = new Map();
-  for (const p of pairs) push(incoming, p.to, p);
-  const pRank = (s, p) => (p.from === s.parentId ? PARENT_RANK.parent : Math.min(...p.kinds.map((k) => PARENT_RANK[k] ?? 9)));
-  for (const s of [...sessions].sort(byName)) {
-    const cands = (incoming.get(s.id) || []).slice().sort((a, b) => pRank(s, a) - pRank(s, b) || byName(byId.get(a.from), byId.get(b.from)));
-    for (const c of cands) if (!ancestorOf(s.id, c.from)) { parent.set(s.id, c.from); break; }
-  }
+  const hid = human ? human.id : null;
+  const tree = missionTree(graph);
+  const { byId } = tree;
+  const tierOf = (id) => (tiers && tiers.has(id) ? tiers.get(id) : nodeTier(byId.get(id)));
+  const kidsOf = (id) => tree.kids.get(id) || [];
+  const wsOf = (id) => (byId.get(id) || {}).workspaceKey || '';
   const touched = new Set();
-  for (const p of pairs) { touched.add(p.from); touched.add(p.to); }
-  const hid = human ? human.id : '__human';
-  // 지시만 내리는 세션(부모 없음)은 사람 아래에
-  for (const s of sessions) if (!parent.has(s.id) && touched.has(s.id)) parent.set(s.id, hid);
+  for (const p of tree.pairs) { touched.add(p.from); touched.add(p.to); }
+  const humanPairs = hid ? mergeEdges((graph && graph.edges) || [], (id) => id === hid || byId.has(id)).filter((p) => p.from === hid && byId.has(p.to)) : [];
+  // P101: 나무 밖으로 이은 두 세션(어느 쪽이든). 이웃 형제면 사이를 linkGap만큼 벌려 짧은 줄 자리를 둔다
+  const linked = new Set();
+  for (const p of tree.pairs) if (!tree.treeEdge.has(p.id)) { linked.add(`${p.from}|${p.to}`); linked.add(`${p.to}|${p.from}`); }
 
-  // 거르기: 맞는 세션과 그 조상
-  const match = (n) => filter === 'all' || n.category === filter;
-  const visible = new Set(), ghost = new Set();
-  for (const s of sessions) {
-    if (!match(s)) continue;
-    visible.add(s.id);
-    for (let x = parent.get(s.id), i = 0; x && x !== hid && i < 1000; x = parent.get(x), i++) if (!visible.has(x)) { visible.add(x); ghost.add(x); }
-  }
-  for (const g of ghost) if (match(byId.get(g))) ghost.delete(g);
-
-  // 열(깊이)은 판 전체에서 같다: 사람 0열, 사람 아래 1열, 그 자식 2열 … 무리가 달라도 같은 깊이는 같은 열이다
-  const depth = (id) => { let d = 0; for (let x = id, i = 0; x && x !== hid && i < 1000; x = parent.get(x), i++) d++; return d; };
-  const wsOf = (id) => { const n = byId.get(id); return n && n.kind === 'session' ? n.workspaceKey || '' : null; };
-  const inTree = (s) => visible.has(s.id) && parent.has(s.id);
-  // 나무 자식은 같은 무리 안만 잇는다. 다른 무리의 자식은 자기 무리에서 뿌리가 되고, 선이 무리 사이를 건넌다
-  const kids = new Map();
-  for (const s of sessions) if (inTree(s)) { const p = parent.get(s.id); if (p !== hid && wsOf(p) === wsOf(s.id)) push(kids, p, s); }
-  for (const k of kids.values()) k.sort(byName);
-
-  // 무리: 워크스페이스마다(키가 없으면 ''). 차례는 order, 없는 키는 이름 순, '' 는 끝
+  // 워크스페이스 차례: order, 없는 키는 이름 순, '' 는 끝
   const rankOf = (k) => { const i = order.indexOf(k); return i < 0 ? order.length : i; };
-  const keys = [...new Set(sessions.map((s) => s.workspaceKey || ''))].sort((a, b) => rankOf(a) - rankOf(b) || (a === '') - (b === '') || a.localeCompare(b));
+  const roots = tree.nodes.filter((n) => !tree.parent.has(n.id)).sort(bySpawn);
+  const keys = [...new Set(roots.map((n) => n.workspaceKey || ''))].sort((a, b) => rankOf(a) - rankOf(b) || (a === '') - (b === '') || a.localeCompare(b));
+  const rootsOf = (k) => roots.filter((n) => (n.workspaceKey || '') === k);
+  const isTeamWs = (k) => rootsOf(k).some((r) => kidsOf(r.id).length);
+  const flowKeys = keys.filter(isTeamWs), packKeys = keys.filter((k) => !isTeamWs(k));
   const shut = new Set(collapsed || []);
-  const groups = [];
-  for (const key of keys) {
-    const members = sessions.filter((s) => (s.workspaceKey || '') === key);
-    const shown = members.filter((s) => visible.has(s.id));
-    if (!shown.length) continue;
-    groups.push({ key, count: members.length, needs: members.filter((s) => s.category === 'needs_you').length, shown: shown.length, collapsed: shut.has(key), _shown: shown });
-  }
-  const treeMembers = sessions.filter(inTree);
-  const hasTree = treeMembers.length > 0;
-  const firstCol = hasTree ? 1 : 0;
-  const maxDepth = hasTree ? Math.max(...treeMembers.map((s) => depth(s.id))) : 0;
-  const colX = (d) => L.pad + d * (L.boxW + L.colGap);
-  const innerX = colX(firstCol);
-  const treeInnerW = hasTree ? (maxDepth - firstCol + 1) * L.boxW + (maxDepth - firstCol) * L.colGap : 0;
-  const fitCols = Math.max(L.minGridCols, Math.floor((treeInnerW + L.gridGap) / (L.boxW + L.gridGap)));
-  const looseOf = (g) => g._shown.filter((s) => !parent.has(s.id)).sort(byName);
-  const gridW = (n) => (n ? n * L.boxW + (n - 1) * L.gridGap : 0);
-  const innerW = Math.max(L.boxW, treeInnerW, ...groups.map((g) => gridW(Math.min(looseOf(g).length, fitCols))));
+  const hasYou = humanPairs.length > 0 && flowKeys.some((k) => !shut.has(k));
+  const colX = (d) => L.pad + (hasYou ? L.you + L.youGap : 0) + (d - 1) * (L.boxW + L.colGap);
 
-  const boxes = new Map();
-  const proxyOf = new Map(); // 접은 무리의 세션 → 그 무리의 대리 상자(머리줄)
-  const step = L.boxH + L.rowGap;
+  const boxes = new Map(), proxyOf = new Map(), dotGroupOf = new Map(), groups = [], teamNo = new Map(), seq = []; // seq: 놓은 차례(부모 먼저)
+  const memberCount = (r) => { let n = 0; const walk = (x) => { n++; for (const c of kidsOf(x)) walk(c.id); }; walk(r.id); return n; };
+  const needsIn = (r) => { let n = 0; const walk = (x) => { const t = tierOf(x); if (t === 'turn' || t === 'alert') n++; for (const c of kidsOf(x)) walk(c.id); }; walk(r.id); return n; };
+  const kindFor = (n) => (kidsOf(n.id).length || !restTier(tierOf(n.id)) ? 'card' : 'row');
+  const hOf = (kind) => (kind === 'card' ? L.boxH : L.rowH);
+  const gapOf = (kind) => (kind === 'row' ? L.rowGap : L.cardGap);
   let y = L.pad;
-  for (const g of groups) {
-    g.x = innerX - L.groupPad; g.w = innerW + 2 * L.groupPad; g.y = y; g.looseAt = null;
+
+  // 정돈된 나무: 잎은 다음 자리, 부모는 하위들의 세로 가운데(앞 자리보다 위로는 가지 않는다)
+  const place = (n, d, key) => {
+    const start = y;
+    seq.push(n.id);
+    const ch = kidsOf(n.id);
+    const rest = ch.filter((c) => !kidsOf(c.id).length && restTier(tierOf(c.id)));
+    const fold = ch.length >= L.dotsMin && rest.length >= L.dotsFold ? rest : [];
+    const normal = ch.filter((c) => !fold.includes(c));
+    const kind = kindFor(n), h = hOf(kind);
+    let yy;
+    if (!normal.length && !fold.length) { yy = y; y += h + gapOf(kind); }
+    else {
+      let top = null, bottom = null;
+      const span = (b) => { if (top === null) top = b.y; bottom = b.y + b.h; };
+      let prev = null;
+      for (const c of normal) {
+        if (prev && linked.has(`${prev}|${c.id}`)) { const pb = boxes.get(prev); y = Math.max(y, pb.y + pb.h + L.linkGap); }
+        place(c, d + 1, key); span(boxes.get(c.id)); prev = c.id;
+      }
+      if (fold.length) {
+        const per = L.dotsPerRow, rows = Math.ceil(fold.length / per), gid = `dots:${n.id}`;
+        const gh = rows * (L.dot + L.dotGap) - L.dotGap + 8, gx = colX(d + 1), gy = y;
+        boxes.set(gid, { x: gx, y: gy, w: Math.min(L.boxW, 8 + Math.min(per, fold.length) * (L.dot + L.dotGap) + 40), h: gh, node: { id: gid, kind: 'dots', ids: fold.map((c) => c.id) }, depth: d + 1, group: key, kind: 'dots', parent: n.id });
+        fold.forEach((c, i) => { seq.push(c.id); boxes.set(c.id, { x: gx + 4 + (i % per) * (L.dot + L.dotGap), y: gy + 4 + Math.floor(i / per) * (L.dot + L.dotGap), w: L.dot, h: L.dot, node: c, depth: d + 1, group: key, kind: 'dot', parent: gid }); dotGroupOf.set(c.id, gid); });
+        y = gy + gh + L.cardGap;
+        span(boxes.get(gid));
+      }
+      yy = Math.max(start, r1((top + bottom) / 2 - h / 2));
+      y = Math.max(y, yy + h + gapOf(kind));
+    }
+    boxes.set(n.id, { x: colX(d), y: yy, w: L.boxW, h, node: n, depth: d, group: key, kind });
+  };
+
+  // 팀 흐름(왼쪽): 워크스페이스 머리 글, 그 아래 팀(리드 → 하위)과 같은 워크스페이스의 혼자인 세션
+  let nTeam = 0;
+  const hidden = (r, gid) => { const walk = (x) => { proxyOf.set(x, gid); for (const c of kidsOf(x)) walk(c.id); }; walk(r.id); };
+  for (const k of flowKeys) {
+    const rs = [...rootsOf(k).filter((r) => kidsOf(r.id).length), ...rootsOf(k).filter((r) => !kidsOf(r.id).length)]; // 팀 먼저, 연결 없는 세션은 그 아래
+    const g = { key: k, x: colX(1), y, w: L.boxW, count: rs.reduce((a, r) => a + memberCount(r), 0), needs: rs.reduce((a, r) => a + needsIn(r), 0), collapsed: shut.has(k), vg: vgOf.get(k) || null, packed: false };
+    groups.push(g);
     if (g.collapsed) {
-      // 접힌 무리는 머리줄만. 그 세션으로 가는 선은 머리줄의 대리 상자(가장 얕은 열)로 모은다
-      const ds = g._shown.filter(inTree).map((s) => depth(s.id));
-      const c = ds.length ? Math.min(...ds) : firstCol;
-      const id = `g:${g.key}`;
-      boxes.set(id, { x: colX(c), y: g.y, w: L.boxW, h: L.groupHead, node: { id, kind: 'group', key: g.key }, proxy: true, ghost: false, depth: c, group: g.key });
-      for (const s of g._shown) proxyOf.set(s.id, id);
-      g.h = L.groupHead;
-      y += g.h + L.groupGap;
+      const gid = `g:${k}`;
+      boxes.set(gid, { x: g.x, y: g.y, w: L.boxW, h: L.wsHead - 4, node: { id: gid, kind: 'group', key: k }, depth: 1, group: k, kind: 'group', proxy: true });
+      for (const r of rs) hidden(r, gid);
+      y += L.wsHead + L.wsGap;
       continue;
     }
-    const top = g.y + L.groupHead + L.groupPad;
-    let row = 0;
-    // 정돈된 나무: 잎은 다음 줄, 부모는 첫째와 끝 자식의 가운데
-    const place = (s) => {
-      const ch = kids.get(s.id) || [];
-      let yy;
-      if (!ch.length) { yy = top + row * step; row++; } else { const ys = ch.map(place); yy = (ys[0] + ys[ys.length - 1]) / 2; }
-      const d = depth(s.id);
-      boxes.set(s.id, { x: colX(d), y: yy, w: L.boxW, h: L.boxH, node: s, ghost: ghost.has(s.id), depth: d, group: g.key });
-      return yy;
-    };
-    const roots = g._shown.filter((s) => inTree(s) && (parent.get(s.id) === hid || wsOf(parent.get(s.id)) !== g.key)).sort((a, b) => depth(a.id) - depth(b.id) || byName(a, b));
-    for (const r of roots) place(r);
-    let bottom = row ? top + row * step - L.rowGap : top - L.groupPad;
-    const loose = looseOf(g);
-    if (loose.length) {
-      const cols = Math.min(loose.length, fitCols);
-      let gy = top;
-      if (row) { g.looseAt = { x: innerX, y: bottom + L.looseGap }; gy = g.looseAt.y + L.sectionHead; }
-      loose.forEach((s, i) => boxes.set(s.id, { x: innerX + (i % cols) * (L.boxW + L.gridGap), y: gy + Math.floor(i / cols) * step, w: L.boxW, h: L.boxH, node: s, ghost: false, depth: null, loose: true, group: g.key }));
-      bottom = gy + Math.ceil(loose.length / cols) * step - L.rowGap;
+    y += L.wsHead;
+    let last = 'card';
+    for (const r of rs) { if (kidsOf(r.id).length) teamNo.set(r.id, ++nTeam); place(r, 1, k); last = boxes.get(r.id).kind; }
+    y += L.wsGap - gapOf(last);
+  }
+  const flowBoxes = [...boxes.values()].filter((b) => !b.proxy);
+  const flowRight = flowBoxes.length ? Math.max(...flowBoxes.map((b) => b.x + b.w)) : null;
+  const flowBottom = y;
+
+  // 혼자인 워크스페이스: 오른쪽 빈 열(없으면 아래)에 기둥으로 채운다
+  if (packKeys.length) {
+    let x0 = L.pad, y0 = L.pad;
+    if (flowRight !== null) { x0 = flowRight + L.slotGap; if (x0 + L.boxW > width - L.pad) { x0 = colX(1); y0 = flowBottom; } } // P101: 판 사이 틈이 기둥 사이와 같다
+    const step = L.boxW + L.slotGap;
+    const n = Math.max(1, Math.floor((width - L.pad - x0 + L.slotGap) / step));
+    const sky = Array(n).fill(y0);
+    for (const k of packKeys) {
+      const c = sky.indexOf(Math.min(...sky));
+      const x = x0 + c * step;
+      const rs = rootsOf(k);
+      const g = { key: k, x, y: sky[c], w: L.boxW, count: rs.length, needs: rs.filter((r) => ['turn', 'alert'].includes(tierOf(r.id))).length, collapsed: shut.has(k), vg: vgOf.get(k) || null, packed: true };
+      groups.push(g);
+      let yy = sky[c] + L.wsHead;
+      if (g.collapsed) {
+        const gid = `g:${k}`;
+        boxes.set(gid, { x, y: g.y, w: L.boxW, h: L.wsHead - 4, node: { id: gid, kind: 'group', key: k }, depth: null, group: k, kind: 'group', proxy: true });
+        for (const r of rs) proxyOf.set(r.id, gid);
+        sky[c] = g.y + L.wsHead + L.wsGap;
+        continue;
+      }
+      let last = 'card';
+      for (const r of rs) { const kind = kindFor(r), h = hOf(kind); seq.push(r.id); boxes.set(r.id, { x, y: yy, w: L.boxW, h, node: r, depth: null, group: k, kind, loose: true }); yy += h + gapOf(kind); last = kind; }
+      sky[c] = yy - gapOf(last) + L.wsGap;
     }
-    g.h = bottom + L.groupPad - g.y;
-    y += g.h + L.groupGap;
+    y = Math.max(y, ...sky);
   }
 
-  // 선의 끝: 접힌 무리면 대리 상자. 끝이 바뀐 선은 같은 쌍끼리 다시 모은다
-  const showHuman = hasTree && human;
-  const endOf = (id) => (id === hid ? (showHuman ? hid : null) : proxyOf.get(id) || (boxes.has(id) ? id : null));
-  const shownPairs = new Map();
-  for (const p of pairs) {
-    const a = endOf(p.from), b = endOf(p.to);
+  // 나: 사람 선이 가는 팀 맨 위들의 가운데
+  const targets = humanPairs.map((p) => boxes.get(p.to)).filter((b) => b && b.depth === 1 && b.kind !== 'group' && !proxyOf.has(b.node.id));
+  if (hasYou) {
+    const cs = (targets.length ? targets : flowBoxes.filter((b) => b.depth === 1)).map((b) => b.y + b.h / 2);
+    const cy = cs.length ? (Math.min(...cs) + Math.max(...cs)) / 2 : L.pad + L.you / 2;
+    boxes.set(hid, { x: L.pad, y: r1(cy - L.you / 2), w: L.you, h: L.you, node: human, depth: 0, group: null, kind: 'you' });
+  }
+
+  // 선. 끝이 대리 상자(접은 워크스페이스)나 동그라미 줄로 바뀐 나무 선은 같은 쌍끼리 다시 모은다
+  const endOf = (id, isTree) => (id === hid ? (boxes.has(hid) ? hid : null) : proxyOf.get(id) || (isTree && dotGroupOf.get(id)) || (boxes.has(id) ? id : null));
+  const shown = new Map();
+  const quietOf = (p) => p.from === hid && !targets.some((b) => b.node.id === p.to);
+  for (const p of [...tree.pairs, ...humanPairs]) {
+    const isTree = tree.treeEdge.has(p.id);
+    const a = endOf(p.from, false), b = endOf(p.to, isTree);
     if (!a || !b || a === b) continue;
-    if (a === p.from && b === p.to) { shownPairs.set(p.id, { ...p }); continue; }
+    const rel = p.from === hid ? 'human' : relOf(p, tree);
+    const cross = p.from !== hid && wsOf(p.from) !== wsOf(p.to);
+    if (a === p.from && b === p.to) { shown.set(p.id, { ...p, rel, tree: isTree, cross, quiet: quietOf(p) }); continue; }
     const k = `${a}>${b}`;
-    const q = shownPairs.get(k) || { id: k, from: a, to: b, kinds: [], parts: [], role: null, text: null, count: 0, lastAt: 0, active: false, folded: true };
+    const q = shown.get(k) || { id: k, from: a, to: b, kinds: [], parts: [], role: null, text: null, count: 0, lastAt: 0, active: false, folded: true, rel, tree: isTree, cross: false, quiet: quietOf(p), members: [] };
     for (const kd of p.kinds) if (!q.kinds.includes(kd)) q.kinds.push(kd);
+    q.members.push(p.id);
     q.role = q.role || p.role; if (p.text && (p.lastAt || 0) >= q.lastAt) q.text = p.text;
-    q.count += p.count || 0; q.lastAt = Math.max(q.lastAt, p.lastAt || 0); q.active = q.active || p.active;
+    q.count += p.count || 0; q.lastAt = Math.max(q.lastAt, p.lastAt || 0); q.active = q.active || p.active; q.cross = q.cross || cross; q.tree = q.tree && isTree;
     q.kinds.sort((x, z) => rank(x) - rank(z)); q.primary = q.kinds[0];
-    shownPairs.set(k, q);
+    shown.set(k, q);
   }
-  const shown = [...shownPairs.values()];
-
-  // 사람은 0열에 혼자다. 실제로 선이 가는 상자들의 가운데에 둔다(없으면 1열 상자들의 가운데)
-  if (showHuman) {
-    let ys = shown.filter((p) => p.from === hid).map((p) => boxes.get(p.to)).filter((b) => b && b.depth === 1).map((b) => b.y);
-    if (!ys.length) ys = [...boxes.values()].filter((b) => b.depth === 1).map((b) => b.y);
-    boxes.set(hid, { x: colX(0), y: ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : L.pad, w: L.boxW, h: L.boxH, node: human, ghost: false, depth: 0, group: null });
-  }
-
-  // 선: 나무 선은 이름표, 나머지는 점
-  const isTree = (p) => !p.folded && parent.get(p.to) === p.from;
-  const groupOf = (id) => (boxes.get(id) || {}).group ?? null;
-  const inPorts = new Map(), outPorts = new Map();
-  for (const p of shown) {
+  const cy = (b) => b.y + b.h / 2;
+  // P101: 선의 길(lib/mission-wire.js). 두 끝이 모두 세션 상자일 때 마주 보는 가장자리를 고르고, 서로 이은 두 세션은 짧은 두 줄로 나란히
+  const isSess = (bx) => !!bx && !!bx.node && bx.node.kind === 'session';
+  const sessBoxes = [...boxes.values()].filter((bx) => isSess(bx) && bx.kind !== 'dot');
+  const edges = [...shown.values()].map((p) => {
     const a = boxes.get(p.from), b = boxes.get(p.to);
-    if (b.x > a.x) { push(inPorts, p.to, p); push(outPorts, p.from, p); }
-  }
-  const cy = (id) => { const b = boxes.get(id); return b.y + b.h / 2; };
-  const portY = new Map();
-  for (const [id, list] of inPorts) {
-    // 나무 선이 먼저(가운데), 나머지는 위아래로. 이름표는 앞 maxPorts개만
-    list.sort((a, b) => (isTree(b) - isTree(a)) || cy(a.from) - cy(b.from));
-    const n = Math.min(list.length, L.maxPorts);
-    const gap = Math.min(L.portGap, (boxes.get(id).h - 8) / Math.max(1, n - 1));
-    const ord = list.slice(0, n).sort((a, b) => cy(a.from) - cy(b.from));
-    ord.forEach((p, i) => portY.set(`in:${p.id}`, cy(id) + (i - (n - 1) / 2) * gap));
-    list.slice(n).forEach((p) => portY.set(`in:${p.id}`, cy(id)));
-    list.forEach((p, i) => { p._labelled = i < n; });
-  }
-  for (const [id, list] of outPorts) {
-    list.sort((a, b) => cy(a.to) - cy(b.to));
-    const span = Math.min(boxes.get(id).h - 16, (list.length - 1) * 8);
-    list.forEach((p, i) => portY.set(`out:${p.id}`, cy(id) + (list.length > 1 ? -span / 2 + (span * i) / (list.length - 1) : 0)));
-  }
-  const edges = shown.map((p) => {
-    const a = boxes.get(p.from), b = boxes.get(p.to);
-    let d, lx, ly, label = false, back = false;
-    if (b.x > a.x) {
-      const x1 = a.x + a.w, y1 = portY.get(`out:${p.id}`), x2 = b.x, y2 = portY.get(`in:${p.id}`);
-      const dx = Math.max(30, (x2 - x1) * 0.5);
-      d = `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
-      lx = x2 - 12; ly = y2;
-      label = !!p._labelled && b.x - (a.x + a.w) >= L.labelW;
-    } else if (b.x === a.x) {
-      // 같은 열: 오른쪽으로 둥글게 돌아 받는 상자 오른쪽으로
-      back = true;
-      const x1 = a.x + a.w, y1 = cy(p.from) + 8, x2 = b.x + b.w, y2 = cy(p.to) - 8, bulge = 36 + Math.min(60, Math.abs(y2 - y1) / 5);
-      d = `M${x1},${y1} C${x1 + bulge},${y1} ${x2 + bulge},${y2} ${x2},${y2}`;
-      lx = x1 + bulge * 0.75; ly = (y1 + y2) / 2;
-    } else {
-      back = true;
-      const x1 = a.x, y1 = cy(p.from) + 10, x2 = b.x + b.w, y2 = cy(p.to) + 10, dx = Math.max(40, (x1 - x2) / 2);
-      d = `M${x1},${y1} C${x1 - dx},${y1 + 30} ${x2 + dx},${y2 + 30} ${x2},${y2}`;
-      lx = (x1 + x2) / 2; ly = (y1 + y2) / 2 + 22;
+    const { parts, ...rest } = p; // eslint-disable-line no-unused-vars
+    const mate = shown.get(`${p.to}>${p.from}`);
+    const both = isSess(a) && isSess(b);
+    const pair = both && !!mate && !(mate.quiet && !mate.tree && !p.tree);
+    let route = facing(a, b) || 'side';
+    if ((route === 'd' || route === 'u') && blocked(a, b, sessBoxes)) route = 'side';
+    // 나무 밖 선이 멀리 가면(세로로 quietSpan 넘게) 지도를 가르므로 가리킬 때만 긋는다. 서로 이은 두 줄은 나무 선이 있으면 늘 긋는다
+    const far = !p.tree && p.rel !== 'human' && Math.abs(cy(b) - cy(a)) > L.quietSpan && !(pair && (p.tree || (mate && mate.tree)));
+    // 나가는·들어가는 높이: 부모(왼쪽 상자) 오른쪽 가장자리는 받는 쪽으로 살짝 펼친다(사람 선과 대리 상자는 가운데)
+    const spread = p.rel !== 'human' && a.kind !== 'you';
+    const y1 = route === 'r' && spread && a.kind === 'card' ? portY(a, b) : null;
+    const y2 = route === 'l' && spread && b.kind === 'card' ? portY(b, a) : null;
+    if (route === 'r' && !pair) { // 앞으로 가는 선(왼쪽 → 오른쪽): P95 그대로 화살촉 없이
+      const w = wire(a, b, { y1 });
+      return { ...rest, d: w.d, tip: null, route: 'flow', pair: false, back: false, quiet: !!p.quiet || far };
     }
-    const ga = groupOf(p.from), gb = groupOf(p.to);
-    const cross = ga != null && gb != null && ga !== gb; // 다른 워크스페이스에게 시킴(사람에게서 오는 선은 빼고)
-    const { parts, _labelled, ...rest } = p; // eslint-disable-line no-unused-vars
-    return { ...rest, d, lx, ly, label, back, tree: isTree(p), cross, fromGroup: ga, toGroup: gb };
+    const w = wire(a, b, { off: pair ? pairOff(a, b, route) : 0, tip: true, route, y1, y2 });
+    const kind = pair ? 'pair' : route === 'd' || route === 'u' ? 'near' : route === 'l' ? 'back' : route === 'side' ? 'side' : 'flow';
+    return { ...rest, d: w.d, tip: w.tip, route: kind, pair, back: route === 'l' || route === 'u' || route === 'side', quiet: pair ? false : !!p.quiet || far };
   });
-  const out = groups.map(({ _shown, ...g }) => g); // eslint-disable-line no-unused-vars
-  const right = Math.max(L.pad + L.boxW, ...out.map((g) => g.x + g.w), ...[...boxes.values()].map((b) => b.x + b.w));
-  const bottom = Math.max(L.pad, ...out.map((g) => g.y + g.h), ...[...boxes.values()].map((b) => b.y + b.h));
-  const loose = [...boxes.values()].filter((b) => b.loose).map((b) => b.node.id);
-  return { boxes, edges, groups: out, loose, width: right + L.pad, height: bottom + L.pad, columns: hasTree ? maxDepth + 1 : 0 };
+  // P101: 워크스페이스 판. 머리 글과 그 아래 놓인 상자(다른 워크스페이스의 하위 세션도 그 팀에 놓였으면 포함)를 plate 여백으로 감싼다
+  for (const g of groups) {
+    let x1 = g.x + L.boxW, y1 = g.y + (g.collapsed ? L.wsHead - 8 : L.wsHead);
+    for (const bx of boxes.values()) if (bx.group === g.key && bx.kind !== 'you') { x1 = Math.max(x1, bx.x + bx.w); y1 = Math.max(y1, bx.y + bx.h); }
+    g.plate = { x: r1(g.x - L.plate), y: r1(g.y - L.plate), w: r1(x1 - g.x + 2 * L.plate), h: r1(y1 - g.y + 2 * L.plate) };
+    g.w = r1(x1 - g.x);
+  }
+  const bs = [...boxes.values()];
+  const right = bs.length ? Math.max(...bs.map((b) => b.x + b.w), ...groups.map((g) => g.plate.x + g.plate.w)) : L.pad;
+  const bottom = bs.length ? Math.max(...bs.map((b) => b.y + b.h), ...groups.map((g) => g.plate.y + g.plate.h)) : L.pad;
+  const depths = bs.filter((b) => Number.isFinite(b.depth)).map((b) => b.depth);
+  const loose = roots.filter((r) => !kidsOf(r.id).length && !touched.has(r.id) && boxes.has(r.id)).map((r) => r.id);
+  return { boxes, edges, groups, loose, teamNo, order: seq, width: r1(right + L.pad), height: r1(bottom + L.pad), columns: depths.length ? Math.max(...depths) + 1 : 0, tree };
 }
-function push(m, k, v) { if (!m.has(k)) m.set(k, []); m.get(k).push(v); }
 
-// 이름표 글(사전 함수 t를 받는다): 역할이면 역할 이름, 아니면 종류 이름. 횟수가 둘 이상이면 ×n
+// 지도 차례(요약 열이 쓴다): 팀 흐름의 놓은 차례(부모 먼저), 그다음 채운 기둥의 차례
+export const mapOrder = (lay) => lay.order.filter((id) => lay.boxes.has(id));
+
+// 선 풀이 글(사전 함수 t): "하위 세션 · 역할: reviewer", 다른 워크스페이스, 마지막 지시, 횟수
 export function edgeLabel(e, t) {
   const base = e.role || t(`mission.edge.${e.primary}`);
   return e.count > 1 && e.primary !== 'role' ? `${base} ×${e.count}` : base;

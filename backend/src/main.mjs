@@ -17,7 +17,7 @@ process.on('uncaughtException', (e) => { backend.log('uncaught', e.stack); });
 process.on('unhandledRejection', (e) => { backend.log('unhandled', e && e.stack ? e.stack : String(e)); });
 
 backend.start().catch((e) => {
-  console.error(`백엔드를 시작하지 못했다: ${e.message}`);
+  console.error(`백엔드를 시작하지 못했습니다: ${e.message}`);
   try { backend.log('start failed', e.stack); } catch {}
   process.exit(1);
 });

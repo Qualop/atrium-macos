@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS convo_nodes (convo_id TEXT PRIMARY KEY, workspace_key
 // P7의 "빼기"(sessions.dismissed_at)는 손 보관으로 읽는다. workspaces.auto_opened는 리포 스스로 찾기가 연 워크스페이스(빈 영역을 작게)
 // sessions에 더하는 열: 닫힌 까닭, 사이드바 목록에서 뺀 시각, 다시 열 때 다른 세션으로 옮겨 간 경우 그 세션 ID(판에 올린 claude, J2)
 export const RECALL_COLUMNS = { sessions: { close_reason: 'TEXT', dismissed_at: 'INTEGER', reopened_as: 'TEXT' }, workspaces: { auto_opened: 'INTEGER' }, convo_index: { start_at: 'INTEGER', prompt_key: 'TEXT', spawns: 'TEXT', spawn_off: 'INTEGER', subagents: 'INTEGER' } };
-export const RECALL_SESSION_FIELDS = { closeReason: 'close_reason', dismissedAt: 'dismissed_at', reopenedAs: 'reopened_as', settingsPath: 'settings_path', hookToken: 'hook_token', name: 'name', permissionMode: 'permission_mode', model: 'model', effort: 'effort' };
+export const RECALL_SESSION_FIELDS = { closeReason: 'close_reason', dismissedAt: 'dismissed_at', reopenedAs: 'reopened_as', settingsPath: 'settings_path', hookToken: 'hook_token', name: 'name', label: 'label', permissionMode: 'permission_mode', model: 'model', effort: 'effort' };
 
 const J = (v) => (v == null ? null : JSON.stringify(v));
 const P = (s, d = null) => { if (s == null) return d; try { return JSON.parse(s); } catch { return d; } };
@@ -65,7 +65,7 @@ export function installRecall(Store) {
       return this.st('SELECT * FROM sessions WHERE closed_at IS NOT NULL AND reopened_as IS NULL ORDER BY closed_at DESC').all().map((r) => {
         let reason = r.close_reason ?? null;
         if (!reason) { const e = this.st("SELECT data FROM events WHERE session_id = ? AND kind = 'closed' ORDER BY id DESC LIMIT 1").get(r.session_id); reason = e ? (P(e.data, {}) || {}).reason || null : null; }
-        return { sessionId: r.session_id, name: r.name, cwd: r.cwd, kind: r.kind || 'claude', origin: r.origin || 'board', workspaceKey: r.workspace_key ?? null, createdAt: r.created_at, closedAt: r.closed_at, dismissedAt: r.dismissed_at ?? null, reason, runtime: P(r.runtime, null), permissionMode: r.permission_mode, model: r.model, effort: r.effort };
+        return { sessionId: r.session_id, name: r.name, label: r.label ?? null, cwd: r.cwd, kind: r.kind || 'claude', origin: r.origin || 'board', workspaceKey: r.workspace_key ?? null, createdAt: r.created_at, closedAt: r.closed_at, dismissedAt: r.dismissed_at ?? null, reason, runtime: P(r.runtime, null), permissionMode: r.permission_mode, model: r.model, effort: r.effort };
       });
     },
     // 판이 아는 대화 ID(열린 세션, 닫힌 세션, 목록에서 뺀 세션 모두): 판 밖 대화 목록에서 뺀다

@@ -49,6 +49,33 @@ export async function childProcesses(pids) {
   });
 }
 
+// P105: claude 프로세스 바로 아래에서 도는 Claude Code 도구 명령(Bash·PowerShell 도구. 뒤에서 도는 셸 포함)인가. 순수 함수.
+// 실험(P105 작업 기록): Bash 도구는 `bash.exe -c "source …/shell-snapshots/snapshot-bash-….sh …"`, PowerShell 도구는
+// `cmd.exe /d /s /c "chcp 65001 >nul & pwsh … -Command "$__claudeCodeScript…"`로 claude 바로 아래에 뜨고 명령이 끝날 때까지 남는다.
+// MCP 서버(node, uvx, cmd /c npx, 따로 설치한 MCP 실행 파일 등), hook, 상태줄 명령에는 이 표시가 없다. 명령줄을 모르면 도구 명령으로 보지 않는다
+export function isToolCommand(p) {
+  const c = String((p && p.cmd) || '');
+  return /[\\/]shell-snapshots[\\/]snapshot-/i.test(c) || /\$__claudeCode/.test(c);
+}
+
+// P105: pids(claude 프로세스) 바로 아래 프로세스와 명령줄. → [{ pid, ppid, name, cmd }] | null(읽지 못함). 읽기만 한다
+export async function childCommands(pids, { platform = process.platform, readPosix = readPosixProcesses, exec = execFile } = {}) {
+  const ids = [...new Set(pids.map(Number))].filter((p) => Number.isInteger(p) && p > 0);
+  if (!ids.length) return Promise.resolve([]);
+  if (platform !== 'win32') {
+    const procs = await readPosix();
+    return procs ? [...procs.values()].filter((p) => ids.includes(p.ppid)).map(({ pid, ppid, name, cmd }) => ({ pid, ppid, name, cmd })) : null;
+  }
+  const filter = ids.map((p) => `ParentProcessId=${p}`).join(' OR ');
+  const ps = `$ErrorActionPreference = 'SilentlyContinue'; @(Get-CimInstance Win32_Process -Filter '${filter}' -Property ProcessId,ParentProcessId,Name,CommandLine | ForEach-Object { [pscustomobject]@{ i = $_.ProcessId; p = $_.ParentProcessId; n = $_.Name; c = $_.CommandLine } }) | ConvertTo-Json -Compress`;
+  return new Promise((resolve) => {
+    exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 8 * 1024 * 1024 }, (err, out) => {
+      if (err) return resolve(null);
+      try { resolve([].concat(JSON.parse(out || '[]') || []).map((x) => ({ pid: x.i, ppid: x.p, name: x.n, cmd: x.c || '' }))); } catch { resolve(null); }
+    });
+  });
+}
+
 // pid와 그 아래 모든 프로세스
 export function descendants(procs, root) {
   const kids = new Map();

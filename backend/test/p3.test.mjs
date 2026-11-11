@@ -57,7 +57,7 @@ test('A3: 복귀 요약은 바뀐 것만 한 줄씩, 같은 세션의 같은 종
   assert.equal(lines.find((l) => l.kind === 'needs_you').stillOpen, false); // 지금은 풀림
   assert.ok(lines.find((l) => l.kind === 'exited').closed); // d는 판에서 빠짐
   assert.equal(lines.find((l) => l.kind === 'exited').count, 1);
-  assert.equal(lines.find((l) => l.kind === 'exited').text, '판에서 끔');
+  assert.equal(lines.find((l) => l.kind === 'exited').text, '보드에서 종료');
   assert.equal(summarizeChanges([]).length, 0);
 });
 

@@ -25,38 +25,38 @@ export function parseDuration(v) {
   const mul = { ms: 1, s: 1000, sec: 1000, m: 60_000, min: 60_000, h: 3600_000, d: 86400_000 }[unit];
   return Math.round(Number(m[1]) * mul);
 }
-function textCond(t) { const s = String(t ?? '').trim(); if (!s || s.length > LOOP.maxText) throw bad(`찾을 글은 1~${LOOP.maxText}자`); return s; }
+function textCond(t) { const s = String(t ?? '').trim(); if (!s || s.length > LOOP.maxText) throw bad(`검색할 문구는 1~${LOOP.maxText}자`); return s; }
 
 // 시작 조건 풀기. { type: 'interval', every | everyMs, immediate? } | { type: 'idle' } | { type: 'text', text, source?: answer|screen|any, immediate? }
 export function normalizeTrigger(t) {
-  if (!t || typeof t !== 'object') throw bad('trigger가 필요하다(interval, idle, text)');
+  if (!t || typeof t !== 'object') throw bad("trigger에 interval, idle 또는 text를 지정하세요.");
   if (t.type === 'interval') {
     const everyMs = parseDuration(t.everyMs ?? t.every);
-    if (!everyMs || everyMs < LOOP.minEveryMs || everyMs > LOOP.maxEveryMs) throw bad('주기는 1분~24시간');
+    if (!everyMs || everyMs < LOOP.minEveryMs || everyMs > LOOP.maxEveryMs) throw bad("반복 주기는 1분~24시간으로 설정하세요.");
     return { type: 'interval', everyMs, immediate: t.immediate !== false };
   }
   if (t.type === 'idle') return { type: 'idle' };
   if (t.type === 'text') {
     const source = t.source || 'answer';
-    if (!['answer', 'screen', 'any'].includes(source)) throw bad('text 조건의 source는 answer, screen, any');
+    if (!['answer', 'screen', 'any'].includes(source)) throw bad("text 조건의 source에는 answer, screen 또는 any를 지정하세요.");
     return { type: 'text', text: textCond(t.text), source, immediate: !!t.immediate };
   }
-  throw bad(`모르는 시작 조건: ${t.type}`);
+  throw bad(`알 수 없는 실행 조건입니다: ${t.type}`);
 }
 // 멈춤 조건 풀기. 모두 없어도 된다(사람이 멈출 때까지)
 export function normalizeStop(s = {}) {
   const out = {};
-  if (s.maxRuns != null) { const n = Math.trunc(Number(s.maxRuns)); if (!(n >= 1 && n <= 10000)) throw bad('maxRuns는 1~10000'); out.maxRuns = n; }
+  if (s.maxRuns != null) { const n = Math.trunc(Number(s.maxRuns)); if (!(n >= 1 && n <= 10000)) throw bad("maxRuns는 1~10,000으로 설정하세요."); out.maxRuns = n; }
   const ms = parseDuration(s.maxMs ?? s.maxTime);
-  if (s.maxMs != null || s.maxTime != null) { if (!ms || ms < 1000 || ms > 30 * 86400_000) throw bad('maxMs는 1초~30일'); out.maxMs = ms; }
+  if (s.maxMs != null || s.maxTime != null) { if (!ms || ms < 1000 || ms > 30 * 86400_000) throw bad("maxMs는 1초~30일로 설정하세요."); out.maxMs = ms; }
   if (s.untilText != null && s.untilText !== '') out.untilText = textCond(s.untilText);
   return out;
 }
 export function describeLoop({ targetLabel, prompt, trigger, stop }) {
   const every = (ms) => (ms % 3600_000 === 0 ? `${ms / 3600_000}시간` : ms % 60_000 === 0 ? `${ms / 60_000}분` : `${Math.round(ms / 1000)}초`);
-  const when = trigger.type === 'interval' ? `${every(trigger.everyMs)}마다${trigger.immediate ? '(지금 한 번 먼저)' : ''}` : trigger.type === 'idle' ? '에이전트가 쉴 때(ready가 될 때)마다' : `${trigger.source === 'screen' ? '화면' : trigger.source === 'any' ? '마지막 답이나 화면' : '마지막 답'}에 "${trigger.text}"가 나올 때마다`;
-  const stops = [stop.maxRuns && `${stop.maxRuns}번 보내면`, stop.maxMs && `${every(stop.maxMs)} 지나면`, stop.untilText && `마지막 답에 "${stop.untilText}"가 나오면`].filter(Boolean);
-  return `${targetLabel}에 "${String(prompt).replace(/\s+/g, ' ').slice(0, 60)}"를 ${when} 보낸다. 멈춤: ${stops.length ? stops.join(', ') : '사람이 멈출 때까지'}(언제든 멈출 수 있다). 루프가 보낼 때마다 토큰을 쓴다. 내 차례인 세션은 그 차례를 건너뛴다.`;
+  const when = trigger.type === 'interval' ? `${every(trigger.everyMs)}마다${trigger.immediate ? "(지금 한 번 전송한 뒤)" : ''}` : trigger.type === 'idle' ? "에이전트가 대기 상태(ready)가 될 때마다" : `${trigger.source === 'screen' ? '화면' : trigger.source === 'any' ? "마지막 응답 또는 화면" : "마지막 응답"}에 "${trigger.text}" 문구가 나타날 때마다`;
+  const stops = [stop.maxRuns && `${stop.maxRuns}회 전송 후`, stop.maxMs && `${every(stop.maxMs)} 지나면`, stop.untilText && `마지막 응답에 "${stop.untilText}" 문구가 나타나면`].filter(Boolean);
+  return `${targetLabel}에 "${String(prompt).replace(/\s+/g, ' ').slice(0, 60)}"를 ${when} 전송합니다. 중지 조건: ${stops.length ? stops.join(', ') : "직접 중지할 때까지"}(언제든 직접 중지할 수 있습니다). 요청을 보낼 때마다 토큰을 사용합니다. 사용자 응답이 필요한 세션은 해당 회차를 건너뜁니다.`;
 }
 
 // P16: 같은 확인 문구를 화면 글 열쇠로(창이 사전으로 번역한다, msg.mjs)
@@ -175,14 +175,14 @@ export class LoopEngine {
   record(l, kind, data = {}) {
     l.history = [...(l.history || []), { t: this.now(), kind, ...data }].slice(-LOOP.historyKeep);
   }
-  find(ref) { const l = ref && this.loops.get(String(ref)); if (!l) throw Object.assign(new Error(`없는 루프: ${ref}`), { code: 'not_found' }); return l; }
+  find(ref) { const l = ref && this.loops.get(String(ref)); if (!l) throw Object.assign(new Error(`반복 작업을 찾을 수 없습니다: ${ref}`), { code: 'not_found' }); return l; }
 
   // loop.create. 대상 확인(셸 거부)은 부르는 쪽(features.mjs)이 하고 target: { kind: 'session', id, name }를 넘긴다(P22에서 그룹 대상을 뺐다)
   create({ target, prompt, trigger, stop }) {
     const now = this.now();
     this.tickTime(now); // 새 루프가 생기기 전 시간은 기존 루프에만 센다
     const text = String(prompt ?? '').replace(/\r\n?/g, '\n');
-    if (!text.trim() || text.length > LOOP.maxPrompt) throw bad(`지시는 1~${LOOP.maxPrompt}자`);
+    if (!text.trim() || text.length > LOOP.maxPrompt) throw bad(`요청은 1~${LOOP.maxPrompt}자`);
     const l = {
       loopId: 'r' + crypto.randomBytes(5).toString('hex'), target: { kind: target.kind, id: target.id }, targetName: target.name, prompt: text,
       trigger: normalizeTrigger(trigger), stop: normalizeStop(stop || {}), status: 'active', runs: 0, skips: 0, elapsedMs: 0,
@@ -202,7 +202,7 @@ export class LoopEngine {
   // 사람이 멈춤. 아직 대기열에 있는 루프 전달은 취소한다. 주기 루프는 남은 시간을 기억했다가 이어 간다
   pause(ref) {
     const l = this.find(ref);
-    if (l.status !== 'active') throw Object.assign(new Error(`켜져 있지 않은 루프: ${l.status}`), { code: 'not_active' });
+    if (l.status !== 'active') throw Object.assign(new Error(`실행 중이 아닌 반복 작업입니다: ${l.status}`), { code: 'not_active' });
     this.tickTime(this.now());
     l.status = 'paused';
     this.cancelOpen(l, 'loop paused');

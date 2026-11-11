@@ -12,6 +12,7 @@ import { newRuntime } from '../src/state.mjs';
 import { Backend } from '../src/backend.mjs';
 import * as ops from '../src/canvas-ops.mjs';
 import { Recall } from '../src/recall.mjs';
+import { LINE_GAP_Y } from '../src/tree-line.mjs';
 import { childSlot, Branch } from '../src/branch.mjs';
 import { pathKey, normPath } from '../src/workspaces.mjs';
 
@@ -225,7 +226,7 @@ test('P9 K4: 하위 세션이 여러 개면 부모 높이의 약 두 배까지 �
   const items = [parent];
   const fits = (c) => !items.some((i) => overlaps(c, i, GAP - 1));
   const kids = [];
-  for (let i = 0; i < 8; i++) { const c = childSlot({ parent, siblings: kids, size, fits }); assert.ok(c, `자식 ${i}`); kids.push(c); items.push(c); }
+  for (let i = 0; i < 8; i++) { const c = childSlot({ parent, siblings: kids, size, fits, rows: 2 }); assert.ok(c, `자식 ${i}`); kids.push(c); items.push(c); }
   const cols = new Set(kids.map((k) => k.x));
   assert.ok(cols.size >= 3, `열 ${cols.size}개`);
   const all = bbox(kids);
@@ -244,9 +245,12 @@ test('P9 K4: 옆 영역에 막혀 나무 자리가 없으면 노드만 피해 �
   add('b0', 'ws-b', R(NODE.w + 200 + small.w + 80, 0));
   const kid = (name) => { const at = br.placeChild(lead.sessionId, 'ws-a'); const s = add(name, 'ws-a', { x: at.x, y: at.y, w: at.w, h: at.h }); s.parentSessionId = lead.sessionId; br.info.set(s.sessionId, { child: true }); ops.settleRegions(b, 'spawn'); return at; };
   const w1 = kid('w1');
-  assert.deepEqual([w1.x, w1.y], [NODE.w + 200, 0]);
+  assert.equal(w1.x, NODE.w + 200);
+  assert.ok(w1.y >= 0);
+  assert.equal(w1.size, 'wide-normal');
   const w2 = kid('w2');
-  assert.deepEqual([w2.x, w2.y], [NODE.w + 200, small.h + GAP], '첫 자식 아래(부모 옆 열)');
+  assert.equal(w2.x, w1.x);
+  assert.ok(w2.y >= w1.y + w1.h + LINE_GAP_Y, '첫 자식 아래(부모 옆 열)');
   assert.deepEqual(pairs(ops.regions(b)), [], 'c를 아래로 밀어 겹치지 않는다');
   assert.ok(rectOf(b, 'c0').y > NODE.h + 40 + 40 + 72);
 });

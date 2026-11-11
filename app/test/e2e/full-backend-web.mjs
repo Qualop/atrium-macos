@@ -21,7 +21,7 @@ test('full built web UI pairs and connects through synthetic HTTPS/WSS Tailscale
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-days', '1', '-subj', `/CN=${f.hostname}`], { stdio: 'ignore' });
   let host;
   const sockets = new Set();
-  const headers = req => ({ ...req.headers, host, 'tailscale-user-login': 'owner@example.com', 'x-forwarded-proto': 'https' });
+  const headers = req => ({ ...req.headers, host, 'tailscale-user-login': 'owner@example.com', 'x-forwarded-proto': 'https', 'x-forwarded-for': '100.64.0.2' });
   const proxy = https.createServer({ key: fs.readFileSync(key), cert: fs.readFileSync(cert) }, (req, res) => {
     const upstream = http.request({ host: '127.0.0.1', port: f.port, path: req.url, method: req.method, headers: headers(req) }, reply => { res.writeHead(reply.statusCode, reply.headers); reply.pipe(res); });
     upstream.on('error', () => { res.writeHead(502); res.end(); }); req.pipe(upstream);
@@ -44,6 +44,7 @@ test('full built web UI pairs and connects through synthetic HTTPS/WSS Tailscale
   // Make the synthetic read-only Tailscale status advertise this proxy's HTTPS port.
   const fake = path.join(f.dir, 'synthetic-tailscale.mjs'); fs.writeFileSync(fake, fs.readFileSync(fake, 'utf8').replaceAll('443', String(proxyPort)));
   await pc.call('remote.configure', { enabled: true });
+  await pc.call('settings.set', { remoteAccess: true, remotePasskey: false });
   assert.equal((await pc.call('remote.status', { fresh: true })).url, `https://${host}/`);
   const session = f.seedSession();
   await pc.call('terminal.attach', { session: session.sessionId, cols: 100, rows: 30, attachmentId: 'desktop-browser-peer' });
@@ -79,7 +80,11 @@ test('full built web UI pairs and connects through synthetic HTTPS/WSS Tailscale
   assert.equal(f.controllers.length, 1, 'reconnect keeps the desktop controller alive');
   const reattached = f.b.relay.attached.get(session.sessionId);
   assert.ok([...reattached.attachments.values()].some(id => !oldIds.includes(id)), 'reconnected browser has a fresh attachment generation');
-  assert.ok(wsUrls.some(u => u.startsWith(`wss://${host}/api?device=`)), 'CSP permits same-origin WSS');
+  assert.ok(wsUrls.some(u => u.startsWith(`wss://${host}/api?client=`)), 'CSP permits same-origin WSS');
+  assert.ok(wsUrls.every(u => !/[?&](device|token)=/.test(u)), 'websocket URLs contain no credential');
+  const cookies = await context.cookies();
+  assert.ok(cookies.some(c => c.name === `__Host-atrium_${f.port}` && c.httpOnly && c.secure && c.sameSite === 'Strict'));
+  assert.equal(await page.evaluate(() => localStorage.getItem('atrium.deviceToken')), null);
   assert.ok(f.b.api.clients.size >= 2);
   const assets = await page.evaluate(async () => {
     const manifest = await (await fetch('assets/pwa/manifest.webmanifest')).json();
@@ -94,7 +99,7 @@ test('full built web UI pairs and connects through synthetic HTTPS/WSS Tailscale
   assert.deepEqual(errors, [], 'no runtime/module errors in built renderer');
   assert.deepEqual(apiFailures, [], 'initial board data APIs all resolve');
   const upload = await page.evaluate(async () => {
-    const response = await fetch('/web/upload?name=from-browser.txt', { method: 'POST', headers: { authorization: `Bearer ${localStorage.getItem('atrium.deviceToken')}`, 'content-type': 'text/plain' }, body: 'full browser upload' });
+    const response = await fetch('/web/upload?name=from-browser.txt', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'text/plain' }, body: 'full browser upload' });
     return { status: response.status, ...(await response.json()) };
   });
   assert.equal(upload.status, 200); assert.equal(path.dirname(upload.path), path.join(f.cfg.dataDir, 'uploads')); assert.equal(fs.readFileSync(upload.path, 'utf8'), 'full browser upload');
@@ -102,6 +107,6 @@ test('full built web UI pairs and connects through synthetic HTTPS/WSS Tailscale
   await pc.call('device.revoke', { id: paired.id });
   await page.waitForSelector('[data-role=pair]', { timeout: 15000 });
   assert.equal((await pc.call('ping')).at > 0, true, 'desktop remains connected after browser revoke');
-  assert.ok(fs.readFileSync(f.reads, 'utf8').trim().split('\n').every(s => ['status --json', 'serve status --json'].includes(s)));
+  assert.ok(fs.readFileSync(f.reads, 'utf8').trim().split('\n').every(s => ['status --json', 'serve status --json', 'whois --json 100.64.0.2'].includes(s)));
   assert.deepEqual(f.unexpected, []);
 });

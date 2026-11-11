@@ -33,7 +33,8 @@ export function clientList(conns) {
   for (const c of conns) {
     if (!c.clientId) continue;
     const p = by.get(c.clientId);
-    if (!p) { by.set(c.clientId, { clientId: c.clientId, name: c.name, kind: c.kind, connectedAt: c.connectedAt, lastInputAt: c.lastInputAt || null, conns: 1 }); continue; }
+    // P58: 짝 맺은 기기 연결이면 그 기기 ID와 바깥 연결인지(알약에서 끊기·짝 풀기)
+    if (!p) { by.set(c.clientId, { clientId: c.clientId, name: c.name, kind: c.kind, connectedAt: c.connectedAt, lastInputAt: c.lastInputAt || null, conns: 1, deviceId: (c.auth && c.auth.device && c.auth.device.id) || null, remote: !!c.remote }); continue; }
     p.conns++;
     p.connectedAt = Math.min(p.connectedAt, c.connectedAt);
     if ((c.lastInputAt || 0) > (p.lastInputAt || 0)) { p.lastInputAt = c.lastInputAt; if (c.name) p.name = c.name; }

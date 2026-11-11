@@ -243,14 +243,14 @@ test('리포 스스로 찾기: 기간 안의 cli 대화가 있는 폴더만 작�
 
 test('리포 스스로 찾기: 워크트리의 대화는 본 저장소 하나로, 폴더 워크스페이스 아래 폴더는 따로 열지 않는다. 홈·드라이브 루트·임시 폴더는 열지 않는다', async () => {
   const root = tmp();
-  const base = fs.mkdtempSync(path.join(os.homedir(), '.mtask-p10-test-'));
+  const base = tmp();
   try {
     const repo = path.join(base, 'repo'), wt = path.join(base, 'repo-wt'), parent = path.join(base, 'plain'), child = path.join(parent, 'sub');
     for (const d of [repo, wt, child]) fs.mkdirSync(d, { recursive: true });
     const repoWs = { key: pathKey(repo) + '/.git', kind: 'repo', root: normPath(repo) };
     convo(root, wt, ID(1)); convo(root, repo, ID(2)); convo(root, child, ID(3)); convo(root, parent, ID(4));
     const b = fakeBackend({ convoRoots: [root] });
-    const r = new Recall(b, { resolveCwd: fakeResolve({ [pathKey(repo)]: repoWs, [pathKey(wt)]: { ...repoWs } }), readProcs: async () => [], settings: settingsOf({}) });
+    const r = new Recall(b, { resolveCwd: fakeResolve({ [pathKey(repo)]: repoWs, [pathKey(wt)]: { ...repoWs } }), readProcs: async () => [], settings: settingsOf({}), skipDir: (dir) => skipDiscoverDir(dir, { home: path.join(base, 'synthetic-home'), tmp: path.join(base, 'synthetic-tmp') }) });
     const s = await r.scan({ wait: true });
     assert.deepEqual(s.opened.sort(), [repoWs.key, pathKey(parent)].sort());
   } finally { fs.rmSync(base, { recursive: true, force: true }); }

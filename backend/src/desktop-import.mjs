@@ -16,7 +16,7 @@ import { listDesktopSessions, readLiveSessions, readTranscriptSummary } from './
 import { isSyntheticUserText } from './transcript.mjs';
 import { newRuntime } from './state.mjs';
 import { slotFor, settleRegions } from './canvas-ops.mjs';
-import { NODE } from './canvas.mjs';
+import { NEW_NODE as NODE, NEW_NODE_STEP, DEFAULT_ASPECT } from './canvas.mjs'; // P73: 새 노드는 16:9 가로 보통
 import { HARNESSES, MODEL_RE } from './launchers.mjs';
 import { EFFORTS, PERMISSION_MODES } from './settings.mjs';
 import { pathKey, normPath } from './workspaces.mjs';
@@ -26,6 +26,7 @@ import { CodexHistory, codexImportAllowed } from './codex-import.mjs';
 import { CODEX_ID } from './codex-protocol.mjs';
 import { codexResumeArgs, codexCollaboration } from './codex-session.mjs';
 import { importKey } from './store-imports.mjs';
+import { takenNames } from './session-label.mjs'; // P66
 
 export const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/; // 판 세션 이름(backend.mjs와 같다)
 export const STATUSES = ['new', 'imported', 'more', 'onBoard', 'noTranscript', 'noFolder'];
@@ -33,7 +34,7 @@ function apiError(code, message, extra = {}) { return Object.assign(new Error(me
 const within = (child, parent) => { const c = pathKey(child), p = pathKey(parent); return c === p || c.startsWith(p + '/'); };
 const isDir = (p) => { try { return !!p && fs.statSync(p).isDirectory(); } catch { return false; } };
 const isFile = (p) => { try { return !!p && fs.statSync(p).isFile(); } catch { return false; } };
-const realPath = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+const realPath = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
 
 // ---------- 안전: 개발용 프로필 막기 ----------
 // 실제 판은 기본 앱 폴더를 쓴다. 개발용 판은 ATRIUM_CLAUDE_DESKTOP을 따로 주었고 그 폴더가 데이터 폴더(또는 backend/.dev) 안일 때만 → { ok, reason }
@@ -192,7 +193,7 @@ export class DesktopImport {
   }
   guard() {
     const g = importAllowed(this.cfg);
-    if (!g.ok) throw keyed(apiError('import_blocked', `데스크톱 앱 가져오기를 이 판에서 쓸 수 없다(${g.reason}). 개발용 판은 ATRIUM_CLAUDE_DESKTOP으로 데이터 폴더 안의 가짜 앱 목록을 준다`, { reason: g.reason }), 'desktopImportBlocked', { reason: g.reason });
+    if (!g.ok) throw keyed(apiError('import_blocked', `이 보드에서는 데스크톱 앱 가져오기를 사용할 수 없습니다 (${g.reason}). 개발용 보드에서는 ATRIUM_CLAUDE_DESKTOP으로 데이터 폴더 안의 테스트용 앱 목록을 지정하세요.`, { reason: g.reason }), 'desktopImportBlocked', { reason: g.reason });
   }
   fallback(provider = 'claude') {
     const L = this.b.features && this.b.features.launchers;
@@ -306,7 +307,7 @@ export class DesktopImport {
     const { all, sources } = await this.candidates([...new Set(unique.map((v) => v.provider))]);
     const want = unique.map((v) => all.find((x) => x.c.provider === v.provider && x.c.appSessionId === v.appSessionId) || { missing: v, reason: sources.find((s) => s.provider === v.provider)?.reason });
     if (!want.length) return { imported: [], skipped: [], total: 0 };
-    const taken = new Set([...b.sessions.values()].map((s) => s.name));
+    const taken = takenNames(b.sessions.values(), [...(b.spawningNames || []), ...(b.branch?.pendingNames || [])]);
     const imported = [], skipped = [];
     let i = 0;
     for (const x of want) {
@@ -410,7 +411,7 @@ export class DesktopImport {
     this.store.insertSession({ ...s, runtime: rt });
     const area = b.worktrees ? b.worktrees.areaOf(ws.key, cwd) : '';
     const slot = slotFor(b, { wsKey: ws.key, size: NODE, area });
-    this.store.setNode({ session_id: id, x: slot.x, y: slot.y, w: NODE.w, h: NODE.h, z: 0, area });
+    this.store.setNode({ session_id: id, x: slot.x, y: slot.y, w: NODE.w, h: NODE.h, z: 0, size: NEW_NODE_STEP, aspect: DEFAULT_ASPECT, area });
     this.store.addEvent(id, 'spawn', { name, kind: provider, cwd: slash(cwd), workspace: ws.key, args, allowHerdr: provider === 'claude' && allowHerdr, imported: true });
     return s;
   }

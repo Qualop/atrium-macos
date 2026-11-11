@@ -8,7 +8,9 @@ import { BaseEdge, EdgeLabelRenderer, getBezierPath, Handle, Position, useStore 
 import { useStore } from './store.js';
 import { api } from './api.js';
 import { faceFor } from './lib/faces.js';
+import { convoTier } from './lib/overview.js'; // P85: 판 밖 대화 카드도 멀리 보기 규칙을 따른다(열린 대화는 쉼, 닫힌 대화는 끝남)
 import { ago, labelFit } from './lib/labels.js';
+import { shifted, linkLabelHidden } from './lib/link-labels.js'; // P67, P108
 import { useT, errText, tMsg, fmtDateTime } from './lib/i18n.js';
 import { KindIcon } from './SessionNode.jsx';
 import { openConvo, archiveItem } from './Sidebar.jsx';
@@ -119,7 +121,7 @@ function ConvoNodeInner({ data, selected }) {
   const face = convoFace(f);
   const b = c.binding || {};
   return (
-    <div className={`mt-cv face-${face}${b.open ? ' running' : ''}${selected ? ' selected' : ''}`} style={{ '--inv': 1 / Math.max(zoom, 0.02) }} data-convo={c.convId} data-face={face} data-ws={c.workspaceKey} data-block={c.block || ''}>
+    <div className={`mt-cv face-${face} t-${convoTier(b)}${b.open ? ' running' : ''}${selected ? ' selected' : ''}`} style={{ '--inv': 1 / Math.max(zoom, 0.02) }} data-convo={c.convId} data-face={face} data-ws={c.workspaceKey} data-block={c.block || ''}>
       {/* 띄움 선의 끝(잇기는 하지 않는다) */}
       {[['t', Position.Top], ['r', Position.Right], ['b', Position.Bottom], ['l', Position.Left]].map(([hid, pos]) => <Handle key={hid} type="source" position={pos} id={hid} className="mt-cv-handle" isConnectable={false} />)}
       {face === 'card' && <CardFace c={c} now={now} narrow={c.w * zoom < 260} />}
@@ -144,14 +146,15 @@ export const WorktreeBox = memo(WorktreeBoxInner);
 
 // 대화끼리의 띄움 선(주황 실선, 끝점). 선 위 글은 띄운 방법과 이름
 export function SpawnEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }) {
-  const [path, lx, ly] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  const [path, lx0, ly0] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  const [lx, ly] = shifted(lx0, ly0, data); // P67: 다른 선의 이름표와 겹치면 비켜 놓은 자리
   const t = useT();
   const fit = labelFit(data);
   return <>
     <BaseEdge id={id} path={path} className="mt-edge spawned spawn convo" interactionWidth={12} />
-    <circle className="mt-edge-end spawn" cx={sourceX} cy={sourceY} r={4.5} />
-    <circle className="mt-edge-end spawn" cx={targetX} cy={targetY} r={4.5} />
-    {!fit.compact && <EdgeLabelRenderer>
+    {!(data && data.hideSource) && <circle className="mt-edge-end spawn" cx={sourceX} cy={sourceY} r={4.5} />}
+    {!(data && data.hideTarget) && <circle className="mt-edge-end spawn" cx={targetX} cy={targetY} r={4.5} />}
+    {!fit.compact && !linkLabelHidden(data, { x: lx, y: ly }) && <EdgeLabelRenderer>
       <div className="mt-edge-label spawn nodrag nopan" style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)`, pointerEvents: 'none', '--fitw': `${fit.maxWidth}px` }} data-spawn-edge={id}>
         <span className="mt-edge-tag">{t('convo.spawnTag')}</span><span className="mt-edge-text">{VIA[data && data.via] || (data && data.via) || ''}{data && data.name ? ` ${data.name}` : ''}</span>
       </div>

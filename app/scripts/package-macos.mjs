@@ -1,16 +1,20 @@
+import { macosVersionOf } from '../../backend/src/update-version.mjs';
+import { bundleNativeBinary, nativeFiles, auditNativeBundle } from '../../backend/src/update-native.mjs';
 import { copyRuntimeLicenses } from './licenses.mjs';
 import { requireSupportedNode } from '../../backend/src/runtime.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { HERDR_VERSION } from '../../backend/src/config.mjs';
+import { HERDR_VERSION, HERDR_PROTOCOLS } from '../../backend/src/config.mjs';
 
 if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch)) throw new Error('macOS Apple Silicon 또는 Intel이 필요합니다.');
 requireSupportedNode();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const appRoot = path.join(root, 'app');
 const version = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8')).version;
+const nativeVersion = macosVersionOf(version);
+if (JSON.parse(fs.readFileSync(path.join(root, 'backend/package.json'), 'utf8')).version !== version) throw new Error('App/backend release versions disagree.');
 const destination = path.join(root, 'out', 'Atrium.app');
 function assertDestinationFree() {
   try { fs.lstatSync(destination); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
@@ -36,6 +40,28 @@ try {
   const nodeLicense = path.resolve(path.dirname(process.execPath), '../LICENSE');
   if (fs.existsSync(nodeLicense)) copy(nodeLicense, path.join(resources, 'runtime/LICENSE.node'));
   copy(path.join(root, '.tools/herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr'), path.join(resources, '.tools/herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr'));
+  // Homebrew builds can depend on Cellar dylibs. Relocate those libraries
+  // before signing, and fail if their redistribution licenses are missing.
+  const copiedLibraries = new Map();
+  const collectLicense = (library) => {
+    const prefix = path.resolve(path.dirname(library), '..');
+    const candidates = [];
+    const scan = (dir, depth) => {
+      if (!fs.existsSync(dir)) return;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const f = path.join(dir, e.name);
+        if (e.isFile() && /^(licen[cs]e|copying|copyright|notice)([._-]|$)/i.test(e.name)) candidates.push(f);
+        else if (e.isDirectory() && depth > 0) scan(f, depth - 1);
+      }
+    };
+    scan(prefix, 0); scan(path.join(prefix, 'share/doc'), 3);
+    if (!candidates.length) throw new Error(`Native dependency license missing: ${path.basename(library)}. Use an official self-contained Node distribution or supply the dependency's license.`);
+    for (const [i, f] of candidates.entries()) copy(f, path.join(resources, 'licenses/native', path.basename(library), `${i}-${path.basename(f)}`));
+  };
+  for (const [binary, source] of [[path.join(resources, 'runtime/node'), process.execPath], [path.join(resources, '.tools/herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr'), path.join(root, '.tools/herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr')]]) {
+    bundleNativeBinary(binary, path.join(resources, 'runtime/lib'), { source, copied: copiedLibraries, onLibrary: collectLicense });
+  }
+  fs.writeFileSync(path.join(resources, 'runtime/update-manifest.json'), JSON.stringify({ format: 1, repository: 'Qualop/atrium-macos', bundleId: 'dev.atrium.desktop.local', version, baseVersion: nativeVersion.baseVersion, bundleVersion: nativeVersion.bundleVersion, arch: process.arch, node: process.versions.node, herdr: HERDR_VERSION, herdrProtocols: HERDR_PROTOCOLS }, null, 2));
   const dirs = ['/opt/homebrew/bin', '/usr/local/bin'];
   fs.writeFileSync(path.join(resources, 'runtime/cli-paths.json'), JSON.stringify(dirs, null, 2));
   // Resolve the bundled runtime after installation, including when the app was
@@ -51,7 +77,7 @@ try {
   const appManifest = path.join(resources, 'app/package.json');
   fs.writeFileSync(appManifest, JSON.stringify({ ...JSON.parse(fs.readFileSync(appManifest, 'utf8')), main: 'packaged-main.mjs' }, null, 2));
   const plist = path.join(output, 'Contents/Info.plist');
-  for (const [key, value] of Object.entries({ CFBundleDisplayName: 'Atrium', CFBundleName: 'Atrium', CFBundleIdentifier: 'dev.atrium.desktop.local', CFBundleShortVersionString: version, CFBundleVersion: version })) {
+  for (const [key, value] of Object.entries({ CFBundleDisplayName: 'Atrium', CFBundleName: 'Atrium', CFBundleIdentifier: 'dev.atrium.desktop.local', CFBundleShortVersionString: nativeVersion.baseVersion, CFBundleVersion: nativeVersion.bundleVersion })) {
     execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, plist]);
   }
   const icons = path.join(staging, 'Atrium.iconset'); fs.mkdirSync(icons);
@@ -59,6 +85,8 @@ try {
     execFileSync('/usr/bin/sips', ['-z', String(size * scale), String(size * scale), path.join(appRoot, 'assets/atrium-icon-256.png'), '--out', path.join(icons, `icon_${size}x${size}${scale === 2 ? '@2x' : ''}.png`)], { stdio: 'ignore' });
   }
   execFileSync('/usr/bin/iconutil', ['-c', 'icns', icons, '-o', path.join(resources, 'electron.icns')]);
+  auditNativeBundle(output);
+  for (const binary of [...nativeFiles(path.join(resources, 'runtime')), ...nativeFiles(path.join(resources, '.tools/herdr'))]) execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', binary], { stdio: 'inherit' });
   execFileSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', '--preserve-metadata=entitlements,requirements,flags', output], { stdio: 'inherit' });
   execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', output], { stdio: 'inherit' });
   assertDestinationFree();

@@ -11,6 +11,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { LINE_GAP_Y } from '../src/tree-line.mjs';
 import { Store } from '../src/store.mjs';
 import { newRuntime } from '../src/state.mjs';
 import { writeSessionSettings, writeBoardPlugin, buildStartArgs, buildResumeArgv, BOARD_SYSTEM_PROMPT, HERDR_ALLOW } from '../src/launch.mjs';
@@ -228,7 +229,7 @@ test('K2: 플러그인에 일 맡기기 스킬과 atrium 명령(sh, cmd, 별칭 
     assert.match(fs.readFileSync(path.join(root, 'bin', `${c}.cmd`), 'utf8'), /"C:\\node\\node.exe" "C:\\m\\bin\\atrium-child.mjs" %\*/);
   }
   assert.match(BOARD_SYSTEM_PROMPT, /delegate/);
-  assert.equal(BOARD_SYSTEM_PROMPT.split('\n').length, 6); // P21: 잠든 세션 깨우기 한 줄
+  assert.equal(BOARD_SYSTEM_PROMPT.split('\n').length, 7); // P21: 잠든 세션 깨우기 한 줄
   assert.ok(pl.pluginDir.endsWith('atrium-herdr'));
   assert.match(childNotice({ role: '워커', agentName: 'w1', paneId: 'w2:p1', depth: 2 }), /herdr agent prompt w1/);
 });
@@ -322,7 +323,7 @@ test('K1: 하위 세션은 부모의 폴더·모델·노력 수준·권한 모�
   assert.equal(sum.depth, 2); assert.equal(sum.parentName, 'lead'); assert.equal(sum.role, '워커'); assert.equal(sum.child, true);
   assert.equal(b.branch.summaryExtra(lead).branch.children, 2);
   // 워크트리는 git 저장소에서만
-  await assert.rejects(b.branch.spawnChild(lead, { name: 'w3', worktree: 'feat', wait: false }), /git 저장소/);
+  await assert.rejects(b.branch.spawnChild(lead, { name: 'w3', worktree: 'feat', wait: false }), /git 저장소/i);
   await assert.rejects(b.branch.spawnChild(lead, { name: 'w3', kind: 'shell', wait: false }), /에이전트만/);
   // 커밋 없는 저장소는 거부하고, 커밋이 있지만 미신뢰이면 관문을 띄운다(신뢰는 대신 누르지 않는다)
   const repo = tmp();
@@ -353,9 +354,9 @@ test('K4: 하위 세션 노드는 부모 오른쪽에 작게, 형제는 위아�
   await b.branch.spawnChild(lead, { name: 'w1', wait: false });
   await b.branch.spawnChild(lead, { name: 'w2', wait: false });
   const [a, c] = b.spawned.map((x) => x.place);
-  assert.equal(a.size, 'small'); assert.equal(a.w, SIZE_STEPS.small.w);
+  assert.equal(a.size, 'wide-normal'); assert.equal(a.w, SIZE_STEPS['wide-normal'].w);
   assert.ok(a.x >= 720); assert.equal(a.y, 0);
-  assert.equal(c.x, a.x); assert.equal(c.y, a.y + a.h + GAP);
+  assert.equal(c.x, a.x); assert.equal(c.y, a.y + a.h + LINE_GAP_Y);
 });
 
 test('K2·K3: 하위 세션이 다시 펼쳐 3단계 나무가 되고, 다섯 번째·4단계·판 전체 상한은 거부되며 판 이벤트에 까닭이 남는다', async () => {
@@ -424,7 +425,7 @@ test('K1: 하위 세션 명령은 env의 판으로 세션 토큰을 들고 간�
     assert.ok(env.ATRIUM_SESSION_TOKEN !== b.apiToken && env.ATRIUM_SESSION_TOKEN.length === 64); // 판 API 토큰이 아니다
     const ok = await runChild(['child', 'w1', '--no-wait'], env);
     assert.equal(ok.code, 0, ok.stderr);
-    assert.match(ok.stdout, /하위 세션을 만들었다: @w1 \(herdr 이름 w1/);
+    assert.match(ok.stdout, /하위 세션을 생성했습니다: @w1 \(herdr 이름 w1/);
     assert.match(ok.stdout, /일 시키기: herdr agent prompt w1/);
     const ls = await runChild(['children'], env);
     assert.match(ls.stdout, /@lead\(1단계\)의 하위 세션 1개/);
@@ -438,9 +439,9 @@ test('K1: 하위 세션 명령은 env의 판으로 세션 토큰을 들고 간�
     const nobody = await runChild(['children'], { ...env, ATRIUM_SESSION_ID: 'nope' });
     assert.match(nobody.stderr, /not_on_board/);
     const other = await runChild(['children'], { ...env, ATRIUM_HERDR_SESSION: 'atrium' });
-    assert.match(other.stderr, /다른 판이 답했다/);
+    assert.match(other.stderr, /다른 보드에서 응답했습니다/);
     const noenv = await runChild(['child'], {});
-    assert.match(noenv.stderr, /판이 띄운 세션이 아니다/);
+    assert.match(noenv.stderr, /보드에서 시작한 세션이 아닙니다/);
     const nope = await runChild(['kill', 'w1'], env);
     assert.equal(nope.code, 2); assert.match(nope.stderr, /child, children, child-kill, child-wait, wake, models만/);
     const five = await runChild(['child-kill', 'lead'], env);

@@ -11,6 +11,9 @@ export function repoSleep(sessions, key) {
   return { asleep, waking, awake, mb, all: asleep > 0 && awake === 0 };
 }
 
+// P111: 세션 규칙으로 혼자 잠든 세션(깨우면 그 세션만 깬다). 옛 백엔드·리포째 잠든 세션은 scope가 없거나 repo. 순수 함수
+export const sleptAlone = (s) => !!(s && s.state === 'sleeping' && s.sleep && s.sleep.scope === 'session');
+
 // 메모리 알약 목록을 리포별로 묶는다. 순수 함수.
 // rows: 자원 표본의 세션 줄({ sessionId, name, memMB, state }), sessions: 세션 요약 Map, workspaces: [{ key, name }]
 // → [{ key, name, memMB, asleep: [세션 요약], savedMB, rows }]. 깨어 있는 메모리가 큰 리포가 먼저, 잠든 세션만 있는 리포는 뒤

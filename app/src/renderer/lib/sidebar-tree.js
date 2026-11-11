@@ -4,12 +4,31 @@
 // - 거르기: 글(이름, 요청, 질문 등), 상태 묶음, 종류. 거르는 동안에는 접힘을 무시하고 맞는 것만 보인다.
 // - 닫힌 세션과 판 밖 대화는 워크스페이스마다 한 줄(닫힘 n · 대화 m)로 접어 두고, 펼치면 SECTION_STEP씩 보인다.
 import { matches, sidebarRows, SECTION_STEP } from './sidebar.js';
-import { treeOrder } from './branch.js';
+import { treeOrder, spawnOrder } from './branch.js';
 import { askLine } from './labels.js';
 
 // 줄 높이(px). 창의 CSS(sidebar.css .mt-sb2-*)와 같아야 한다
-export const ROW_H = { group: 30, ws: 30, session: 28, attn: 44, extra: 24, sec: 22, closed: 28, convo: 28, more: 24, empty: 26 };
+export const ROW_H = { group: 30, ws: 28, session: 28, attn: 44, extra: 24, sec: 22, closed: 28, convo: 28, more: 24, empty: 26 };
 export const ATTN_CAP = 6; // 접힌 묶음 아래에 남기는 사람이 봐야 하는 세션 수(넘으면 "n개 더")
+// P103: 나무 단계(들여쓰기와 세로 안내선 수). 그룹 → 워크스페이스 → 세션 → 그 하위 세션(최대 MAX_INDENT단계 더),
+// 닫힌 세션·판 밖 대화 펼침 줄은 세션과 같은 단계, 그 아래 절 이름과 항목은 한 단계 더
+export const MAX_INDENT = 4;
+export const TREE = { pad: 8, step: 16 }; // 줄 왼쪽 여백과 단계마다 들여쓰기(px). sidebar.css의 안내선과 같아야 한다
+export function levelOf(r) {
+  const d = r.depth || 0;
+  switch (r.type) {
+    case 'session': return d + Math.min(r.indent || 0, MAX_INDENT);
+    case 'sec': case 'closed': case 'convo': return d + 1;
+    case 'more': return r.pinMore ? d : d + 1;
+    default: return d;
+  }
+}
+
+// P103: 머리줄(그룹·워크스페이스) 오른쪽의 상태 수. 응답 필요·오류는 늘 보이고, 작업 중은 접혔을 때만(펼치면 세션 줄의 점이 말한다).
+// 안에 든 수(그룹은 워크스페이스 수, 워크스페이스는 세션 수)는 이름 옆에 옅게 따로 둔다
+export function headBadges(c, open) {
+  return { need: (c && c.need) || 0, error: (c && c.error) || 0, working: open ? 0 : (c && c.working) || 0 };
+}
 
 // 상태 묶음: 거르기 칩과 세는 값에 쓴다
 export function bucketOf(s) {
@@ -66,8 +85,8 @@ export function buildRows(opts) {
   const at = (s) => Math.max(s.lastActivityAt || 0, s.createdAt || 0);
   const cmp = (a, b) => (isAttn(b) ? 1 : 0) - (isAttn(a) ? 1 : 0) || at(b) - at(a) || String(a.name).localeCompare(String(b.name));
   const rows = [];
-  const push = (r) => { rows.push({ ...r, h: ROW_H[r.type] }); };
-  const sessionRow = (s, depth, indent, pinned = false) => rows.push({ id: `s:${s.sessionId}`, type: 'session', h: isAttn(s) ? ROW_H.attn : ROW_H.session, s, depth, indent, pinned, attn: isAttn(s) });
+  const push = (r) => { rows.push({ ...r, h: ROW_H[r.type], lv: levelOf(r) }); };
+  const sessionRow = (s, depth, indent, pinned = false) => rows.push({ id: `s:${s.sessionId}`, type: 'session', h: isAttn(s) ? ROW_H.attn : ROW_H.session, s, depth, indent, pinned, attn: isAttn(s), lv: depth + Math.min(indent || 0, MAX_INDENT) });
   // 접힌 묶음 아래에 남기는 사람이 봐야 하는 세션
   const pinnedRows = (list, depth, key) => {
     const hot = list.filter(isAttn).sort(cmp);
@@ -86,7 +105,7 @@ export function buildRows(opts) {
     const open = filtering || !collapsed[w.key];
     push({ id: `w:${w.key}`, type: 'ws', depth, w, c, open, closedN: closedAll.length, convosN: convosAll.length, archived: (d && d.archived) || 0, matched: filtering ? shown.length : null });
     if (!open) { pinnedRows(all, depth + 1, w.key); return 1; }
-    const tree = treeOrder([...shown].sort(cmp), { cmp });
+    const tree = treeOrder([...shown].sort(cmp), { cmp, kidCmp: spawnOrder((s) => (s.branch && s.branch.order) || null, (s) => s.createdAt, cmp) }); // P75: 하위 세션은 띄운 순서
     for (const { item, indent } of tree) sessionRow(item, depth + 1, indent);
     if (!shown.length && !rest.closed.length && !rest.convos.length && !filtering) push({ id: `e:${w.key}`, type: 'empty', depth: depth + 1, key: w.key });
     const nClosed = rest.closed.length, nConvos = rest.convos.length;

@@ -7,7 +7,7 @@ import { m, confirmResult } from './msg.mjs'; // P16: 화면 글 열쇠
 import { geometry, placeAt, requireWorkspace } from './memos.mjs';
 
 export const KANBAN = { w: 640, h: 360, minW: 200, minH: 120, maxColumns: 12, maxCards: 500, maxText: 2000, maxTitle: 80 };
-export const DEFAULT_COLUMNS = ['할 일', '하는 중', '끝'];
+export const DEFAULT_COLUMNS = ['할 일', "진행 중", "완료"];
 const rid = (p) => p + crypto.randomBytes(4).toString('hex');
 const bad = (m) => Object.assign(new Error(m), { code: 'bad_request' });
 const notFound = (m) => Object.assign(new Error(m), { code: 'not_found' });
@@ -17,8 +17,8 @@ export function newColumns(names = DEFAULT_COLUMNS, now = Date.now()) {
   if (list.length > KANBAN.maxColumns) throw bad(`열은 ${KANBAN.maxColumns}개까지`);
   return list.map((name) => ({ columnId: rid('k'), name, cards: [], createdAt: now }));
 }
-function colName(n) { const s = String(n ?? '').trim(); if (!s || s.length > 40) throw bad('열 이름은 1~40자'); return s; }
-function cardText(t) { const s = String(t ?? '').replace(/\r\n?/g, '\n').trim(); if (!s || s.length > KANBAN.maxText) throw bad(`카드 글은 1~${KANBAN.maxText}자`); return s; }
+function colName(n) { const s = String(n ?? '').trim(); if (!s || s.length > 40) throw bad("열 이름은 1~40자로 입력하세요."); return s; }
+function cardText(t) { const s = String(t ?? '').replace(/\r\n?/g, '\n').trim(); if (!s || s.length > KANBAN.maxText) throw bad(`카드 내용은 1~${KANBAN.maxText}자`); return s; }
 const clampIndex = (i, n) => (i == null ? n : Math.max(0, Math.min(n, Math.trunc(Number(i)) || 0)));
 
 export function findCard(columns, cardId) {
@@ -42,44 +42,44 @@ export function applyKanbanOp(columns, op, now = Date.now()) {
       cols.splice(clampIndex(op.index, cols.length), 0, c);
       return { columns: cols, result: { columnId: c.columnId } };
     }
-    case 'renameColumn': { const c = findColumn(cols, op.column); if (!c) throw notFound(`없는 열: ${op.column}`); c.name = colName(op.name); return { columns: cols, result: { columnId: c.columnId } }; }
+    case 'renameColumn': { const c = findColumn(cols, op.column); if (!c) throw notFound(`열을 찾을 수 없습니다: ${op.column}`); c.name = colName(op.name); return { columns: cols, result: { columnId: c.columnId } }; }
     case 'moveColumn': {
-      const c = findColumn(cols, op.column); if (!c) throw notFound(`없는 열: ${op.column}`);
+      const c = findColumn(cols, op.column); if (!c) throw notFound(`열을 찾을 수 없습니다: ${op.column}`);
       cols.splice(cols.indexOf(c), 1); cols.splice(clampIndex(op.index, cols.length), 0, c);
       return { columns: cols, result: { columnId: c.columnId } };
     }
     case 'removeColumn': {
-      const c = findColumn(cols, op.column); if (!c) throw notFound(`없는 열: ${op.column}`);
-      if (cols.length === 1) throw bad('마지막 열은 지우지 않는다(칸반을 지운다)');
+      const c = findColumn(cols, op.column); if (!c) throw notFound(`열을 찾을 수 없습니다: ${op.column}`);
+      if (cols.length === 1) throw bad("마지막 열은 삭제할 수 없습니다. 칸반 전체를 삭제하세요.");
       cols.splice(cols.indexOf(c), 1);
       return { columns: cols, result: { columnId: c.columnId, removedCards: c.cards.length } };
     }
     case 'addCard': {
       if (total() >= KANBAN.maxCards) throw bad(`카드는 ${KANBAN.maxCards}개까지`);
-      const c = op.column == null ? cols[0] : findColumn(cols, op.column); if (!c) throw notFound(`없는 열: ${op.column}`);
+      const c = op.column == null ? cols[0] : findColumn(cols, op.column); if (!c) throw notFound(`열을 찾을 수 없습니다: ${op.column}`);
       const card = { cardId: rid('c'), text: cardText(op.text), sessionId: op.sessionId ?? null, createdAt: now, updatedAt: now };
       c.cards.splice(clampIndex(op.index, c.cards.length), 0, card);
       return { columns: cols, result: { cardId: card.cardId, columnId: c.columnId } };
     }
-    case 'editCard': { const f = findCard(cols, op.card); if (!f) throw notFound(`없는 카드: ${op.card}`); f.card.text = cardText(op.text); f.card.updatedAt = now; return { columns: cols, result: { cardId: f.card.cardId } }; }
+    case 'editCard': { const f = findCard(cols, op.card); if (!f) throw notFound(`카드를 찾을 수 없습니다: ${op.card}`); f.card.text = cardText(op.text); f.card.updatedAt = now; return { columns: cols, result: { cardId: f.card.cardId } }; }
     case 'moveCard': {
-      const f = findCard(cols, op.card); if (!f) throw notFound(`없는 카드: ${op.card}`);
-      const to = findColumn(cols, op.column ?? f.column.columnId); if (!to) throw notFound(`없는 열: ${op.column}`);
+      const f = findCard(cols, op.card); if (!f) throw notFound(`카드를 찾을 수 없습니다: ${op.card}`);
+      const to = findColumn(cols, op.column ?? f.column.columnId); if (!to) throw notFound(`열을 찾을 수 없습니다: ${op.column}`);
       f.column.cards.splice(f.index, 1);
       to.cards.splice(clampIndex(op.index, to.cards.length), 0, f.card);
       f.card.updatedAt = now;
       return { columns: cols, result: { cardId: f.card.cardId, columnId: to.columnId } };
     }
-    case 'removeCard': { const f = findCard(cols, op.card); if (!f) throw notFound(`없는 카드: ${op.card}`); f.column.cards.splice(f.index, 1); return { columns: cols, result: { cardId: f.card.cardId } }; }
-    case 'linkCard': { const f = findCard(cols, op.card); if (!f) throw notFound(`없는 카드: ${op.card}`); f.card.sessionId = op.sessionId ?? null; f.card.updatedAt = now; return { columns: cols, result: { cardId: f.card.cardId, sessionId: f.card.sessionId } }; }
-    default: throw bad(`모르는 칸반 바꾸기: ${op && op.op}`);
+    case 'removeCard': { const f = findCard(cols, op.card); if (!f) throw notFound(`카드를 찾을 수 없습니다: ${op.card}`); f.column.cards.splice(f.index, 1); return { columns: cols, result: { cardId: f.card.cardId } }; }
+    case 'linkCard': { const f = findCard(cols, op.card); if (!f) throw notFound(`카드를 찾을 수 없습니다: ${op.card}`); f.card.sessionId = op.sessionId ?? null; f.card.updatedAt = now; return { columns: cols, result: { cardId: f.card.cardId, sessionId: f.card.sessionId } }; }
+    default: throw bad(`알 수 없는 칸반 작업입니다: ${op && op.op}`);
   }
 }
 
 // ctx: { store, broadcast, resolveWorkspace, occupied, resolveSession(ref) → { sessionId }, sessionCard(sessionId) → 요약, apiError }
 export class Kanbans {
   constructor(ctx) { this.ctx = ctx; }
-  find(ref) { const k = ref && this.ctx.store.getKanban(String(ref)); if (!k) throw this.ctx.apiError('not_found', `없는 칸반: ${ref}`); return k; }
+  find(ref) { const k = ref && this.ctx.store.getKanban(String(ref)); if (!k) throw this.ctx.apiError('not_found', `칸반을 찾을 수 없습니다: ${ref}`); return k; }
   async wsKey(ref) { if (ref === undefined) return undefined; if (ref === null || ref === '') return null; return (await this.ctx.resolveWorkspace(ref)).key; }
   title(t, fallback) { const s = String(t ?? fallback ?? '').trim(); if (!s || s.length > KANBAN.maxTitle) throw this.ctx.apiError('bad_request', `제목은 1~${KANBAN.maxTitle}자`); return s; }
   // 이은 카드에 세션 요약을 붙인다
@@ -114,7 +114,7 @@ export class Kanbans {
       if (op.session !== undefined) op.sessionId = op.session ? this.ctx.resolveSession(op.session).sessionId : null;
       if (op.op === 'removeColumn' && !p.confirm) {
         const c = findColumn(cols, op.column);
-        if (c && c.cards.length) return confirmResult(`열 "${c.name}"과 그 안의 카드 ${c.cards.length}개를 지운다.`, m('kanbanColumnDelete', { name: c.name, n: c.cards.length }));
+        if (c && c.cards.length) return confirmResult(`열 "${c.name}"과 그 안의 카드 ${c.cards.length}개를 삭제합니다.`, m('kanbanColumnDelete', { name: c.name, n: c.cards.length }));
       }
       const r = applyKanbanOp(cols, op);
       cols = r.columns; results.push({ op: op.op, ...r.result });
@@ -128,7 +128,7 @@ export class Kanbans {
   delete(p) {
     const k = this.find(p.kanban);
     const n = k.columns.reduce((a, c) => a + c.cards.length, 0);
-    if (n && !p.confirm) return confirmResult(`칸반 "${k.title}"과 카드 ${n}개를 지운다. 이은 세션은 그대로다.`, m('kanbanDelete', { title: k.title, n }));
+    if (n && !p.confirm) return confirmResult(`칸반 "${k.title}"과 카드 ${n}개를 삭제합니다. 연결된 세션은 유지합니다.`, m('kanbanDelete', { title: k.title, n }));
     this.ctx.store.deleteKanban(k.kanbanId);
     this.ctx.broadcast('kanban.removed', { kanbanId: k.kanbanId });
     return { deleted: true, kanbanId: k.kanbanId };

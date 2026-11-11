@@ -1,13 +1,17 @@
+import { assertMacosVersions } from '../../backend/src/update-version.mjs';
 // Package an already verified .app into portable ZIP/DMG assets. Publishing is
 // separate, so failed preparation never creates a half-finished GitHub release.
 import fs from 'node:fs';import path from 'node:path';import os from 'node:os';import crypto from 'node:crypto';import {fileURLToPath} from 'node:url';import {execFileSync} from 'node:child_process';
 if(process.platform!=='darwin')throw Error('macOS에서 실행하세요.');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const version=JSON.parse(fs.readFileSync(path.join(root,'app/package.json'),'utf8')).version;
-if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('Invalid release version');
 const bundle=path.join(root,'out/Atrium.app'), plist=path.join(bundle,'Contents/Info.plist');
-const built=execFileSync('/usr/libexec/PlistBuddy',['-c','Print :CFBundleShortVersionString',plist],{encoding:'utf8'}).trim();
-if(built!==version)throw Error(`Bundle version ${built} does not match ${version}`);
+const readJson=file=>JSON.parse(fs.readFileSync(file,'utf8'));
+const resources=path.join(bundle,'Contents/Resources');
+const metadata=readJson(path.join(resources,'runtime/update-manifest.json'));
+const plistValue=key=>execFileSync('/usr/libexec/PlistBuddy',['-c',`Print :${key}`,plist],{encoding:'utf8'}).trim();
+assertMacosVersions(version,{shortVersion:plistValue('CFBundleShortVersionString'),bundleVersion:plistValue('CFBundleVersion'),appVersion:readJson(path.join(resources,'app/package.json')).version,backendVersion:readJson(path.join(resources,'backend/package.json')).version,manifestVersion:metadata.version,manifestBaseVersion:metadata.baseVersion,manifestBundleVersion:metadata.bundleVersion});
+if(readJson(path.join(root,'backend/package.json')).version!==version)throw Error('Source app/backend release versions disagree.');
 execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',bundle]);
 const node=path.join(bundle,'Contents/Resources/runtime/node');
 const arch=execFileSync(node,['-p','process.arch'],{encoding:'utf8'}).trim();

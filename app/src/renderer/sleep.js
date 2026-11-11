@@ -70,4 +70,4 @@ export function asleepStats(sessions, key) {
   return { n: list.length, mb: list.reduce((a, s) => a + ((s.sleep && s.sleep.memMB) || 0), 0), list };
 }
 
-export { repoSleep, memByRepo } from './lib/repo-sleep.js'; // P24: 순수 함수(단위 시험)
+export { repoSleep, memByRepo, sleptAlone } from './lib/repo-sleep.js'; // P24: 순수 함수(단위 시험), P111: 혼자 잠든 세션

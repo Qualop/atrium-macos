@@ -34,7 +34,7 @@ function readSettings(file) {
 export function geminiContext({ sessionId, childScript = path.resolve(here, '../bin/atrium-child.mjs'), nodePath = process.execPath }) {
   return [
     'You are a Gemini agent in an Atrium board. Other agents may be Claude Code, Codex or Gemini.',
-    'Messages beginning [Atrium 판] describe your assigned colleagues and their roles. Follow those roles when delegating or reviewing.',
+    'Messages beginning [Atrium 보드] or [Atrium 판] describe your assigned colleagues and their roles. Follow those roles when delegating or reviewing. Use `atrium me` to check the current connections when an older notice disagrees.',
     'Use run_shell_command to collaborate. The shell already targets this board through HERDR_SESSION and HERDR_SOCKET_PATH. Never add --session, --machine or --remote to herdr.',
     'Assign work: herdr agent prompt <agent-name> "<specific task>" --wait',
     'Read the result: herdr agent read <agent-name> --source recent-unwrapped --lines 100',
@@ -42,7 +42,7 @@ export function geminiContext({ sessionId, childScript = path.resolve(here, '../
     `Create a managed child: ${quote(nodePath)} ${quote(childScript)} child <name> --kind gemini --role reviewer --prompt "<task>"`,
     'Use --kind claude or --kind codex for another provider. Child count/depth limits apply. Do not assume other providers accept your model ID.',
     `List your children: ${quote(nodePath)} ${quote(childScript)} children`,
-    'Respect normal tool approvals. Login and workspace trust must be handled by the user. Do not bypass approval prompts.',
+    'Follow the permission mode configured for this managed session. The board may explicitly enable automatic tool approval. Login and workspace trust must still be handled by the user; never answer those prompts for them.',
     `Your Atrium session ID is ${sessionId}.`,
   ].join('\n');
 }

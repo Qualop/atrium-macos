@@ -145,7 +145,7 @@ test('H2: 검색 — 이름, 질문, 요청, 답, 메모, 워크스페이스. �
   r = searchBoard({ q: 'multi', sessions, workspaces: ws });
   assert.deepEqual(r.map((x) => x.kind), ['workspace', 'session', 'session'], '워크스페이스 이름: 워크스페이스(영역) 먼저, 그 안 세션도');
   r = searchBoard({ q: '배포', sessions, workspaces: ws, texts: [{ sessionId: '3', field: 'history', text: '내일 배포 전에 다시 보기' }] });
-  assert.deepEqual(r.map((x) => [x.name, x.label]), [['test-bot', '지난 요청']]);
+  assert.deepEqual(r.map((x) => [x.name, x.label]), [['test-bot', '이전 요청']]);
   assert.deepEqual(searchBoard({ q: '  ', sessions }), []);
 });
 
@@ -233,7 +233,7 @@ test('H5: 덩어리 — 붙이기(덩어리 옆 새 칸), 다른 워크스페이
   r = ops.dockAttach(b, { session: 'm', to: 'a', side: 'left', at: 'dock' }); // P17: 덩어리 전체 왼쪽 새 칸(제 너비를 지킨다)
   assert.deepEqual(r.dock.members, ['id-m', 'id-a', 'id-n']);
   assert.deepEqual(rectOf(b, 'm'), { x: -NODE.w, y: 0, w: NODE.w, h: NODE.h }, '앞에 붙으면 덩어리가 그만큼 앞에서 시작');
-  assert.throws(() => ops.dockAttach(b, { session: 'x', to: 'n', side: 'right' }), /워크스페이스/);
+  assert.throws(() => ops.dockAttach(b, { session: 'x', to: 'n', side: 'right' }), (e) => e.code === 'bad_request');
   // 분할선
   ops.dockUpdate(b, { dock: r.dock.dockId, sizes: [600, 840, 480] });
   assert.deepEqual([rectOf(b, 'm').x, rectOf(b, 'a').x, rectOf(b, 'n').x], [-NODE.w, -NODE.w + 600, -NODE.w + 1440]);
@@ -276,7 +276,7 @@ test('H7: 크기 단계와 정리(연결을 따라), 한 번 되돌리기', () =
   add('y', 'ws-b', R(20000, 0));
   ops.setSize(b, { session: 'rev', size: 'small' });
   assert.deepEqual(rectOf(b, 'rev'), { x: 0, y: 0, ...SIZE_STEPS.small });
-  assert.equal(b.store.nodes().find((n) => n.session_id === 'id-rev').size, 'small');
+  assert.equal(b.store.nodes().find((n) => n.session_id === 'id-rev').size, 'wide-small');
   assert.throws(() => ops.setSize(b, { session: 'rev', size: 'huge' }));
   for (const [f, t, role] of [['lead', 'rev', '리뷰어'], ['lead', 'help', null]]) b.store.insertLink({ linkId: `l-${t}`, from: 'id-' + f, to: 'id-' + t, role, spawned: !role, createdAt: 1 });
   const before = b.store.nodes().map((n) => ({ ...n }));
@@ -294,7 +294,7 @@ test('H7: 크기 단계와 정리(연결을 따라), 한 번 되돌리기', () =
   ops.arrange(b, { workspace: 'ws-a', undo: true });
   assert.deepEqual(b.store.nodes().map((n) => [n.session_id, n.x, n.y, n.w, n.h]), before.map((n) => [n.session_id, n.x, n.y, n.w, n.h]), '되돌리기');
   const sizeOf = (name) => b.store.nodes().find((n) => n.session_id === 'id-' + name).size || null;
-  assert.deepEqual([sizeOf('lead'), sizeOf('rev')], [null, 'small'], '크기 단계도 정리 전으로');
+  assert.deepEqual([sizeOf('lead'), sizeOf('rev')], [null, 'wide-small'], '크기 단계도 정리 전으로');
   assert.throws(() => ops.arrange(b, { workspace: 'ws-a', undo: true }), (e) => e.code === 'not_found', '되돌리기는 한 번');
   b.store.close();
 });

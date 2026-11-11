@@ -61,7 +61,7 @@ export class RendererBudget {
   get used() { return this.holders.size; }
 }
 
-// N 이동 순서: 내 차례(waiting, trust_wait)를 오래 기다린 순서로, 그다음 오류(ARCH 4절 A1, symvibe의 needs you는 오류도 포함)
+// N 이동 순서: 내 차례(waiting, trust_wait)를 오래 기다린 순서로, 그다음 오류(ARCH 4절 A1, 참고 제품의 needs you는 오류도 포함)
 export function inboxOf(sessions) {
   const askSince = (s) => (s.ask && s.ask.since) || s.createdAt;
   const needsYou = sessions.filter((s) => s.state === 'waiting' || s.state === 'trust_wait').sort((a, b) => askSince(a) - askSince(b));

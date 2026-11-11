@@ -78,6 +78,9 @@ export function frameBytes(b64) {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
+// P82: 다시 붙은 뒤 첫 full 프레임 앞에 붙인다(글자 속성 초기화, 맨 위 왼쪽, 보이는 화면 지우기). 기록(scrollback)은 그대로다
+export const REDRAW_PREFIX = Uint8Array.from([0x1b, 0x5b, 0x30, 0x6d, 0x1b, 0x5b, 0x48, 0x1b, 0x5b, 0x32, 0x4a]); // ESC[0m ESC[H ESC[2J
+export function joinBytes(a, b) { const out = new Uint8Array(a.length + b.length); out.set(a, 0); out.set(b, a.length); return out; }
 
 // ---------- P38: 끌어 고르기와 선택 ----------
 // 판은 노드를 CSS 확대·축소(transform: scale)로 그린다. xterm은 마우스 위치(화면 px)를 확대·축소 전 칸 크기로 나눠

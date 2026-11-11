@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { once } from 'node:events';
+import { pairAndRegister, registerWithGrant, raw } from './fake-authenticator.mjs';
 import { isolatedBackend, until, pause } from './fixtures/isolated-backend.mjs';
 
 test('full Backend remote/web/multiclient integration in an isolated profile', { timeout: 30000 }, async t => {
@@ -14,6 +15,7 @@ test('full Backend remote/web/multiclient integration in an isolated profile', {
     })).catch(reject);
   });
   const f = await isolatedBackend(t, { holdStartup: true });
+  const fixtureHttp = async (url, options = {}) => { const u = new URL(url); const r = await raw(f.port, u.pathname + u.search, options); return { status: r.status, json: async () => r.body }; };
   const pc = await f.desktop('desktop-fixture'); let answered = false;
   const status = pc.call('backend.status').then(r => { answered = true; return r; });
   await pause(30); assert.equal(answered, false, 'API waits for full Backend startup');
@@ -26,11 +28,11 @@ test('full Backend remote/web/multiclient integration in an isolated profile', {
     assert.equal((await pc.call('remote.status', { fresh: true })).enabled, false);
     const saved = f.b.web.devices.add({ name: 'old device', via: 'fixture' });
     for (const p of ['/web/me', '/web/pair/code', '/web/pair/request', '/web/pair/poll', '/web/upload']) {
-      const r = await fetch(f.base + p, { method: p === '/web/me' || p.endsWith('/poll') ? 'GET' : 'POST', headers: { authorization: `Bearer ${saved.token}` } });
-      assert.equal(r.status, 403, p); assert.equal((await r.json()).error.code, 'remote_disabled');
+      const r = await fixtureHttp(f.base + p, { method: p === '/web/me' || p.endsWith('/poll') ? 'GET' : 'POST', headers: { authorization: 'Bearer obsolete-token' } });
+      assert.equal(r.status, 403, p); assert.equal((await r.json()).error.code, 'remote_blocked');
     }
-    await assert.rejects(f.open(`device=${saved.token}`, { origin: f.base }), /401/);
-    await assert.rejects(pc.call('device.code'), { code: 'remote_disabled' });
+    await assert.rejects(f.open('device=obsolete-token', { origin: f.base }), /401/);
+    await assert.rejects(pc.call('device.code'), { code: 'remote_blocked' });
     assert.equal((await pc.call('session.list')).length, 0); assert.equal(fs.existsSync(f.reads), false);
   });
 
@@ -41,51 +43,58 @@ test('full Backend remote/web/multiclient integration in an isolated profile', {
   });
 
   await pc.call('remote.configure', { enabled: true });
+  await pc.call('settings.set', { remoteAccess: true, remotePasskey: true });
   const remote = await pc.call('remote.status', { fresh: true });
   assert.equal(remote.enabled, true); assert.equal(remote.url, `https://${f.hostname}/`);
   const code = await pc.call('device.code');
-  const pair = await fetch(f.base + '/web/pair/code', { method: 'POST', headers: { ...f.remoteHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ code: code.code, name: 'Synthetic remote' }) });
-  assert.equal(pair.status, 200); const device = await pair.json();
-  const web = await f.open(`device=${device.token}&client=remote-fixture&kind=desktop`, f.remoteHeaders);
+  const pair = await pairAndRegister(f.port, code.code, f.remoteHeaders, { name: 'Synthetic remote' });
+  assert.equal(pair.res.status, 200, JSON.stringify(pair.res.body));
+  const device = pair.device, cookie = pair.cookie;
+  const web = await f.open('client=remote-fixture&kind=desktop', { ...f.remoteHeaders, cookie });
   await web.call('events.subscribe');
   const frameEvents = c => c.events.filter(e => e.event === 'terminal.frame');
 
   await step('synthetic Tailscale pairing binds web identity and compressed transport', async () => {
     assert.match(web.ws.extensions, /permessage-deflate/); assert.equal(pc.ws.extensions, '');
-    const me = await (await fetch(f.base + '/web/me', { headers: { ...f.remoteHeaders, authorization: `Bearer ${device.token}` } })).json();
-    assert.equal(me.platform, process.platform); assert.equal(me.device.id, device.device.id);
+    const me = await (await fixtureHttp(f.base + '/web/me', { headers: { ...f.remoteHeaders, cookie } })).json();
+    assert.equal(me.platform, process.platform); assert.equal(me.device.id, device.id);
     assert.ok(!JSON.stringify(me).includes(f.b.apiToken));
     const peers = await web.call('clients.list'); assert.equal(peers.clients.find(c => c.clientId === 'remote-fixture').kind, 'web');
     await assert.rejects(web.call('remote.configure', { enabled: false }), { code: 'forbidden' });
     await assert.rejects(web.call('settings.set', { remoteSameUser: false }), { code: 'forbidden' });
     await assert.rejects(web.call('device.code'), { code: 'forbidden' });
-    await assert.rejects(f.open(`device=${device.token}`, { ...f.remoteHeaders, 'tailscale-user-login': 'other@example.com' }), /401/);
-    assert.equal((await fetch(f.base + '/web/me', { headers: { ...f.remoteHeaders, 'tailscale-user-login': 'other@example.com', authorization: `Bearer ${device.token}` } })).status, 403);
+    await assert.rejects(web.call('device.rename', { id: device.id, name: 'denied' }), { code: 'forbidden' });
+    await assert.rejects(web.call('device.revoke', { id: device.id }), { code: 'forbidden' });
+    assert.deepEqual((await web.call('device.list')).devices.map((d) => d.id), [device.id]);
+    await assert.rejects(f.open('', { ...f.remoteHeaders, 'tailscale-user-login': 'other@example.com', cookie }), /401/);
+    assert.equal((await fixtureHttp(f.base + '/web/me', { headers: { ...f.remoteHeaders, 'tailscale-user-login': 'other@example.com', cookie } })).status, 403);
   });
 
   await step('all hook providers and branch endpoints stay local', async () => {
     for (const route of ['/hooks/claude', '/hooks/gemini', '/hooks/agy', '/hooks/future', '/branch', '/branch/spawn']) {
-      for (const headers of [f.remoteHeaders, { origin: f.base }, { 'x-forwarded-for': '100.64.0.2' }]) assert.equal((await fetch(f.base + route, { method: 'POST', headers, body: '{}' })).status, 403, route);
+      for (const headers of [f.remoteHeaders, { origin: f.base }, { 'x-forwarded-for': '100.64.0.2' }]) assert.equal((await fixtureHttp(f.base + route, { method: 'POST', headers, body: '{}' })).status, 403, route);
     }
-    for (const route of ['/hooks/claude', '/hooks/gemini', '/hooks/agy']) assert.equal((await fetch(f.base + route, { method: 'POST', body: '{}' })).status, 200);
+    for (const route of ['/hooks/claude', '/hooks/gemini', '/hooks/agy']) assert.equal((await fixtureHttp(f.base + route, { method: 'POST', body: '{}' })).status, 200);
     await assert.rejects(f.open(`token=${f.b.apiToken}`, f.remoteHeaders), /401/, 'board API token cannot cross proxy');
   });
 
-  await step('approval pairing reaches desktop and releases its token only once', async () => {
-    const requested = await fetch(f.base + '/web/pair/request', { method: 'POST', headers: { ...f.remoteHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Approved fixture' }) });
+  await step('approval pairing releases a grant once, then requires a passkey before cookies authorize', async () => {
+    const requested = await fixtureHttp(f.base + '/web/pair/request', { method: 'POST', headers: { ...f.remoteHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Approved fixture' }) });
     assert.equal(requested.status, 200); const request = await requested.json();
     await until(() => pc.events.some(e => e.event === 'device.updated' && e.data.requests?.some(r => r.id === request.requestId)));
-    const poll = () => fetch(`${f.base}/web/pair/poll?id=${request.requestId}&secret=${request.secret}`, { headers: f.remoteHeaders }).then(r => r.json());
+    const poll = () => fixtureHttp(`${f.base}/web/pair/poll?id=${request.requestId}&secret=${request.secret}`, { headers: f.remoteHeaders }).then(r => r.json());
     assert.equal((await poll()).status, 'pending');
     await assert.rejects(web.call('device.approve', { id: request.requestId }), { code: 'forbidden' });
     await pc.call('device.approve', { id: request.requestId });
-    const approved = await poll(); assert.equal(approved.status, 'approved'); assert.ok(approved.token);
+    const approved = await poll(); assert.equal(approved.status, 'approved'); assert.ok(approved.grant); assert.ok(!approved.token);
     assert.equal((await poll()).status, 'expired');
-    assert.equal((await fetch(f.base + '/web/me', { headers: { ...f.remoteHeaders, authorization: `Bearer ${approved.token}` } })).status, 200);
+    const enrolled = await registerWithGrant(f.port, approved.grant, f.remoteHeaders);
+    assert.equal(enrolled.res.status, 200);
+    assert.equal((await fixtureHttp(f.base + '/web/me', { headers: { ...f.remoteHeaders, cookie: enrolled.cookie } })).status, 200);
   });
 
   await step('paired upload and folder browsing use the temporary backend filesystem', async () => {
-    const r = await fetch(f.base + '/web/upload?name=fixture.txt', { method: 'POST', headers: { ...f.remoteHeaders, authorization: `Bearer ${device.token}` }, body: 'synthetic upload' });
+    const r = await fixtureHttp(f.base + '/web/upload?name=fixture.txt', { method: 'POST', headers: { ...f.remoteHeaders, cookie }, body: 'synthetic upload' });
     assert.equal(r.status, 200); const result = await r.json(); assert.equal(path.dirname(result.path), path.join(f.cfg.dataDir, 'uploads')); assert.equal(fs.readFileSync(result.path, 'utf8'), 'synthetic upload');
     assert.ok((await web.call('fs.list', { path: f.cfg.dataDir })).dirs.some(d => d.name === 'uploads'));
   });
@@ -117,10 +126,10 @@ test('full Backend remote/web/multiclient integration in an isolated profile', {
 
   await step('disable closes device connections, clears pending pairing, and preserves desktop API', async () => {
     await pc.call('device.code'); const close = once(web.ws, 'close');
-    await pc.call('remote.configure', { enabled: false }); assert.equal((await close)[0], 4401);
+    await pc.call('remote.configure', { enabled: false }); assert.equal((await close)[0], 4403);
     assert.equal(f.b.store.getMeta('remoteEnabled'), false); assert.equal(f.b.web.pairing.code, null); assert.equal(f.b.tailscale.timer, null);
     assert.equal((await pc.call('ping')).at > 0, true); assert.equal((await pc.call('remote.status', { fresh: true })).enabled, false);
-    assert.ok(fs.readFileSync(f.reads, 'utf8').trim().split('\n').every(s => ['status --json', 'serve status --json'].includes(s)));
+    assert.ok(fs.readFileSync(f.reads, 'utf8').trim().split('\n').every(s => ['status --json', 'serve status --json', 'whois --json 100.64.0.2'].includes(s)));
   });
   assert.deepEqual(f.unexpected, []);
 });

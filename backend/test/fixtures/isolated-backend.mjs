@@ -34,6 +34,7 @@ export async function isolatedBackend(t, { dist, holdStartup = false } = {}) {
   fs.writeFileSync(tailscale, `import fs from 'node:fs'; const command=process.argv.slice(2).join(' '); fs.appendFileSync(${JSON.stringify(reads)},command+'\\n');
 if(command==='status --json') console.log(JSON.stringify({Version:'fixture',BackendState:'Running',Self:{DNSName:'${hostname}.',UserID:1},User:{1:{LoginName:'owner@example.com'}},CurrentTailnet:{MagicDNSEnabled:true},CertDomains:['${hostname}']}));
 else if(command==='serve status --json') console.log(JSON.stringify({TCP:{443:{HTTPS:true}},Web:{'${hostname}:443':{Handlers:{'/':{Proxy:'http://127.0.0.1:${port}'}}}}}));
+else if(command==='whois --json 100.64.0.2') console.log(JSON.stringify({Node:{ID:2,StableID:'fixture-node-2',Name:'browser.example.ts.net.',ComputedName:'browser',User:1,Addresses:['100.64.0.2/32']},UserProfile:{ID:1,LoginName:'owner@example.com'}}));
 else { console.error('mutation forbidden in fixture');process.exit(20); }
 `);
   const envChanges = { ATRIUM_TAILSCALE: tailscale, ...(dist ? { ATRIUM_WEB_DIST: dist } : {}) };
@@ -80,7 +81,7 @@ else { console.error('mutation forbidden in fixture');process.exit(20); }
   await until(() => !!b.adapter);
   if (!holdStartup) await starting;
   const base = `http://127.0.0.1:${port}`;
-  const remoteHeaders = { host: hostname, origin: `https://${hostname}`, 'tailscale-user-login': 'owner@example.com', 'x-forwarded-proto': 'https' };
+  const remoteHeaders = { host: hostname, origin: `https://${hostname}`, 'tailscale-user-login': 'owner@example.com', 'x-forwarded-proto': 'https', 'x-forwarded-for': '100.64.0.2' };
   const open = async (query, headers = {}) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/api?${query}`, { headers }); sockets.add(ws);
     const events = [], pending = new Map(); let n = 0;

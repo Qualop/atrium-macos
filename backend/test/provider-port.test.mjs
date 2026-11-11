@@ -24,7 +24,7 @@ test('spawn plan retains legacy no-launcher defaults and complete schema', () =>
   const b = { store: memoryStore({ settings: { claudeModel: 'vendor/model', claudeEffort: 'high', claudePermissionMode: 'acceptEdits', claudeAllowHerdr: true, codexArgs: '-m provider/model -c \'note="two words"\'', deepseekCommand: 'echo legacy' } }) };
   const p = spawnPlanOf(b, {});
   assert.deepEqual([p.model, p.effort, p.permissionMode, p.allowHerdr], ['vendor/model', 'high', 'acceptEdits', true]);
-  assert.deepEqual(Object.keys(p).sort(), ['kind', 'flavor', 'launcher', 'launcherId', 'command', 'model', 'effort', 'permissionMode', 'allowHerdr', 'extraArgs', 'env', 'gateway', 'args'].sort());
+  assert.deepEqual(Object.keys(p).sort(), ['kind', 'flavor', 'launcher', 'launcherId', 'command', 'model', 'effort', 'permissionMode', 'allowHerdr', 'extraArgs', 'env', 'gateway', 'args', 'startCommand'].sort());
   const c = spawnPlanOf(b, { kind: 'codex' });
   assert.equal(c.model, 'provider/model');
   assert.ok(c.args.includes('note="two words"'));
@@ -47,7 +47,7 @@ test('quoted preset arguments retain literal content and provider model flags', 
   assert.deepEqual(a.args, ['--model', 'google/model']);
   assert.throws(() => resolveLauncher(launcher(), { args: ['--settings', '/tmp/evil'] }), /판이 정하는 인자/);
   assert.throws(() => launcher({ args: '--flag "unfinished' }), /Unclosed quote/);
-  assert.throws(() => launcher({ harness: 'gemini', env: { GEMINI_CLI_HOME: '/tmp/other' } }), /판이 정하는 환경/);
+  assert.throws(() => launcher({ harness: 'gemini', env: { GEMINI_CLI_HOME: '/tmp/other' } }), /(?:판|보드)가? 정하는 환경/);
 });
 
 test('command env stays separate from raw command and reaches the process literally', () => {

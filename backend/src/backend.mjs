@@ -17,11 +17,13 @@ import { Peers, peerHandlers } from './peers.mjs'; // P47: 붙은 클라이언�
 import { viewportKey, viewportFor } from './multiclient.mjs'; // P47: 클라이언트별 화면 위치
 import { gitProbe, workspaceOf } from './git.mjs';
 import { readMessages, lastExchange, userPromptsSince, readCodexMessages } from './transcript.mjs';
-import { tailLines, isTrustDialog, parseChoices, parsePromptLine, shellPromptState } from './screen.mjs';
+import { tailLines, isTrustDialog, parseChoices, parsePromptLine, shellPromptState, parseWorktreeExit, promptOnScreen, claudeInputBox, codexInputBox } from './screen.mjs';
 import { parseTargets, toLF, clip } from './text.mjs';
 import { planAnswer, checkSteps, sameAsk } from './answer.mjs';
+import { checkKeys, keyChain, keysBy } from './keys.mjs'; // P104: 휴대폰 키 줄
 import { writeSessionSettings, buildStartArgs, buildResumeArgv, buildResumeArgs, predictTrust, transcriptPathFor, slash, recoveryPlan, writeBoardPlugin } from './launch.mjs';
-import { newRuntime, applyHook, applyHerdrStatus, applyAgentDetected, applyAgentReleased, applyHerdrDisconnected, deriveState, flags } from './state.mjs';
+import { newRuntime, applyHook, applyHerdrStatus, applyAgentDetected, applyAgentReleased, applyHerdrDisconnected, deriveState, flags, worktreeExitAsk } from './state.mjs';
+import { worktreeOf, waitClaudeExit } from './worktree-exit.mjs'; // P71: 워크트리 나가기 질문
 import { summarizeChanges, CHANGE_KINDS } from './changes.mjs';
 import { ResourceMonitor, childProcesses } from './resources.mjs';
 import { listAgyModels, withAgyModel, agyModelFromArgs } from './agy.mjs';
@@ -39,22 +41,24 @@ import { workspaceNames, workspaceCounts, elsewhereOf, pathKey } from './workspa
 import { migrateWorkspaces } from './migrate.mjs';
 import { adoptTwin, reconcileWorkspaces } from './workspace-merge-ops.mjs'; // P37: 폴더 워크스페이스가 저장소가 되면 합치기
 import { migrateSingleCanvas } from './migrate-canvas.mjs';
-import { canvasHandlers, slotFor, anchorWorkspace, onSessionClosed, autoDockSplit, noteNodeMove, settleRegions, migrateDocks, migrateBoxesInside } from './canvas-ops.mjs';
+import { NEW_NODE, NEW_NODE_STEP, DEFAULT_ASPECT } from './canvas.mjs'; // P73: 새 세션 크기
+import { canvasHandlers, slotFor, anchorWorkspace, onSessionClosed, autoDockSplit, noteNodeMove, settleRegions, migrateDocks, migrateBoxesInside, reflowLines } from './canvas-ops.mjs';
 import { attachFeatures } from './features.mjs'; // P6b: 출력 보기, Thread, 메모, 칸반, 루프, 미션 맵, 설정(ARCH 4절 I)
-import { PERMISSION_MODES as MODES } from './settings.mjs';
+import { PERMISSION_MODES as MODES, touchesRemoteRules } from './settings.mjs';
 import { attachRecall } from './recall.mjs'; // P7: 되살리기, 닫힌 세션 다시 열기, 판 밖 대화(ARCH 4절 J)
 import { attachBranch } from './branch.mjs'; // P8: 가지 펼치기(하위 세션 명령, 상한, 나무 자리, ARCH 4절 K)
 import { FLAVOR as DEEPSEEK, DEFAULT_MODEL as DEEPSEEK_MODEL, checkCommand, checkProxy, proxyEnv as deepseekEnv, baseUrlOf } from './deepseek.mjs'; // P25: DeepSeek 바로 띄우기
-import { resolveLauncher, exampleDeepseek, checkGateway, splitArgs } from './launchers.mjs'; // P33: 호출자
+import { resolveLauncher, exampleDeepseek, checkGateway, splitArgs, startWords, startOpt } from './launchers.mjs'; // P33: 호출자
 import { attachWorktrees } from './worktrees.mjs'; // P27: 워크트리 영역
 import { attachDesktopImport } from './desktop-import.mjs'; // P34: 데스크톱 앱 세션 가져오기
+import { attachUpdater } from './updater.mjs'; // P69: 앱 안 업데이트
 import { attachSleep, draftAfterInput } from './sleep.mjs'; // P21: 쉬는 Claude 세션 잠재우기와 깨우기(ARCH 5절 잠재우기, 기능 번호 D4 제안)
 import { migrateLegacyData, fixLegacyRecords, writeTombstone, checkLegacyDevHerdr, MARKER, PANE_PREFIX } from './rename-migrate.mjs'; // P18: 이름 옮기기(multitask → Atrium)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 const PERMISSION_MODES = new Set(MODES);
-const NODE = { w: 720, h: 460, gap: 40, cols: 4 };
+const NODE = { ...NEW_NODE, size: NEW_NODE_STEP, aspect: DEFAULT_ASPECT }; // P73: 새 세션은 16:9 가로 보통(canvas.mjs NEW_NODE)
 const TOUCH_WRITE_MS = 10000; // 터미널 입력마다 손댄 시각을 쓰지 않는다
 const KIND_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 const OPEN_PROMPT_MS = 30 * 60 * 1000; // F1: 보낸 지시에 받는 쪽 상태 변화를 이만큼 이어 붙인다
@@ -67,11 +71,21 @@ const EXIT_TEXT = { claude: '/exit' };
 function apiError(code, message) { return Object.assign(new Error(message), { code }); }
 import { m, confirmResult, keyed } from './msg.mjs'; // P16: 화면 글 열쇠
 import { closePlan, checkAfter } from './ws-close.mjs'; // P44: 워크스페이스 지우기 판단
-import { groupHandlers, readGroups, dropWorkspaces, GROUPS_META } from './ws-groups.mjs'; // P44: 가상 그룹
+import { groupHandlers, readGroups, dropWorkspaces, GROUPS_META, syncWsGroups, wsLabels } from './ws-groups.mjs'; // P44: 가상 그룹. P91: 폴더 위계 묶음(저절로)
+import { shownName, findSession, takenNames, nameOwner, renameSession } from './session-label.mjs'; // P66: 판의 이름(표시 이름)과 에이전트 주소
 function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
+// HTTP 서버 닫기(2026-11-07): http.close는 열린 연결이 모두 끝나야 끝나므로, 쉬는 연결은 바로, 나머지는 forceMs 뒤 끊는다
+export async function closeHttp(server, forceMs = 1000) {
+  const closed = new Promise((r) => server.close(() => r()));
+  try { server.closeIdleConnections(); } catch {}
+  const force = setTimeout(() => { try { server.closeAllConnections(); } catch {} }, forceMs);
+  await closed;
+  clearTimeout(force);
+}
 
 import { spawnPlanOf } from './spawn-plan.mjs';
 export { spawnPlanOf } from './spawn-plan.mjs';
+import { applyAgentAutoApprove, providerPermissionArgs } from './auto-approval.mjs';
 
 export class Backend {
   constructor(cfg) {
@@ -104,7 +118,7 @@ export class Backend {
     for (const d of [cfg.dataDir, cfg.sessionsDir, cfg.logDir]) fs.mkdirSync(d, { recursive: true });
     try {
       const prev = JSON.parse(fs.readFileSync(cfg.backendFile, 'utf8'));
-      if (prev.pid !== process.pid && pidAlive(prev.pid)) throw apiError('already_running', `백엔드가 이미 돈다(pid ${prev.pid}, 포트 ${prev.port})`);
+      if (prev.pid !== process.pid && pidAlive(prev.pid)) throw apiError('already_running', `백엔드가 이미 실행 중입니다 (PID ${prev.pid}, 포트 ${prev.port})`);
     } catch (e) { if (e.code === 'already_running') throw e; }
     // P40: 옛 판 옮기기는 옛 herdr를 끌 때 실행 파일이 필요하다. 설정(판 기록)은 아직 못 읽으므로 설정 없이 찾는다
     if (cfg.legacy && !cfg.herdrPath) cfg.herdrPath = (await findHerdr({ envPath: cfg.herdrEnvPath }).catch(() => ({}))).path || null;
@@ -130,9 +144,10 @@ export class Backend {
     // P48(R2): 웹 화면, 짝 맺기, 기기 토큰. 판 API 토큰 연결은 이 PC의 프로세스만, 기기 연결은 같은 출처의 브라우저만 받는다(web.mjs)
     // P49(R3): Tailscale 상태 읽기(바꾸지 않는다). 이름을 Host 허용 목록에 넣고 로그인 사용자를 제한한다
     this.tailscale = new TailscaleWatch({ port: cfg.port, log: (m) => this.log(m), onChange: (ts) => this.log(`tailscale: ${ts.status && ts.status.running ? 'running' : 'not running'}, hosts ${tailscaleHosts(ts).length}`) });
-    this.web = new WebServer({ cfg, store: this.store, api: null, log: (m) => this.log(m), recentDirs: () => this.recentDirs(), tailscale: this.tailscale, settings: () => (this.features ? this.features.settings.get() : {}) });
-    this.api = new ApiServer({ token: this.apiToken, ready: this.ready, handlers: { ...this.handlers(), ...this.web.handlers() }, authorize: (req) => this.web.authorize(req, this.apiToken), onOpen: () => { if (this.peers) this.peers.opened(); }, onClose: (c) => { if (this.relay) this.relay.detachClient(c); if (this.sleeper) this.sleeper.dropClient(c); if (this.peers) this.peers.closed(); }, log: (m) => this.log(m) });
+    this.web = new WebServer({ cfg, store: this.store, api: null, log: (m) => this.log(m), recentDirs: () => this.recentDirs(), tailscale: this.tailscale, settings: () => (this.features ? this.features.settings.get() : {}), wsName: (k) => workspaceNames(this.store.workspaces()).get(k) || null }); // P88: wsName = 푸시 알림의 프로젝트 이름
+    this.api = new ApiServer({ token: this.apiToken, ready: this.ready, handlers: { ...this.handlers(), ...this.web.handlers() }, authorize: (req) => this.web.authorize(req, this.apiToken), onOpen: (c) => { this.web.clientOpened(c); if (this.peers) this.peers.opened(); }, onClose: (c) => { this.web.clientClosed(c); if (this.relay) this.relay.detachClient(c); if (this.sleeper) this.sleeper.dropClient(c); if (this.peers) this.peers.closed(); }, log: (m) => this.log(m) });
     this.web.api = this.api;
+    if (this.web.push) this.web.push.tree = () => this.pushTree();
     if (this.web.remoteEnabled()) this.tailscale.start();
     this.peers = new Peers({ api: this.api, log: (m) => this.log(m) });
     this.http = http.createServer((req, res) => this.onHttp(req, res));
@@ -149,6 +164,7 @@ export class Backend {
     await this.resolveHerdr('start');
     // P21: 판 터미널에서 친 글로 보내지 않은 초안이 있는지 기억한다(초안이 있으면 잠재우지 않는다)
     this.relay = new TerminalRelay({ adapter: this.adapter, remoteBatchMs: envVar('REMOTE_BATCH_MS') != null ? Number(envVar('REMOTE_BATCH_MS')) : undefined, onInput: (sid, data, c) => { const s = this.sessions.get(sid); if (s) { s.lastUserInputAt = Date.now(); s.draft = draftAfterInput(s.draft, data); this.touch(s); } if (c) this.peers.touch(c); }, log: (m) => this.log(m) });
+    this.keyChain = keyChain(); // P104: session.keys를 세션마다 차례로
 
     for (const row of this.store.openSessions()) {
       const rt = row.runtime || newRuntime({ kind: row.kind, hooked: row.origin === 'board' && row.kind === 'claude' });
@@ -173,6 +189,7 @@ export class Backend {
     // P35: 옛 판의 워크트리 위성 영역(리포 영역 바깥)을 리포 영역 안으로 한 번 다시 놓는다(겹침 풀기보다 먼저)
     migrateBoxesInside(this);
     // P9: 이미 겹친 영역은 뜰 때 편다(영역째 오른쪽·아래로 밀어 상대 자리를 지킨다, H1)
+    syncWsGroups(this, 'start'); // P91: 폴더가 안팎인 워크스페이스를 한 묶음으로(영역 겹침 풀기가 묶음을 한 덩어리로 본다)
     settleRegions(this, 'start');
     // P8: 하위 세션 명령. 플러그인에 일 맡기기 스킬과 atrium 명령을 더하고, 이미 띄운 세션의 설정 파일에 env와 승인 규칙을 더한다
     this.branch = attachBranch(this);
@@ -190,12 +207,38 @@ export class Backend {
     this.spawnIntents = []; // F3: 세션이 herdr로 새 에이전트를 띄우려 한 명령(hook)
     this.adopting = new Set();
 
-    this.queue = new DeliveryQueue({ store: this.store, cfg, view: (sid, d) => this.deliveryView(sid, d), send: (sid, text) => this.promptManaged(sid, text) });
+    this.queue = new DeliveryQueue({
+      store: this.store, cfg, view: (sid, d) => this.deliveryView(sid, d), send: (sid, text, options) => this.promptManaged(sid, text, options),
+      // P79: 제출 확인이 늦을 때 화면의 입력 칸을 본다(Claude Code. P106: Codex도 보되 Enter만 하고 다시 보내지 않는다. 다른 종류와 셸은 손대지 않는다)
+      inspect: async (sid, text) => {
+        const s = this.sessions.get(sid); const k = s && (s.kind || 'claude');
+        if (!s || !s.paneId || (k !== 'claude' && k !== 'codex')) return null;
+        const rt = s.rt, paneId = s.paneId, inputAt = s.lastUserInputAt;
+        const scr = await this.adapter.readScreen(paneId, { source: 'visible' });
+        if (!this.currentSession(s, rt, paneId) || this.killing.has(sid) || s.lastUserInputAt !== inputAt) return null;
+        const r = promptOnScreen(scr, text, k);
+        (this.deliveryInspections ||= new Map()).set(sid, { s, rt, paneId, inputAt });
+        return k === 'codex' ? { ...r, noResend: true } : r;
+      },
+      pressEnter: async (sid) => {
+        const seen = this.deliveryInspections?.get(sid);
+        this.deliveryInspections?.delete(sid);
+        if (!seen || !this.currentSession(seen.s, seen.rt, seen.paneId) || this.killing.has(sid) || seen.s.lastUserInputAt !== seen.inputAt) throw apiError('agent_not_ready', '입력 대상을 다시 확인해야 합니다');
+        if (['waiting', 'trust_wait', 'error', 'exited'].includes(deriveState(seen.rt).state)) throw apiError('agent_blocked', '현재 질문에 대한 응답이 필요합니다');
+        await this.adapter.paneKeys(seen.paneId, ['enter']);
+      },
+    });
+    this.queue.on('recover', (r) => { this.store.addEvent(r.sessionId, 'delivery_recover', r); this.log(`delivery recover ${this.nameOf(r.sessionId)} ${r.action} (${r.box}) #${r.n}`); });
+    // P106: herdr가 받지 않은 전달(처음 한 번과 까닭이 바뀔 때만 온다), 오래 막힌 전달(한 번), 취소한 뒤에 들어간 시도
+    this.queue.on('refused', (r) => this.log(`delivery refused ${this.nameOf(r.sessionId)} ${r.deliveryId} ${r.code} → ${r.reason}, retry in ${r.waitMs}ms (#${r.n})`));
+    this.queue.on('stuck', (r) => { this.store.addEvent(r.sessionId, 'delivery_stuck', r); this.log(`delivery stuck ${this.nameOf(r.sessionId)} ${r.deliveryId} ${r.code} (${r.attempts} tries)`); const s = this.sessions.get(r.sessionId); if (s) this.broadcastSession(s, { cause: 'delivery stuck' }); });
+    this.queue.on('late', (r) => { this.store.addEvent(r.sessionId, 'delivery_late', r); this.log(`delivery late ${this.nameOf(r.sessionId)} ${r.deliveryId}: went in after cancel`); });
     this.queue.on('delivery', (d) => {
       this.store.addEvent(d.sessionId, 'delivery', d);
       this.api.broadcast('delivery', { ...d, name: this.nameOf(d.sessionId) });
       const s = this.sessions.get(d.sessionId);
       if (s && d.status === 'unconfirmed') s.draft = true; // P21: 보낸 글이 제출되지 않고 입력 칸에 남았을 수 있다(잠재우지 않는다)
+      if (this.branch && ['confirmed', 'unconfirmed', 'failed', 'cancelled'].includes(d.status)) this.branch.onDeliveryEnd(d); // P79: 하위 세션의 첫 요청이 들어가지 않았으면 부모에게
       if (s && d.status === 'confirmed' && s.rt.interruptedTurn) s.rt.interruptedTurn = null; // 새 지시가 들어갔으면 끊긴 턴 표시를 내린다
       // P6a(H3): hook이 없는 세션의 마지막 요청은 판이 보내 제출을 확인한 글로 둔다(멀리 얼굴, 검색)
       if (s && d.status === 'confirmed' && !this.hooked(s)) { const row = this.store.getDelivery(d.deliveryId); if (row) { s.rt.lastPrompt = row.text; s.rt.lastPromptAt = Date.now(); } }
@@ -215,6 +258,8 @@ export class Backend {
     Object.assign(this.api.handlers, this.sleeper.handlers);
     this.desktopImport = attachDesktopImport(this);
     Object.assign(this.api.handlers, this.desktopImport.handlers);
+    this.updater = attachUpdater(this); // P69: 새 릴리즈 확인과 업데이트(백엔드만 바꾸고 herdr는 그대로)
+    Object.assign(this.api.handlers, this.updater.handlers);
 
     // herdr 서버가 백엔드가 꺼진 동안 다시 떴는가(재부팅 포함). 저장한 서버 PID와 비교한다(C3, P3)
     const prevHerdrPid = this.store.getMeta('herdrServerPid');
@@ -233,8 +278,17 @@ export class Backend {
     const setSettings = this.api.handlers['settings.set'];
     this.api.handlers['settings.set'] = async (p, c) => {
       // P49: 원격 접속 규칙(remote*)은 이 PC의 창·CLI만 바꾼다
-      if (c && c.auth && c.auth.kind !== 'local' && p && (Object.keys(p).some((k) => k.startsWith('remote')) || String(p.key || '').startsWith('remote'))) throw Object.assign(new Error('only the board on this PC can change remote access rules'), { code: 'forbidden' });
+      const autoApprovalChange = p && (Object.hasOwn(p, 'agentAutoApprove') || p.key === 'agentAutoApprove');
+      if (c && c.auth && c.auth.kind !== 'local' && (touchesRemoteRules(p) || autoApprovalChange)) throw Object.assign(new Error('only the board on this PC can change access and approval settings'), { code: 'forbidden' });
+      const wasAccepting = this.web.accepting();
+      const wasPasskey = this.web.passkeyOn();
+      const wasChannel = this.updater ? this.updater.channel() : null;
       const r = await setSettings(p, c);
+      if (this.updater && this.updater.channel() !== wasChannel) this.updater.channelChanged(); // P70: 업데이트 채널을 바꾸면 곧바로 다시 확인한다(기다리지 않는다)
+      const nowAccepting = this.web.accepting();
+      if (nowAccepting !== wasAccepting) r.remote = this.web.accessChanged(nowAccepting); // P58: 원격 받기 끄기·켜기(끄면 붙은 원격 연결을 닫는다)
+      const nowPasskey = this.web.passkeyOn();
+      if (nowPasskey !== wasPasskey) r.passkey = this.web.passkeyChanged(nowPasskey); // P62: 패스키로 확인 켜기·끄기
       if (p && ('herdrPath' in p || p.key === 'herdrPath')) r.herdr = await this.rediscoverHerdr('settings').catch((e) => { this.log('herdr rediscover error', e.stack); return null; });
       return r;
     };
@@ -276,6 +330,7 @@ export class Backend {
     if (this.recall) this.recall.stop();
     if (this.worktrees) this.worktrees.stop();
     if (this.sleeper) this.sleeper.stop();
+    if (this.updater) this.updater.stop();
     this.relay.closeAll();
     this.peers.stop();
     this.adapter.stopEvents();
@@ -286,7 +341,11 @@ export class Backend {
     this.api.close();
     if (this.web) this.web.stop();
     if (this.tailscale) this.tailscale.stop();
-    await new Promise((r) => this.http.close(r));
+    // 2026-11-07: 열린 연결이 남아 있으면 http.close가 끝나지 않는다(하위 세션을 띄우며 기다리던 atrium child 요청이 업데이트를 1분 넘게 붙잡았다).
+    // 기다리는 /branch 요청에 먼저 답하고, 쉬는 연결은 바로, 나머지는 1초 뒤 끊는다
+    const aborted = this.branch && this.branch.abortInflight ? this.branch.abortInflight() : 0;
+    if (aborted) this.log(`answered ${aborted} waiting /branch request(s) before stopping`);
+    await closeHttp(this.http);
     try { const b = JSON.parse(fs.readFileSync(this.cfg.backendFile, 'utf8')); if (b.pid === process.pid) fs.rmSync(this.cfg.backendFile); } catch {}
     this.store.close();
   }
@@ -414,14 +473,13 @@ export class Backend {
   // ---------- 세션 표시 ----------
   // 판의 hook이 붙은 세션(판이 띄운 Claude Code). 나머지는 herdr 상태와 화면으로만 본다(P4)
   hooked(s) { return s.rt.hooked !== false; }
-  nameOf(sid) { const s = this.sessions.get(sid); return s ? s.name : null; }
+  nameOf(sid) { return shownName(this.sessions.get(sid)); } // P66: 보이는 이름(판의 이름이 있으면 그것)
   sessionByPane(paneId) { for (const s of this.sessions.values()) if (s.paneId === paneId) return s; return null; }
   resolve(ref) {
     if (!ref) throw apiError('bad_request', 'session required');
-    const key = String(ref).replace(/^@/, '');
-    if (this.sessions.has(key)) return this.sessions.get(key);
-    for (const s of this.sessions.values()) if (s.name === key) return s;
-    throw keyed(apiError('not_found', `판에 없는 세션: ${ref}`), 'sessionNotFound', { ref });
+    const s = findSession(this.sessions.values(), ref); // P66: 세션 ID, 주소(herdr 이름), 판의 이름
+    if (s) return s;
+    throw keyed(apiError('not_found', `보드에서 세션을 찾을 수 없습니다: ${ref}`), 'sessionNotFound', { ref });
   }
   currentSession(s, rt = s.rt, paneId = s.paneId) {
     return !this.stopping && this.sessions.get(s.sessionId) === s && s.rt === rt && s.paneId === paneId;
@@ -435,15 +493,19 @@ export class Backend {
     this.broadcastSession(s, { cause: 'agy:composer' });
     return s.rt.agyComposer;
   }
-  async promptManaged(sid, text) {
+  async promptManaged(sid, text, { typeNow = false } = {}) {
     const s = this.sessions.get(sid);
     if (!s || this.stopping) throw apiError('agent_not_found', '세션이 닫혔습니다');
     const rt = s.rt, paneId = s.paneId;
     if (s.kind === 'agy' && await this.checkAgyComposer(s) !== 'ready') throw apiError('agent_blocked', 'Antigravity 초기 설정·질문은 터미널에서 완료하세요');
     if (!this.currentSession(s, rt, paneId) || s.rt.exit || this.killing.has(sid)) throw apiError('agent_not_found', '세션이 바뀌었거나 종료 중입니다');
-    if (['working', 'waiting', 'trust_wait', 'starting'].includes(deriveState(s.rt).state)) throw apiError('agent_blocked', '세션이 아직 입력을 받을 수 없습니다');
+    const state = deriveState(s.rt).state;
+    if (state === 'working' && typeNow && s.kind === 'claude' && this.hooked(s)) {
+      const screen = await this.adapter.readScreen(paneId, { source: 'visible' });
+      if (!this.currentSession(s, rt, paneId) || claudeInputBox(screen).text?.trim() || !claudeInputBox(screen).found || (s.lastUserInputAt && Date.now() - s.lastUserInputAt < this.cfg.inputQuietMs)) throw apiError('agent_blocked', '입력 중이거나 확인할 질문이 있어 잠시 기다립니다');
+    } else if (['working', 'waiting', 'trust_wait', 'starting'].includes(state)) throw apiError('agent_blocked', '세션이 아직 입력을 받을 수 없습니다');
     const scoped = s.kind === 'codex' && s.rt.codexContext && !s.rt.codexBriefed ? `${s.rt.codexContext}\n\n${text}` : text;
-    const result = await this.adapter.prompt(s.agentName, scoped);
+    const result = await this.sendPrompt(sid, scoped);
     if (this.currentSession(s, rt, paneId) && s.kind === 'codex') {
       s.rt.codexBriefed = true;
       this.store.saveRuntime(s.sessionId, s.rt);
@@ -457,7 +519,7 @@ export class Backend {
     const st = deriveState(s.rt).state;
     // 깨우는 중에는 준비된 뒤 잠깐 더 기다린다(sleep.mjs WAKE_SETTLE_MS: 입력 칸이 Enter를 받기 전에 보내면 제출되지 않는다)
     const gated = this.branch && this.branch.holds(sid); // P36: 신뢰 관문을 지나 claude -w로 뜰 때까지 보내지 않는다
-    return { state: sleeping ? 'sleeping' : gated ? 'starting' : s.waking && st !== 'sleeping' ? 'starting' : st, agentPresent: s.rt.herdr.present, herdrConnected: this.adapter.connected, lastUserInputAt: s.lastUserInputAt, closed: false };
+    return { state: sleeping ? 'sleeping' : gated ? 'starting' : s.waking && st !== 'sleeping' ? 'starting' : st, agentPresent: s.rt.herdr.present, herdrConnected: this.adapter.connected, lastUserInputAt: s.lastUserInputAt, closed: false, kind: s.kind || 'claude', hooked: this.hooked(s) }; // P90: kind·hooked는 바로 넣기(canTypeNow)가 본다
   }
 
   summary(s) {
@@ -466,11 +528,13 @@ export class Backend {
     const f = flags(rt, { seenAt: s.seenAt, delivering: this.queue ? this.queue.pending(s.sessionId) : 0, quietMs: this.cfg.quietMs });
     const ask = d.ask ? { ...d.ask, input: undefined, waitedMs: d.ask.since ? Date.now() - d.ask.since : null } : null;
     return {
-      sessionId: s.sessionId, name: s.name, cwd: s.cwd, paneId: s.paneId, herdrWorkspaceId: s.herdrWorkspaceId,
+      sessionId: s.sessionId, name: shownName(s), cwd: s.cwd, paneId: s.paneId, herdrWorkspaceId: s.herdrWorkspaceId,
+      address: s.name, label: s.label || null, // P66: name은 보이는 이름, address는 에이전트가 쓰는 주소(herdr 이름), label은 사람이 정한 이름(없으면 null)
       state: d.state, estimate: d.estimate || null, herdrStatus: rt.herdr.status, ask, error: d.error || rt.lastError || null,
-      permissionMode: rt.permissionMode || s.permissionMode, model: s.model,
+      permissionMode: rt.permissionMode || s.permissionMode, model: s.model, effort: s.effort || null, // P95: 미션 맵 카드의 메타 줄
       lastPrompt: clip(rt.lastPrompt, 300), lastAnswer: clip(rt.lastAnswer, 300), lastAnswerAt: rt.lastAnswerAt, turn: rt.turn,
       exit: rt.exit, interruptedTurn: rt.interruptedTurn, recovered: s.recovered || null, ...f,
+      deliveryStuck: this.queue && this.queue.stuckOf ? this.queue.stuckOf(s.sessionId) : null, // P106: herdr가 오래 받지 않는 맨 앞 전달 { deliveryId, reason, code, attempts, since }
       trust: { predictedDialog: rt.trustPredicted, seenOnScreen: !!rt.trustScreen },
       resume: this.hooked(s) ? { registered: !!s.resumeArgv, verified: !!s.resumeVerified } : null, // hook이 없는 세션은 herdr의 이어 가기에 맡긴다
       hooks: { count: s.hookCount || 0, lastAt: rt.lastHookAt, lastAuthOk: s.lastHookAuthOk ?? null },
@@ -479,6 +543,7 @@ export class Backend {
       // P4
       kind: s.kind || 'claude', origin: s.origin || 'board', parentSessionId: s.parentSessionId || null, hooked: this.hooked(s), agentName: s.agentName,
       flavor: s.flavor || null, // P25: 띄운 방법(deepseek). 창은 종류 대신 이것으로 로고와 이름을 보인다
+      background: rt.bg ? { tasks: rt.bg.tasks.length, types: [...new Set(rt.bg.tasks.map((x) => x.type))], at: rt.bg.at } : null, // P92: 도는 Claude Code 뒤 일(마지막 Stop hook 기준)
 
       answerSource: rt.answerSource || (rt.lastAnswer ? 'hook' : null), cwdNow: rt.cwd || s.cwd,
       git: s.git ? { isRepo: s.git.isRepo, root: s.git.root, commonDir: s.git.commonDir, mainRoot: s.git.mainRoot, isWorktree: s.git.isWorktree, branch: s.git.branch, cwd: s.git.cwd, changedFiles: s.git.changedFiles } : null,
@@ -493,23 +558,34 @@ export class Backend {
     };
   }
 
+  // P92: 웹 푸시가 보는 세션 나무(가볍게: 요약을 다 만들지 않는다). bg = 도는 뒤 일 수(Stop hook의 background_tasks, 모르면 null)
+  pushTree() {
+    return [...this.sessions.values()].map((s) => ({
+      sessionId: s.sessionId, parentSessionId: s.parentSessionId || null, name: shownName(s), kind: s.kind || 'claude', state: deriveState(s.rt).state, workspaceKey: s.workspaceKey || null,
+      delivering: this.queue ? this.queue.pending(s.sessionId) : 0, loops: this.features && this.features.loops ? this.features.loops.activeCount(s.sessionId) : 0,
+      bg: s.rt.bg ? s.rt.bg.tasks.length : null,
+    }));
+  }
+
   // ---------- 리포지토리 워크스페이스(P5, ARCH 4절 G) ----------
   // 판의 워크스페이스는 리포지토리 하나다(workspaceKey). herdr의 작업 공간(herdrWorkspaceId)과 다르다.
   workspaceList() {
     const rows = this.store.workspaces();
     const names = workspaceNames(rows);
     const sums = [...this.sessions.values()].map((s) => this.summary(s));
-    return rows.map((w) => ({ key: w.key, name: names.get(w.key), kind: w.kind, root: w.root, createdAt: w.createdAt, counts: workspaceCounts(sums, w.key), x: w.x, y: w.y, auto: !!w.auto, worktrees: this.worktrees ? this.worktrees.view(w.key) : [] })); // P27: 워크트리 영역
+    const labels = wsLabels(readGroups(this), rows); // P91: 저절로 만든 묶음 안에서는 뿌리에서의 상대 경로(영역 이름표, 사이드바)
+    return rows.map((w) => ({ key: w.key, name: names.get(w.key), ...(labels.has(w.key) ? { label: labels.get(w.key) } : {}), kind: w.kind, root: w.root, createdAt: w.createdAt, counts: workspaceCounts(sums, w.key), x: w.x, y: w.y, auto: !!w.auto, worktrees: this.worktrees ? this.worktrees.view(w.key) : [] })); // P27: 워크트리 영역
   }
   // P48: 폴더 탐색기의 최근 폴더(워크스페이스 뿌리, 최근 세션 폴더)
   recentDirs() { const ss = [...this.sessions.values()].sort((a, b) => (b.touchedAt || b.createdAt || 0) - (a.touchedAt || a.createdAt || 0)); return [...this.store.workspaces().map((w) => w.root), ...ss.map((x) => x.cwd)].filter(Boolean); }
   currentWorkspace() { const k = this.store.getMeta('currentWorkspace'); return k && this.store.getWorkspace(k) ? k : (this.store.workspaces()[0] || {}).key || null; }
-  broadcastWorkspaces() { this.api.broadcast('workspace.updated', { workspaces: this.workspaceList(), current: this.currentWorkspace(), groups: readGroups(this).groups }); } // P44: groups(가상 그룹)
+  broadcastWorkspaces() { syncWsGroups(this, 'list'); this.api.broadcast('workspace.updated', { workspaces: this.workspaceList(), current: this.currentWorkspace(), groups: readGroups(this).groups }); } // P44: groups(가상 그룹)
   // 처음 보는 워크스페이스면 줄을 만든다(세션이 하나라도 생기면 워크스페이스가 저절로 생긴다, G1)
   ensureWorkspace(ws, why) {
     if (this.store.getWorkspace(ws.key)) return false;
     if (adoptTwin(this, ws, why)) return false; // P37: 같은 폴더의 다른 키 워크스페이스(폴더가 저장소가 됨)를 이 키로 옮겼다
     this.store.insertWorkspace({ ...ws, createdAt: Date.now() });
+    syncWsGroups(this, 'created'); // P91: 묶음을 먼저 맞춰 새 영역을 그 묶음 곁에 놓는다
     anchorWorkspace(this, ws.key); // P6a: 새 영역은 다른 영역과 겹치지 않는 곳(H1)
     if (!this.store.getMeta('currentWorkspace')) this.store.setMeta('currentWorkspace', ws.key);
     this.store.addEvent(null, 'workspace_created', { key: ws.key, kind: ws.kind, root: ws.root, why });
@@ -528,13 +604,13 @@ export class Backend {
     const byName = list.find((w) => w.name.toLowerCase() === r.toLowerCase()) || list.find((w) => w.key === pathKey(r));
     if (byName) return this.store.getWorkspace(byName.key);
     if (fs.existsSync(r)) { const ws = await workspaceOf(path.resolve(r)); const w = this.store.getWorkspace(ws.key); if (w) return w; }
-    if (required) throw keyed(apiError('not_found', `판에 없는 워크스페이스: ${ref}`), 'wsNotFound', { ref });
+    if (required) throw keyed(apiError('not_found', `보드에서 프로젝트를 찾을 수 없습니다: ${ref}`), 'wsNotFound', { ref });
     return null;
   }
   // "+ 리포 열기": 폴더를 골라 빈 워크스페이스를 만든다(이미 있으면 그대로)
   async workspaceOpen(p) {
     const dir = path.resolve(String(p.path || ''));
-    if (!p.path || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw keyed(apiError('bad_request', `폴더가 없다: ${p.path}`), 'noFolder', { path: p.path });
+    if (!p.path || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw keyed(apiError('bad_request', `폴더를 찾을 수 없습니다: ${p.path}`), 'noFolder', { path: p.path });
     const ws = await workspaceOf(dir);
     const created = this.ensureWorkspace(ws, 'open');
     this.bus.emit('workspace_opened', ws.key); // P10: 사람이 연 워크스페이스는 저절로 연 것이 아니다(닫은 기억도 지운다)
@@ -553,12 +629,12 @@ export class Backend {
     const sums = [...this.sessions.values()].map((s) => this.summary(s));
     const plan = closePlan(named, sums);
     if (!p.confirm) {
-      if (named.length === 1 && plan.empty) return confirmResult(`빈 워크스페이스 ${named[0].name}(${named[0].root})를 닫는다. 폴더와 저장소는 그대로다.`, m('wsClose', { name: named[0].name, root: named[0].root }), { plan });
-      return confirmResult(`워크스페이스 ${named.length}개를 판에서 지운다(세션 ${plan.sessions}개, 돌고 있는 CLI ${plan.running}개). 폴더와 대화 기록 파일은 그대로다.`, m(plan.empty ? 'wsCloseMany' : 'wsCloseSessions', { n: named.length, sessions: plan.sessions, running: plan.running }), { plan });
+      if (named.length === 1 && plan.empty) return confirmResult(`빈 프로젝트 ${named[0].name}(${named[0].root})를 닫습니다. 폴더와 Git 저장소는 그대로 유지합니다.`, m('wsClose', { name: named[0].name, root: named[0].root }), { plan });
+      return confirmResult(`프로젝트 ${named.length}개를 보드에서 제거합니다 (세션 ${plan.sessions}개, 실행 중인 CLI ${plan.running}개). 폴더와 대화 기록 파일은 그대로 유지합니다.`, m(plan.empty ? 'wsCloseMany' : 'wsCloseSessions', { n: named.length, sessions: plan.sessions, running: plan.running }), { plan });
     }
     const chk = checkAfter(plan, p.after);
-    if (!chk.ok && chk.reason === 'choose') throw keyed(apiError('not_empty', `세션이 ${plan.sessions}개 있다. after로 archive(모두 보관) 또는 delete(모두 삭제)를 고른다`), 'wsChooseAfter', { n: plan.sessions });
-    if (!chk.ok) throw apiError('bad_request', `after는 archive 또는 delete: ${p.after}`);
+    if (!chk.ok && chk.reason === 'choose') throw keyed(apiError('not_empty', `세션이 ${plan.sessions}개 있습니다. after에 archive(모두 보관) 또는 delete(모두 삭제)를 지정하세요.`), 'wsChooseAfter', { n: plan.sessions });
+    if (!chk.ok) throw apiError('bad_request', `after에는 archive 또는 delete를 지정하세요: ${p.after}`);
     const keys = new Set(named.map((w) => w.key));
     const targets = [...this.sessions.values()].filter((s) => keys.has(s.workspaceKey));
     const done = { archived: 0, deleted: 0, failed: [] };
@@ -623,8 +699,9 @@ export class Backend {
       s.lastState = sum.state;
       if (from !== null || cause) {
         this.store.addEvent(s.sessionId, 'state', { from, to: sum.state, herdr: sum.herdrStatus, cause: cause || null, ask: sum.ask, exit: sum.exit, error: sum.state === 'error' ? sum.error : undefined });
-        this.api.broadcast('session.state', { sessionId: s.sessionId, name: s.name, from, to: sum.state, cause: cause || null, summary: sum });
+        this.api.broadcast('session.state', { sessionId: s.sessionId, name: shownName(s), from, to: sum.state, cause: cause || null, summary: sum });
         this.onLinkTargetState(s, from, sum);
+        if (this.web) try { this.web.push.onState(sum, from); } catch (e) { this.log('push error', e.stack); } // P88: 휴대폰 웹 푸시(끝남, 응답 필요, 오류)
       }
     }
     this.api.broadcast('session.updated', sum);
@@ -773,6 +850,7 @@ export class Backend {
       else if (e.type === 'pane_closed' && !this.killing.has(s.sessionId)) this.closeSession(s, 'pane closed outside board');
       return;
     }
+    if (e.type === 'status' || e.type === 'agent_detected' || e.type === 'agent_released') this.queue.poke(s.sessionId); // P106: 에이전트가 바뀌었다. 물러나 있던 전달을 다시 본다
     if (e.type === 'status') {
       // 띄운 뒤 agent_detected를 놓쳤어도, 끝난 적 없는 세션에 상태가 오면 claude가 패널에 있다는 뜻이다(P2에서 더한 안전망).
       // 끝난 세션(exit)은 되살리지 않는다. 해제 직후에도 idle이 한 번 온다(E10 2.4).
@@ -794,6 +872,9 @@ export class Backend {
       applyAgentDetected(s.rt, now);
       this.store.addEvent(s.sessionId, 'herdr_agent', { detected: true });
       this.broadcastSession(s, { cause: 'herdr:agent_detected' });
+      // P97: 실행 명령으로 뜬 claude는 herdr가 새로 알아볼 때(다시 켠 뒤 이어 가기 등) 이름을 잃는다. 알아본 뒤 이름을 다시 맞춘다.
+      // P106: 판이 띄운 Codex도 뜬 직후 herdr가 에이전트를 놓았다가(agent_released) 이름 없이 다시 알아본다(experiments/p106). 판이 띄운 세션이면 모두 맞춘다
+      if ((s.startCommand && this.hooked(s)) || s.origin === 'board') for (const ms of [1500, 6000]) { const tm = setTimeout(() => { if (this.sessions.has(s.sessionId)) this.ensureAgentName(s); }, ms); if (tm.unref) tm.unref(); }
     } else if (e.type === 'agent_released') {
       applyAgentReleased(s.rt, now, { herdrStopping: this.herdrStopping });
       this.store.addEvent(s.sessionId, 'herdr_agent', { released: true, finalStatus: e.finalStatus, exit: s.rt.exit });
@@ -827,7 +908,7 @@ export class Backend {
       if (a.status && a.status !== 'unknown') rt.phase = 'running';
       const from = s.kind;
       s.rt = rt; s.kind = kind; s.agentName = a.name || s.paneId; s.adoptNamed = s.origin !== 'adopted' || !!a.name;
-      if (s.origin === 'adopted' && a.name && NAME_RE.test(a.name) && a.name !== s.name && ![...this.sessions.values()].some((x) => x !== s && x.name === a.name)) {
+      if (s.origin === 'adopted' && a.name && NAME_RE.test(a.name) && a.name !== s.name && !nameOwner(this.sessions.values(), a.name, s)) {
         this.store.addEvent(s.sessionId, 'renamed', { from: s.name, to: a.name }); s.name = a.name; this.store.renameSession(s.sessionId, a.name);
       }
       this.store.updateSession(s.sessionId, { kind, agentName: s.agentName, runtime: rt });
@@ -901,7 +982,7 @@ export class Backend {
     await this.adapter.waitShellReady(s.paneId, 5000);
     const args = buildStartArgs(this.launchOf(s));
     try {
-      await this.adapter.startAgent({ name: s.agentName, paneId: s.paneId, args });
+      await this.adapter.startAgent({ name: s.agentName, paneId: s.paneId, args, ...startOpt(s) });
       s.rt.exit = null; s.rt.phase = 'starting'; s.rt.launchedAt = Date.now(); s.rt.hooksSinceLaunch = 0; s.rt.sessionEnd = null;
       s.rt.herdr.launchPending = true; s.rt.herdr.agentSessionId = null;
       this.store.addEvent(s.sessionId, 'relaunched_fresh', { reason: 'resume found no conversation', args });
@@ -913,7 +994,8 @@ export class Backend {
   // 판이 다시 띄울 때의 실행 값. P4 전에 띄운 세션(이어 가기 명령에 --plugin-dir가 없음)은 그대로 둔다
   launchOf(s) {
     const withPlugin = (s.resumeArgv || []).includes('--plugin-dir');
-    return { sessionId: s.rt.claudeSessionId || s.sessionId, settingsPath: s.settingsPath, permissionMode: s.permissionMode, model: s.model, effort: s.effort, extraArgs: s.extraArgs || s.rt.extraArgs || [], ...(withPlugin ? this.plugin : {}) };
+    const plan = applyAgentAutoApprove({ kind: s.kind || 'claude', sessionId: s.rt.claudeSessionId || s.sessionId, settingsPath: s.settingsPath, permissionMode: s.permissionMode, model: s.model, effort: s.effort, extraArgs: s.extraArgs || s.rt.extraArgs || [], startCommand: s.startCommand || s.rt.startCommand || '', ...(withPlugin ? this.plugin : {}) }, this.features?.settings?.get?.() || this.store?.getMeta?.('settings') || {});
+    return plan;
   }
 
   async refreshAgent(s) {
@@ -935,8 +1017,18 @@ export class Backend {
       const text = await this.adapter.readScreen(paneId, { source: 'visible' });
       if (!this.currentSession(s, rt, paneId) || s.rt.herdr.status !== 'blocked') return;
       if (s.kind === 'claude' && isTrustDialog(text)) { s.rt.trustScreen = { at: Date.now() }; this.store.addEvent(s.sessionId, 'trust_dialog', { tail: tailLines(text, 6) }); }
+      else if ((s.kind || 'claude') === 'claude') this.noteWorktreeExit(s, text);
       if (!this.hooked(s)) s.rt.screenAsk = { tail: s.kind === 'gemini' ? geminiAuthIssue(text) || tailText(text, 14) : tailText(text, 14), at: Date.now() };
     } catch {}
+  }
+  // P71: `claude -w` 세션이 끝날 때 묻는 워크트리 나가기 질문을 화면에서 읽어 둔다(승인 줄 "워크트리를 남길까요?")
+  noteWorktreeExit(s, text) {
+    const w = parseWorktreeExit(text);
+    if (!w) return false;
+    const was = s.rt.worktreeExit;
+    s.rt.worktreeExit = { ...w, at: (was && was.at) || Date.now() };
+    if (!was) this.store.addEvent(s.sessionId, 'worktree_exit_dialog', { commits: w.commits, files: w.files, choices: w.choices.map((c) => `${c.n}. ${c.label}`) });
+    return true;
   }
   async readScreenAnswer(s, { completed = false } = {}) {
     const rt = s.rt, paneId = s.paneId, turn = rt.turn, invocation = rt.agyInvocationSeq;
@@ -1010,8 +1102,8 @@ export class Backend {
     if (!stuck.length) {
       const legacy = new HerdrAdapter({ herdrPath: this.cfg.herdrPath, session: m.legacy, logDir: this.cfg.logDir });
       deleted = await legacy.deleteSession().catch((e) => ({ deleted: false, out: e.message }));
-      if (!deleted.deleted) this.migration.problems.push(`옛 herdr 세션 ${m.legacy}을 지우지 못했다: ${deleted.reason || deleted.out || ''}`);
-    } else this.migration.problems.push(`되살리지 못한 세션이 있어 옛 herdr 세션 ${m.legacy}을 남겼다: ${stuck.join(', ')}`);
+      if (!deleted.deleted) this.migration.problems.push(`옛 herdr 세션 ${m.legacy}을 삭제하지 못했습니다: ${deleted.reason || deleted.out || ''}`);
+    } else this.migration.problems.push(`복구하지 못한 세션이 있어 이전 herdr 세션 ${m.legacy}을 유지했습니다: ${stuck.join(', ')}`);
     m.done = true;
     m.result = { resumed, stuck, closed, deleted };
     this.store.addEvent(null, 'rename_herdr_migrated', m.result);
@@ -1116,7 +1208,7 @@ export class Backend {
         const plan = recoveryPlan({ paneExists: panes.has(s.paneId), agentPresent: s.rt.herdr.present, argv, settingsPath: s.settingsPath, transcriptExists: fs.existsSync(tx), waitedMs: Date.now() - t0, graceMs: this.cfg.recoverGraceMs, releasedSinceRestart: releasedAt.has(sid) });
         if (plan === 'wait') continue;
         pending.delete(sid);
-        if (plan === 'ok' || plan === 'leave') { if (plan === 'ok') this.store.addEvent(sid, 'recover_check', { result: 'resumed with board args' }); continue; }
+        if (plan === 'ok' || plan === 'leave') { if (plan === 'ok') { this.store.addEvent(sid, 'recover_check', { result: 'resumed with board args' }); await this.ensureAgentName(s); } continue; }
         await this.recoverSession(s, plan).catch((e) => this.store.addEvent(sid, 'recover_failed', { plan, error: e.code || e.message }));
       }
       if (pending.size) await sleep(1000);
@@ -1127,6 +1219,68 @@ export class Backend {
       const a = await this.adapter.getAgent(s.agentName).catch(() => null);
       if (a && a.status && a.status !== 'unknown') { s.resumingAfterHerdr = null; applyHerdrStatus(s.rt, a.status, Date.now(), { launchPending: a.launchPending, agentSessionId: a.agentSessionId }); this.broadcastSession(s, { cause: 'resync:agent.get after resume' }); }
     }
+  }
+
+  // 판의 전달(agent.prompt). P97: 실행 명령으로 뜬 claude가 이름을 잃어 herdr가 찾지 못하면 이름을 다시 붙이고 한 번 더 보낸다
+  // P106: blockReason은 에이전트가 있다고 보는데 herdr가 그 이름을 모르는(agent_not_found) 까닭은 이름을 잃은 에이전트다. 판이 띄운 Codex도
+  // 뜬 직후 herdr가 에이전트를 놓았다가 이름 없이 다시 알아본다. 판이 띄운 세션이면 이름을 다시 붙이고, 못 붙이면(다른 패널이 그 이름을 씀, 판에 올린 세션)
+  // 그 패널에 같은 종류의 에이전트가 있을 때 패널 ID로 보낸다
+  async sendPrompt(sid, text) {
+    const s = this.sessions.get(sid);
+    if (!s || this.stopping) throw apiError('agent_not_found', '세션이 닫혔습니다');
+    const rt = s.rt, paneId = s.paneId;
+    const current = () => this.currentSession(s, rt, paneId) && !this.killing.has(sid) && !rt.exit;
+    if (!current()) throw apiError('agent_not_found', '세션이 바뀌었거나 종료 중입니다');
+    try {
+      const expected = rt[`${s.kind}SessionId`];
+      if (expected && this.adapter.getAgent) {
+        const named = await this.adapter.getAgent(s.agentName).catch(() => null);
+        if (!current()) throw apiError('agent_not_found', '세션이 바뀌었습니다');
+        if (named && ((named.paneId && named.paneId !== paneId) || named.agentSessionId !== expected)) throw apiError('agent_not_found', '에이전트 이름과 대화가 일치하지 않습니다');
+      }
+      return await this.adapter.prompt(s.agentName, text);
+    }
+    catch (e) {
+      if (!current() || e.code !== 'agent_not_found' || !paneId || s.agentName === paneId) throw e;
+      if ((s.startCommand || s.origin === 'board') && await this.ensureAgentName(s)) {
+        if (!current()) throw e;
+        return this.adapter.prompt(s.agentName, text);
+      }
+      const p = await this.adapter.getPane(paneId).catch(() => null);
+      if (!current() || !p || !p.agent || p.agent !== (s.kind || 'claude')) throw e;
+      const expected = rt[`${s.kind}SessionId`];
+      if (expected) {
+        const a = await this.adapter.getAgent(paneId).catch(() => null);
+        if (!current() || a?.agentSessionId !== expected) throw e;
+      }
+      return this.adapter.prompt(paneId, text);
+    }
+  }
+  // P97: herdr가 다시 뜨며 이어 가기 명령(ocx claude --resume …)으로 되살린 패널은 이름이 없다. herdr는 agent.start로 띄운 에이전트만
+  // 이름을 되살린다(P97 실험 3). 판의 주소(agentName)로 찾지 못하고 그 패널에 claude가 있으면 이름을 다시 붙인다(herdr 명령과 판의 전달이 이 이름을 쓴다)
+  async ensureAgentName(s) {
+    if (!s.agentName || s.agentName === s.paneId) return false;
+    const rt = s.rt, paneId = s.paneId;
+    const current = () => this.currentSession(s, rt, paneId) && !this.killing.has(s.sessionId);
+    if (!current()) return false;
+    try {
+      const a = await this.adapter.getAgent(s.agentName);
+      if (!current()) return false;
+      if (a && a.paneId === s.paneId) return false;
+      if (a) { this.store.addEvent(s.sessionId, 'agent_name_taken', { name: s.agentName, pane: a.paneId }); return false; } // 다른 패널이 그 이름을 쓴다: 손대지 않는다
+      const p = await this.adapter.getPane(paneId);
+      if (!current() || !p || p.agent !== (s.kind || 'claude')) return false;
+      const expected = rt[`${s.kind}SessionId`];
+      if (expected) {
+        const native = await this.adapter.getAgent(paneId).catch(() => null);
+        if (!current() || native?.agentSessionId !== expected) return false;
+      }
+      await this.adapter.renameAgent(paneId, s.agentName);
+      if (!current()) return false;
+      this.store.addEvent(s.sessionId, 'agent_renamed', { name: s.agentName, why: 'name lost on herdr restart' });
+      return true;
+    } catch (e) { this.store.addEvent(s.sessionId, 'agent_rename_failed', { error: e.code || e.message }); }
+    return false;
   }
 
   async recoverSession(s, plan) {
@@ -1140,13 +1294,13 @@ export class Backend {
     if (plan === 'restart_with_settings') {
       // herdr 기본 이어 가기(`claude --resume <ID>`)로 떠서 hook이 없다. 방금 이어 간 claude라 진행 중인 턴은 없다.
       await this.adapter.sendText(s.paneId, '/exit'); await sleep(150); await this.adapter.paneKeys(s.paneId, ['enter']);
-      const t = Date.now(); while (s.rt.herdr.present && Date.now() - t < this.cfg.killWaitMs) await sleep(200);
+      await waitClaudeExit(this, s, this.cfg.killWaitMs, { by: 'restart', steps }); // P71: 워크트리 나가기 질문은 남기기
       steps.push('/exit (no board settings)');
     }
     await this.adapter.waitShellReady(s.paneId, 8000);
     const launch = this.launchOf(s);
     const args = resume ? buildResumeArgs(launch) : buildStartArgs(launch);
-    await this.adapter.startAgent({ name: s.agentName, paneId: s.paneId, args });
+    await this.adapter.startAgent({ name: s.agentName, paneId: s.paneId, args, ...startOpt(s) });
     s.rt.exit = null; s.rt.phase = 'starting'; s.rt.launchedAt = Date.now(); s.rt.hooksSinceLaunch = 0; s.rt.sessionEnd = null;
     s.rt.herdr.launchPending = true; s.resumingAfterHerdr = null;
     s.resumeVerified = false; this.store.updateSession(s.sessionId, { resumeVerified: false });
@@ -1189,7 +1343,7 @@ export class Backend {
     this.store.addEvent(s.sessionId, 'closed', { reason });
     this.sessions.delete(s.sessionId);
     this.api.broadcast('session.removed', { sessionId: s.sessionId, name: s.name, reason });
-    this.bus.emit('closed', s);
+    this.bus.emit('closed', s, reason); // P81: 까닭(부모에게 보낼 닫힘 알림)
     onSessionClosed(this, s); // P6a: 덩어리에서 뺀다
     Promise.resolve(this.adapter.refreshSubscription()).catch((e) => { if (!this.stopping) this.log('subscription refresh after close:', e.message); });
   }
@@ -1199,20 +1353,22 @@ export class Backend {
   requireHerdr() {
     if (this.herdrMissing || (this.herdrCompat && this.herdrCompat.level === 'missing')) {
       const tried = ((this.herdrFind && this.herdrFind.tried) || []).length;
-      throw keyed(apiError('herdr_missing', `herdr를 찾지 못해 세션을 띄울 수 없다(후보 ${tried}곳을 봄). herdr를 설치하거나(https://herdr.dev) 설정의 herdr 경로나 ATRIUM_HERDR로 실행 파일을 준다`), 'herdrMissing', { n: tried });
+      throw keyed(apiError('herdr_missing', `herdr를 찾지 못해 세션을 시작할 수 없습니다 (후보 ${tried}곳 확인). herdr를 설치하거나(https://herdr.dev) 설정의 herdr 경로 또는 ATRIUM_HERDR로 실행 파일을 지정하세요.`), 'herdrMissing', { n: tried });
     }
     if (!this.herdrOk) {
       const c = this.herdrCompat || {};
       throw keyed(apiError('herdr_incompatible', `herdr 호환 안 됨: ${(c.problems || []).join('; ') || 'unknown'}. 지원하는 프로토콜(${(this.cfg.herdrProtocols || [22]).join(', ')})의 herdr를 설치하거나 설정의 herdr 경로로 맞는 herdr를 준다`), 'herdrIncompatible', { version: c.version || '?', protocol: c.protocol ?? '?', supported: (this.cfg.herdrProtocols || [22]).join(', ') });
     }
-    if (!this.adapter.connected) throw keyed(apiError('herdr_down', 'herdr 서버에 붙어 있지 않다'), 'herdrDown');
+    if (!this.adapter.connected) throw keyed(apiError('herdr_down', "herdr 서버에 연결되어 있지 않습니다."), 'herdrDown');
   }
   // B3: 새 세션 시작. P5: 시작 폴더의 리포지토리 워크스페이스에 생긴다(G1). 종류 shell은 에이전트 없는 일반 셸(G2)
   async spawn(p) {
     this.requireHerdr();
     const cwd = path.resolve(String(p.cwd || ''));
-    if (!p.cwd || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw keyed(apiError('bad_request', `폴더가 없다: ${p.cwd}`), 'noFolder', { path: p.cwd });
-    const taken = new Set([...this.sessions.values()].map((s) => s.name).concat([...this.spawningNames]));
+    if (!p.cwd || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw keyed(apiError('bad_request', `폴더를 찾을 수 없습니다: ${p.cwd}`), 'noFolder', { path: p.cwd });
+    const pending = this.spawningNames || (this.spawningNames = new Set()); // 만드는 중인 세션 이름
+    const taken = takenNames(this.sessions.values(), pending); // P66: 판의 이름(label)도 피한다. 대소문자 무시
+    // P33: 띄울 값은 호출자(launchers.mjs)가 정한다. 함께 준 값(모델 등)이 호출자 값을 덮는다. 호출자 없이 부르면 준 값만 쓴다(atrium child, CLI --kind)
     const plan = spawnPlanOf(this, p);
     const { flavor, command, kind } = plan;
     const shell = kind === SHELL;
@@ -1220,7 +1376,7 @@ export class Backend {
     const prefix = flavor === DEEPSEEK ? 'ds' : shell ? 'sh' : 's';
     if (!name) { let i = 1; while (taken.has(`${prefix}${i}`)) i++; name = `${prefix}${i}`; }
     if (!NAME_RE.test(name) || name === 'all') throw apiError('bad_request', `이름은 영문, 숫자, -, _ 만(all 제외): ${name}`);
-    if (taken.has(name)) throw keyed(apiError('name_taken', `이미 있는 이름: ${name}`), 'nameTaken', { name });
+    if (taken.has(String(name).toLowerCase())) throw keyed(apiError('name_taken', `이미 있는 이름: ${name}`), 'nameTaken', { name });
     this.spawningNames.add(name);
     try { return await this.spawnReserved(p, { name, cwd, flavor, command, kind, shell, plan }); }
     finally { this.spawningNames.delete(name); }
@@ -1228,10 +1384,12 @@ export class Backend {
 
   async spawnReserved(p, { name, cwd, flavor, command, kind, shell, plan = spawnPlanOf(this, { ...p, kind, flavor }) }) {
     const claude = kind === 'claude';
-    const permissionMode = claude ? plan.permissionMode || 'manual' : p.permissionMode || 'manual';
+    const permissionMode = plan.permissionMode || p.permissionMode || 'manual';
     if (!PERMISSION_MODES.has(permissionMode)) throw apiError('bad_request', `권한 모드: ${permissionMode}`);
     const model = plan.model || null, effort = claude ? plan.effort || null : null;
     const allowHerdr = claude && !!plan.allowHerdr, extraArgs = claude ? plan.extraArgs || [] : [];
+    const parentS = p.parentSessionId ? this.sessions.get(p.parentSessionId) : null;
+    const startCommand = !claude ? '' : plan.startCommand != null ? plan.startCommand : p.branch && parentS?.kind === 'claude' ? parentS.startCommand || parentS.rt?.startCommand || '' : '';
     // F5: herdr가 아는 에이전트 종류. Claude Code만 판의 hook과 이어 가기 등록을 붙인다
     if (!KIND_RE.test(kind)) throw apiError('bad_request', `에이전트 종류: ${kind}`);
     if (!shell) {
@@ -1256,7 +1414,7 @@ export class Backend {
       if (plan.env) extra.env = { ...plan.env, ...(extra.env || {}) }; // managed session values win
       settingsPath = writeSessionSettings({ file: path.join(this.cfg.sessionsDir, `${sessionId}.json`), hookUrl: this.hookUrl, token: hookToken, sessionId, timeoutSec: this.cfg.hookTimeoutSec, allowHerdr, ...extra });
       trust = predictTrust(cwd, this.cfg.claudeJson);
-      const launch = { sessionId, settingsPath, permissionMode, model, effort, extraArgs, worktree: p.worktree || null, ...this.plugin };
+      const launch = { sessionId, settingsPath, permissionMode, model, effort, extraArgs, startCommand, worktree: p.worktree || null, ...this.plugin };
       args = buildStartArgs(launch);
       resumeArgv = buildResumeArgv({ claudeCommand: this.cfg.claudeCommand, ...launch });
     } else if (!shell) {
@@ -1285,22 +1443,24 @@ export class Backend {
     if (shell) rt.phase = 'running';
     if (plan.env && Object.keys(plan.env).length) rt.launcherEnv = { ...plan.env };
     if (command) rt.launcherCommand = command;
+    if (startCommand) rt.startCommand = startCommand;
     if (extraArgs.length) rt.extraArgs = [...extraArgs];
     if (codexIntegration) Object.assign(rt, codexIntegration.runtime, { codexContext: codexIntegration.context });
     if (kind === 'gemini') { rt.geminiIntegration = true; rt.geminiReady = false; }
     if (kind === 'agy') rt.agyComposer = 'starting';
     let s;
     const hw = await this.withNewPane(() => this.adapter.createWorkspace({ cwd, label: name, env: paneEnv }), (r) => {
-      s = { sessionId, name, cwd, paneId: r.paneId, herdrWorkspaceId: r.workspaceId, agentName: shell ? r.paneId : name, model, effort, permissionMode, settingsPath, hookToken, resumeArgv, resumeVerified: false, createdAt: Date.now(), closedAt: null, seenAt: null, touchedAt: Date.now(), rt, lastState: null, kind, origin: 'board', parentSessionId: p.parentSessionId || null, workspaceKey: ws.key, flavor, extraArgs };
+      s = { sessionId, name, cwd, paneId: r.paneId, herdrWorkspaceId: r.workspaceId, agentName: shell ? r.paneId : name, model, effort, permissionMode, settingsPath, hookToken, resumeArgv, resumeVerified: false, createdAt: Date.now(), closedAt: null, seenAt: null, touchedAt: Date.now(), rt, lastState: null, kind, origin: 'board', parentSessionId: p.parentSessionId || null, workspaceKey: ws.key, flavor, extraArgs, startCommand };
       this.store.insertSession({ ...s, runtime: rt });
       this.sessions.set(sessionId, s);
       if (p.branch) this.branch.noteChild(sessionId, p.branch); // P8: atrium child로 만든 하위 세션
     });
     // 빈자리는 그 워크스페이스 영역 안이나 바로 옆(P6a H1). 사람이 보는 화면은 옮기지 않는다. P8(K4): 하위 세션은 부모 오른쪽 열에 형제끼리 쌓는다
-    const place = p.branch ? this.branch.placeChild(p.parentSessionId, ws.key) : null;
+    const place = p.branch && !p.branch.head ? this.branch.placeChild(p.parentSessionId, ws.key) : null;
     const area = this.worktrees ? this.worktrees.areaOf(ws.key, cwd) : ''; // P27: 워크트리 폴더에서 띄우면 그 워크트리 영역
     const slot = place || slotFor(this, { wsKey: ws.key, size: NODE, area });
-    this.store.setNode({ session_id: sessionId, x: slot.x, y: slot.y, w: place ? place.w : NODE.w, h: place ? place.h : NODE.h, z: 0, size: place ? place.size : undefined, area: place ? place.area ?? area : area });
+    this.store.setNode({ session_id: sessionId, x: slot.x, y: slot.y, w: place ? place.w : NODE.w, h: place ? place.h : NODE.h, z: 0, size: place ? place.size : NODE.size, aspect: DEFAULT_ASPECT, area: place ? place.area ?? area : area });
+    if (p.branch && !p.branch.head && place) reflowLines(this, { workspaceKey: ws.key, cause: 'spawn child' });
     settleRegions(this, 'spawn');
     this.store.addEvent(sessionId, 'spawn', { name, kind, cwd: slash(cwd), workspace: ws.key, trust, args, allowHerdr, ...(plan.launcher ? { launcher: plan.launcher } : {}), ...(extraArgs.length ? { extraArgs } : {}), ...(plan.env ? { envKeys: Object.keys(plan.env) } : {}), ...(flavor ? { flavor, command: command ? '[command]' : null } : {}), ...(p.branch ? { parent: p.parentSessionId, worktree: p.worktree || null, place: place ? 'tree' : 'slot' } : {}) });
     await this.adapter.refreshSubscription();
@@ -1320,8 +1480,15 @@ export class Backend {
 
     const shellReady = await this.adapter.waitShellReady(hw.paneId);
     let st = { agent: null, argv: [kind, ...args] };
-    try { st = await this.adapter.startAgent({ name, paneId: hw.paneId, args, kind }); }
-    catch (e) { if (e.code !== 'agent_not_ready') throw e; this.store.addEvent(sessionId, 'agent_not_ready', { kind }); } // 시작하자마자 대화상자(신뢰 등)에서 막혔다. 이름은 남는다
+    try { st = await this.adapter.startAgent({ name, paneId: hw.paneId, args, kind, ...(startCommand ? { command: startWords(startCommand) } : {}) }); }
+    catch (e) {
+      if (e.code === 'agent_not_detected') {
+        this.store.addEvent(sessionId, 'start_command_failed', { startCommand: '[command]' });
+        throw keyed(apiError('start_command_failed', '실행 명령으로 에이전트를 시작하지 못했습니다. 터미널에서 오류를 확인하세요.'), 'launcherStart.failed', { cmd: startCommand, kind });
+      }
+      if (e.code !== 'agent_not_ready') throw e;
+      this.store.addEvent(sessionId, 'agent_not_ready', { kind });
+    }
     rt.herdr.launchPending = st.agent ? st.agent.launchPending : true;
     // B3 4번: 이어 가기 명령 등록. agent.start 직후에는 herdr가 resume_not_accepted("reporter to hold the pane")로 거부하고,
     // herdr가 패널에서 claude를 찾은 뒤(약 1.5초)에는 받는다. 받은 등록은 agent_session을 남기므로 신뢰 대화상자가 끝나 ready가 된 뒤에 한다.
@@ -1330,7 +1497,10 @@ export class Backend {
     this.log(`spawned ${name} ${kind} ${sessionId} pane=${hw.paneId} ws=${ws.key} shellReady=${shellReady} trust=${JSON.stringify(trust)}`);
     return { ...out, argv: st.argv };
   }
-  codexSettings(sessionId, options = {}) { return prepareCodexSession(this, { sessionId, ...options }); }
+  codexSettings(sessionId, options = {}) {
+    const settings = this.features?.settings?.get?.() || this.store?.getMeta?.('settings') || {};
+    return prepareCodexSession(this, { sessionId, ...options, args: providerPermissionArgs('codex', options.args || [], options.permissionMode || 'manual', { autoApprove: settings.agentAutoApprove === true }) });
+  }
   agySettings(sessionId, token) {
     return writeAgySession({ dir: this.cfg.sessionsDir, sessionId, token, hookUrl: this.hookUrl.replace('/hooks/claude', '/hooks/agy'), branchEnv: this.branch.envFor(sessionId), pluginDir: this.plugin?.pluginDir, herdrPath: this.cfg.herdrPath });
   }
@@ -1397,6 +1567,7 @@ export class Backend {
 
   // B1·B2: 이름 하나 이상(@a @b) 또는 @all. P5: 셸에는 보내지 않는다(not_agent).
   // P6a(H8): @all은 캔버스 전체의 에이전트 세션. workspace를 주면 그 워크스페이스의 에이전트 세션만
+  // P90: whileWorking: 'type'(휴대폰 입력 줄)이면 Claude Code가 일하는 중일 때 기다리지 않고 바로 넣는다(delivery.mjs canTypeNow)
   async send(p) {
     let targets = Array.isArray(p.target) ? p.target : null;
     let text = p.text;
@@ -1404,8 +1575,8 @@ export class Backend {
       if (p.target) targets = String(p.target).split(/[\s,]+/).filter(Boolean);
       else { const parsed = parseTargets(p.text || ''); targets = parsed.targets; text = parsed.text; }
     }
-    if (!targets.length) throw apiError('bad_request', '받는 세션이 없다(@이름)');
-    if (!text || !String(text).trim()) throw apiError('bad_request', '보낼 글이 없다');
+    if (!targets.length) throw apiError('bad_request', "메시지를 받을 세션을 @이름으로 지정하세요.");
+    if (!text || !String(text).trim()) throw apiError('bad_request', "보낼 내용을 입력하세요.");
     // 대상 풀기: @all, @세션 이름(B2)
     const picked = new Map(); // sessionId → 세션
     const agent = (s) => s.kind !== SHELL;
@@ -1414,19 +1585,19 @@ export class Backend {
       if (t === 'all') {
         const ws = p.workspace ? await this.resolveWorkspace(p.workspace) : null;
         const list = [...this.sessions.values()].filter((s) => (!ws || s.workspaceKey === ws.key) && agent(s));
-        if (!list.length) throw apiError('not_found', ws ? `워크스페이스 ${ws.root}에 에이전트 세션이 없다` : '판에 에이전트 세션이 없다');
+        if (!list.length) throw apiError('not_found', ws ? `프로젝트 ${ws.root}에 에이전트 세션이 없습니다.` : "보드에 에이전트 세션이 없습니다.");
         for (const s of list) if (!picked.has(s.sessionId)) picked.set(s.sessionId, s);
         continue;
       }
-      const one = [...this.sessions.values()].find((s) => s.name === t || s.sessionId === t);
-      if (one && !agent(one)) throw keyed(apiError('not_agent', `@${one.name}은 일반 셸이다. 명령 바로는 에이전트에게만 보낸다. 셸에는 터미널에서 직접 친다`), 'shellNoBar', { name: one.name });
-      if (!one) throw keyed(apiError('not_found', `판에 없는 세션: ${raw}`), 'targetNotFound', { ref: raw });
+      const one = findSession(this.sessions.values(), t); // P66: 새 이름과 옛 주소를 둘 다 받는다
+      if (one && !agent(one)) throw keyed(apiError('not_agent', `@${shownName(one)} 세션은 일반 셸입니다. 명령 입력줄은 에이전트에게만 메시지를 보냅니다. 셸 명령은 터미널에 직접 입력하세요.`), 'shellNoBar', { name: shownName(one) });
+      if (!one) throw keyed(apiError('not_found', `보드에서 세션을 찾을 수 없습니다: ${raw}`), 'targetNotFound', { ref: raw });
       picked.set(one.sessionId, one);
     }
     const deliveries = [...picked.values()].map((s) => {
-      const d = this.queue.enqueue(s.sessionId, toLF(text));
+      const d = this.queue.enqueue(s.sessionId, toLF(text), { typeNow: p.whileWorking === 'type' });
       this.touch(s);
-      return { deliveryId: d.deliveryId, sessionId: s.sessionId, name: s.name, status: d.status };
+      return { deliveryId: d.deliveryId, sessionId: s.sessionId, name: shownName(s), status: d.status };
     });
     // I2(P6b): 명령 바에서 보낸 글은 Thread에 남긴다. source: bar(기본), output(출력 보기에서 답장)
     const item = this.features ? this.features.thread.add({ source: p.source || 'bar', text: toLF(text), targets: targets.map((t) => '@' + String(t).replace(/^@/, '')), deliveries }) : null;
@@ -1452,12 +1623,16 @@ export class Backend {
     const shared = await this.adapter.workspacePanes(s.herdrWorkspaceId).then((ps) => ps.filter((x) => x.paneId !== s.paneId)).catch(() => []);
     if (!this.currentSession(s, rt, paneId)) throw apiError('session_changed', '세션이 바뀌었습니다. 다시 확인하세요');
     const kindName = s.kind || 'claude';
-    const closeText = shared.length ? `패널 ${s.paneId}만 닫는다(같은 작업 공간의 다른 패널 ${shared.length}개는 그대로).` : '패널을 닫는다.';
+    const closeText = shared.length ? `패널 ${s.paneId}만 닫습니다 (같은 herdr 작업 공간의 다른 터미널 창 ${shared.length}개는 유지합니다).` : "터미널 창을 닫습니다.";
     // G2: 셸은 패널만 닫는다. 돌고 있는 명령도 함께 끝난다
     const closeMsg = shared.length ? m('killClosePane', { pane: s.paneId, n: shared.length }) : m('killCloseAll');
-    if (!p.confirm && kindName === SHELL) { const sh = s.rt.shell; const cmd = sh && !sh.atPrompt ? clip(sh.command || (sh.procs || []).join(', ') || '?', 60) : null; return confirmResult(`셸 ${s.name}의 ${closeText}${cmd ? ` 돌고 있는 명령(${cmd})도 끝난다.` : ''}`, m('killShell', { name: s.name, close: closeMsg, running: cmd ? m('killShellRunning', { cmd }) : '' })); }
-    if (!p.confirm) return confirmResult(`${s.name} 세션의 ${kindName}를 끄고 ${closeText} 보관하면 보관함에서 다시 열 수 있다.${kindName === 'claude' ? ' 삭제하면 대화 기록을 휴지통으로 보내고 판에서 지운다.' : ' 삭제하면 판에서 지운다.'}`, m('kill', { name: s.name, kind: kindName, close: closeMsg, del: m(kindName === 'claude' ? 'killDeleteClaude' : 'killDeleteOther') }));
-    if (p.after && !['archive', 'delete'].includes(p.after)) throw apiError('bad_request', `after는 archive 또는 delete: ${p.after}`);
+    if (!p.confirm && kindName === SHELL) { const sh = s.rt.shell; const cmd = sh && !sh.atPrompt ? clip(sh.command || (sh.procs || []).join(', ') || '?', 60) : null; return confirmResult(`셸 ${s.name}: ${closeText}${cmd ? ` 실행 중인 명령(${cmd})도 종료합니다.` : ''}`, m('killShell', { name: s.name, close: closeMsg, running: cmd ? m('killShellRunning', { cmd }) : '' })); }
+    // P71: `claude -w` 세션이면 확인에 워크트리를 알린다. 창의 닫기 확인이 "워크트리 남기기(기본)"와 "워크트리와 브랜치 지우기"를 보인다
+    const wt = worktreeOf(s, this.branch && this.branch.info.get(s.sessionId));
+    if (!p.confirm) return confirmResult(`${s.name} 세션에서 실행 중인 ${kindName} 에이전트를 종료합니다. ${closeText} 보관하면 보관함에서 다시 열 수 있습니다.${kindName === 'claude' ? " 삭제하면 대화 기록을 휴지통으로 보내고 보드에서 제거합니다." : " 삭제하면 보드에서 제거합니다."}${wt ? ` 워크트리(${wt.name})는 남깁니다. 지우려면 worktree: remove를 지정하세요.` : ''}`, m('kill', { name: s.name, kind: kindName, close: closeMsg, del: m(kindName === 'claude' ? 'killDeleteClaude' : 'killDeleteOther') }), wt ? { worktree: wt } : {});
+    if (p.after && !['archive', 'delete'].includes(p.after)) throw apiError('bad_request', `after에는 archive 또는 delete를 지정하세요: ${p.after}`);
+    if (p.worktree != null && !['keep', 'remove'].includes(p.worktree)) throw apiError('bad_request', `worktree에는 keep 또는 remove를 지정하세요: ${p.worktree}`);
+    const wtChoice = p.worktree === 'remove' ? 'remove' : 'keep'; // 사람이 지우기를 고르지 않았으면 남긴다
     // P21(D4): 잠든 세션은 패널이 없다. herdr 없이 판에서 닫고 보관·삭제한다
     if (s.rt.sleep && !s.paneId && !(this.sleeper && (this.sleeper.wakes.has(s.sessionId) || this.sleeper.going.has(s.sessionId)))) {
       s.rt.sleep = null; s.rt.exit = { kind: 'normal', reason: 'closed while sleeping', at: Date.now() };
@@ -1473,7 +1648,8 @@ export class Backend {
     try {
       const st = () => deriveState(s.rt).state;
       if (s.rt.herdr.present && kindName !== SHELL) {
-        if (st() === 'waiting' || st() === 'trust_wait' || st() === 'working') {
+        const exiting = !!s.rt.worktreeExit; // P71: 워크트리 나가기 질문이 이미 떠 있다. esc로 취소하지 않고 그 질문에 답한다
+        if (!exiting && (st() === 'waiting' || st() === 'trust_wait' || st() === 'working')) {
           await this.adapter.sendKeys(s.agentName, ['esc']).catch((e) => steps.push(`esc failed ${e.code}`));
           steps.push(`esc (${st()})`);
           for (let i = 0; i < 25 && s.rt.herdr.present && ['waiting', 'trust_wait', 'working'].includes(st()); i++) await sleep(200);
@@ -1481,7 +1657,8 @@ export class Backend {
         if (s.rt.herdr.present) {
           s.rt.exitRequested = true;
           // Claude Code는 /exit. 다른 종류는 하네스마다 끝내는 말이 달라 ctrl+c를 두 번 보낸다(codex는 두 번째에 끝난다)
-          if (EXIT_TEXT[kindName]) {
+          if (exiting) steps.push('worktree exit dialog open');
+          else if (EXIT_TEXT[kindName]) {
             await this.adapter.sendText(s.paneId, EXIT_TEXT[kindName]);
             await sleep(150);
             await this.adapter.paneKeys(s.paneId, ['enter']);
@@ -1489,9 +1666,8 @@ export class Backend {
           } else {
             for (let i = 0; i < 2 && s.rt.herdr.present; i++) { await this.adapter.paneKeys(s.paneId, ['ctrl+c']).catch(() => {}); steps.push('ctrl+c'); await sleep(600); }
           }
-          const t0 = Date.now();
-          while (s.rt.herdr.present && Date.now() - t0 < this.cfg.killWaitMs) await sleep(200);
-          steps.push(s.rt.herdr.present ? `${kindName} still running` : `${kindName} exited in ${Date.now() - t0}ms`);
+          const waited = await waitClaudeExit(this, s, this.cfg.killWaitMs, { worktree: wtChoice, by: 'close', steps }); // claude가 아닌 종류는 기다리기만 한다
+          steps.push(s.rt.herdr.present ? `${kindName} still running` : `${kindName} exited in ${waited}ms`);
         }
       }
       const exit = s.rt.exit;
@@ -1515,15 +1691,16 @@ export class Backend {
   async answer(p) {
     const s = this.resolve(p.session);
     this.requireHerdr();
+    if (s.rt.worktreeExit && !s.rt.pendingAsk) return this.answerWorktreeExit(s, p); // P71: 화면에서 읽은 질문이라 hook이 없어도 답한다
     // 승인 카드의 키 순서는 판이 띄운 Claude Code만 안다(E9). 다른 종류와 판에 올린 에이전트는 터미널에서 답한다(F5)
-    if (!this.hooked(s)) throw apiError('answer_in_terminal', `${s.name}(${s.kind})는 판이 키 순서를 모른다. 터미널에서 답한다`);
+    if (!this.hooked(s)) throw apiError('answer_in_terminal', `${s.name}(${s.kind})의 응답 키 입력 순서를 보드에서 확인할 수 없습니다. 터미널에서 직접 응답하세요.`);
     const card = { toolUseId: p.toolUseId || null, since: p.since || null };
     const ask = s.rt.pendingAsk;
     if (!ask) return { sent: false, reason: 'no_pending_ask' };
     if (!sameAsk(ask, card)) return { sent: false, reason: 'stale' };
     const plan = planAnswer(ask, p);
     checkSteps(plan.steps);
-    if (s.answering) throw keyed(apiError('busy', '이 세션에 답을 넣는 중이다'), 'answerBusy');
+    if (s.answering) throw keyed(apiError('busy', "이 세션에 이미 응답을 전송하고 있습니다."), 'answerBusy');
     s.answering = true;
     try {
       const a = await this.adapter.getAgent(s.agentName);
@@ -1544,15 +1721,67 @@ export class Backend {
     } finally { s.answering = false; }
   }
 
+  // P104: 휴대폰 키 줄의 키를 그 세션 패널에 그대로 보낸다(pane.send_keys). 허용 목록의 키만, 세션마다 차례로 보내고 이벤트 'keys'로 남긴다.
+  // 판이 답을 고르지 않으므로 상태(waiting 등)를 보지 않는다. 셸의 방향키처럼 언제나 보낸다
+  async sendKeysTo(p, c) {
+    const s = this.resolve(p.session ?? p.target);
+    const rt = s.rt, paneId = s.paneId;
+    const keys = checkKeys(p.keys);
+    this.requireHerdr();
+    if (!s.paneId) throw keyed(apiError('sleeping', `@${s.name} 세션은 절전 중이라 터미널이 닫혀 있습니다. 먼저 작업을 재개하세요.`), 'sleepingNoPane', { name: s.name });
+    const validateAttachment = () => {
+      if (p.controllerPid == null && p.attachmentId == null) return;
+      if (!this.relay?._entry) throw apiError('not_attached', '터미널 연결을 확인해야 합니다');
+      const entry = this.relay._entry(s.sessionId, c, p.controllerPid, p.attachmentId);
+      if (entry.paneId !== paneId) throw apiError('stale_attachment', '터미널이 바뀌었습니다');
+    };
+    validateAttachment();
+    await this.keyChain(s.sessionId, () => {
+      if (!this.currentSession(s, rt, paneId) || this.killing.has(s.sessionId) || rt.exit) throw apiError('closed', '세션이 바뀌었거나 종료 중입니다');
+      validateAttachment();
+      return this.adapter.paneKeys(paneId, keys);
+    });
+    if (!this.currentSession(s, rt, paneId)) return { sent: true, keys };
+    s.lastUserInputAt = Date.now();
+    this.touch(s);
+    if (c) this.peers.touch(c);
+    this.store.addEvent(s.sessionId, 'keys', { keys, ...keysBy(c) });
+    return { sent: true, keys };
+  }
+
+  // P71: 승인 줄의 워크트리 나가기 답. 보내기 직전에 화면을 다시 읽어 질문이 아직 있는지 보고 그 번호를 보낸다
+  async answerWorktreeExit(s, p) {
+    const rt = s.rt, paneId = s.paneId;
+    const cur = s.rt.worktreeExit;
+    if (p.since && p.since !== cur.at) return { sent: false, reason: 'stale' };
+    planAnswer(worktreeExitAsk(cur), p); // 답 모양과 지우기 확인을 먼저 본다
+    if (s.answering) throw keyed(apiError('busy', "이 세션에 이미 응답을 전송하고 있습니다."), 'answerBusy');
+    s.answering = true;
+    try {
+      const w = parseWorktreeExit(await this.adapter.readScreen(paneId, { source: 'visible' }).catch(() => ''));
+      if (!this.currentSession(s, rt, paneId) || this.killing.has(s.sessionId)) return { sent: false, reason: 'stale' };
+      if (!w) { s.rt.worktreeExit = null; this.broadcastSession(s, { cause: 'worktree_exit:gone' }); return { sent: false, reason: 'stale' }; }
+      const plan = planAnswer(worktreeExitAsk({ ...w, at: cur.at }), p);
+      checkSteps(plan.steps);
+      s.rt.exitRequested = true; // 어느 답이든 claude는 끝난다(hook이 없는 세션도 정상 종료로 본다)
+      await this.adapter.paneKeys(paneId, plan.steps[0].keys);
+      this.touch(s);
+      const rec = { by: 'board', kind: 'worktree_exit', choice: p.choice, commits: w.commits, files: w.files, label: plan.label, steps: plan.steps.map((x) => x.keys.join('+')) };
+      this.store.addEvent(s.sessionId, 'answer', rec);
+      this.api.broadcast('session.answer', { sessionId: s.sessionId, name: s.name, ...rec });
+      return { sent: true, label: plan.label, steps: rec.steps };
+    } finally { s.answering = false; }
+  }
+
   // herdr 서버 끄기·켜기·다시 띄우기(C3, D2). 끄면 claude도 함께 끝나고, 다시 띄우면 이어 가기로 다시 뜬다.
   async herdrControl(op, confirm) {
-    const warn = '판 전용 herdr 서버를 끄면 그 안의 claude가 모두 끝난다. 다시 띄우면 세션들이 이어 가기로 다시 뜨고, 진행 중이던 턴은 끊긴다.';
+    const warn = "보드 전용 herdr 서버를 종료하면 모든 Claude Code 세션이 종료되고 진행 중인 작업이 중단됩니다. 서버를 다시 시작하면 기존 대화에서 세션을 재개합니다.";
     if ((op === 'stop' || op === 'restart') && !confirm) return confirmResult(warn, m('herdrStop'));
     const out = { op };
     if (op === 'stop' || op === 'restart') {
       // P54: 끌 실행 파일을 모르면(찾기 실패) 다시 찾는다. 그래도 없으면 부르지 않고 까닭을 알린다(전에는 10초 기다린 뒤 'herdr not found'를 담아 돌려주었다)
       if (!this.adapter.herdrPath) await this.resolveHerdr(op);
-      if (!this.adapter.herdrPath) throw apiError('herdr_missing', 'herdr 실행 파일을 찾지 못해 판 herdr 서버를 끌 수 없다. 설정의 herdr 경로나 ATRIUM_HERDR로 실행 파일을 준다');
+      if (!this.adapter.herdrPath) throw apiError('herdr_missing', "herdr 실행 파일을 찾지 못해 보드 전용 herdr 서버를 종료할 수 없습니다. 설정의 herdr 경로 또는 ATRIUM_HERDR로 실행 파일을 지정하세요.");
       this.herdrStopping = true;
       out.stop = await this.adapter.stopServer();
       await sleep(500);
@@ -1564,7 +1793,7 @@ export class Backend {
       if (!this.adapter.herdrPath) { this.herdrMissing = { reason: 'not_found', at: Date.now() }; this.herdrCompat = { ok: false, level: 'missing', problems: ['herdr not found'] }; this.herdrOk = false; this.api.broadcast('herdr', this.herdrView()); this.requireHerdr(); }
       let r;
       try { r = await this.adapter.startServer(); }
-      catch (e) { await this.ensureHerdr(); this.api.broadcast('herdr', this.herdrView()); throw keyed(apiError(e.code || 'start_failed', `herdr 서버를 띄우지 못했다: ${e.message}`), 'herdrStartFailed', { error: e.herdrMessage || e.message }); }
+      catch (e) { await this.ensureHerdr(); this.api.broadcast('herdr', this.herdrView()); throw keyed(apiError(e.code || 'start_failed', `herdr 서버를 시작하지 못했습니다: ${e.message}`), 'herdrStartFailed', { error: e.herdrMessage || e.message }); }
       this.herdrMissing = null;
       this.store.addEvent(null, 'herdr_started', { pid: r.pid, by: op });
       out.start = { started: r.started, pid: r.pid, ms: r.ms, version: r.pong && r.pong.version, protocol: r.pong && r.pong.protocol, exe: this.adapter.herdrPath };
@@ -1647,7 +1876,12 @@ export class Backend {
   linksOpen() { return this.store.links().filter((l) => this.sessions.has(l.from) && this.sessions.has(l.to)).map((l) => this.linkView(l)); }
   linkView(l) {
     const a = this.sessions.get(l.from), b = this.sessions.get(l.to);
-    return { ...l, fromName: a ? a.name : null, toName: b ? b.name : null, toAgentName: b ? b.agentName : null, toPaneId: b ? b.paneId : null };
+    return { ...l, fromName: shownName(a), toName: shownName(b), toAgentName: b ? b.agentName : null, toPaneId: b ? b.paneId : null, ...this.linkPromptView(l) };
+  }
+  // P67: prompts(지시 수, 이름표의 +n), promptAt(마지막 지시 시각, 이름표가 물러나는 기준)
+  linkPromptView(l) {
+    const p = this.store.linkPromptStats ? this.store.linkPromptStats(l.linkId) : { n: 0, at: null };
+    return { prompts: p.n, promptAt: p.at };
   }
   // 순서 있는 쌍마다 연결 하나. 지운 연결에 새 일이 오가면 다시 연다
   ensureLink(from, to, patch = {}) {
@@ -1697,7 +1931,7 @@ export class Backend {
       for (const c of mine) {
         this.store.addEvent(s.sessionId, 'herdr_call', { verb: c.verb, target: c.target || c.name || c.pane || null, text: clip(c.text, 200), toolUseId: id });
         // P21(D4): 다른 에이전트가 herdr로 잠든 세션을 부른다. 이 호출은 대상이 없어 실패하므로 깨워 두고, 다시 부르면 된다(판 안내에 적었다)
-        { const z = c.target && this.resolveAgentTarget(c.target); if (z && z !== s && z.rt.sleep && this.sleeper) this.sleeper.wakeFor(z, `herdr:${s.name}`).catch(() => {}); } // P24: 그 리포 전체
+        { const z = c.target && this.resolveAgentTarget(c.target); if (z && z !== s && z.rt.sleep && this.sleeper) this.sleeper.wakeFor(z, `herdr:${s.name}`).catch(() => {}); } // P24: 그 리포 전체(P111: 혼자 잠든 세션은 그 세션만)
         if (c.verb === 'agent.prompt') {
           const t = this.resolveAgentTarget(c.target);
           if (t && t !== s) { const l = this.ensureLink(s.sessionId, t.sessionId, { observed: true }); this.linkEvent(l, 'prompt', c.text, { toolUseId: id, wait: c.wait, via: 'hook' }); t.openPromptFrom = { linkId: l.linkId, at: now, text: c.text }; }
@@ -1766,7 +2000,7 @@ export class Backend {
         || intents.find((x) => { const f = this.sessions.get(x.from); return f && f.herdrWorkspaceId === hw; });
       const sameWs = [...this.sessions.values()].find((x) => x.herdrWorkspaceId === hw && x.paneId !== paneId);
       const parent = (it && this.sessions.get(it.from)) || sameWs || null;
-      const taken = new Set([...this.sessions.values()].map((x) => x.name).concat([...(this.spawningNames || [])])); // 만드는 중인 이름도 피한다(이슈 #1-7)
+      const taken = takenNames(this.sessions.values(), [...(this.spawningNames || [])]); // 만드는 중인 이름도 피한다(이슈 #1-7). P66: 판의 이름도
       const base = a ? (a.name && NAME_RE.test(a.name) ? a.name : `${a.agent || 'agent'}-${paneId.replace(/[^A-Za-z0-9]/g, '')}`) : `sh-${paneId.replace(/[^A-Za-z0-9]/g, '')}`;
       let name = base;
       for (let i = 2; taken.has(name); i++) name = `${base.slice(0, 28)}-${i}`;
@@ -1790,7 +2024,7 @@ export class Backend {
       const anchor = parent && parent.workspaceKey === wsKey && this.store.nodes().find((n) => n.session_id === parent.sessionId);
       const area = this.worktrees ? this.worktrees.areaOf(wsKey, cwd) : ''; // P27
       const slot = slotFor(this, { wsKey, size: NODE, near: anchor && (anchor.area || '') === area ? anchor : null, area });
-      this.store.setNode({ session_id: s.sessionId, x: slot.x, y: slot.y, w: NODE.w, h: NODE.h, z: 0, area });
+      this.store.setNode({ session_id: s.sessionId, x: slot.x, y: slot.y, w: NODE.w, h: NODE.h, z: 0, size: NODE.size, aspect: NODE.aspect, area });
       // P6a(H5): herdr에서 부모와 같은 탭에 나뉜 패널이면 나눈 방향대로 붙인다
       if (parent) await autoDockSplit(this, s, parent);
       settleRegions(this, 'adopt');
@@ -1828,7 +2062,7 @@ export class Backend {
     s._naming = true;
     try {
       const a = (await this.adapter.listAgents()).find((x) => x.paneId === s.paneId);
-      if (!a || !a.name || !NAME_RE.test(a.name) || [...this.sessions.values()].some((x) => x !== s && x.name === a.name)) return;
+      if (!a || !a.name || !NAME_RE.test(a.name) || nameOwner(this.sessions.values(), a.name, s)) return;
       s.adoptNamed = true; s.agentName = a.name;
       if (s.name !== a.name) { this.store.addEvent(s.sessionId, 'renamed', { from: s.name, to: a.name }); s.name = a.name; this.store.renameSession(s.sessionId, a.name); }
       this.store.updateSession(s.sessionId, { agentName: a.name });
@@ -1863,9 +2097,9 @@ export class Backend {
   // F2: 판에서 A → B 연결을 잇고 역할을 정한다. A에게 B의 herdr 이름, 패널, 역할을 B1 규칙으로 알린다
   linkCreate(p) {
     const a = this.resolve(p.from), b = this.resolve(p.to);
-    if (a === b) throw apiError('bad_request', '같은 세션끼리는 잇지 않는다');
+    if (a === b) throw apiError('bad_request', "세션을 자기 자신과 연결할 수 없습니다.");
     const role = String(p.role || '').trim();
-    if (!ROLE_RE.test(role)) throw apiError('bad_request', '역할은 1~40자, 줄바꿈·따옴표·$·\\ 없이');
+    if (!ROLE_RE.test(role)) throw apiError('bad_request', "역할은 1~40자로 입력하세요. 줄바꿈, 따옴표, $, \\는 사용할 수 없습니다.");
     const l = this.ensureLink(a.sessionId, b.sessionId, { role });
     const text = roleNotice({ role, agentName: b.agentName, paneId: b.paneId, kind: b.kind || 'claude' });
     const d = this.queue.enqueue(a.sessionId, text);
@@ -1877,15 +2111,31 @@ export class Backend {
   // 연결 끊기. 역할이 있었으면 A에게 끊겼다고 알린다. 선은 판에서 빠지고 기록은 남는다
   linkDelete(p) {
     const l = this.store.getLink(p.link);
-    if (!l) throw apiError('not_found', `없는 연결: ${p.link}`);
+    if (!l) throw apiError('not_found', `연결을 찾을 수 없습니다: ${p.link}`);
     const a = this.sessions.get(l.from), b = this.sessions.get(l.to);
-    if (!p.confirm) return l.role && a ? confirmResult(`@${a.name} → @${b ? b.name : '?'} 연결("${l.role}")을 끊는다. @${a.name}에게 끊겼다고 알린다. 오간 기록은 남는다.`, m('linkCut', { from: a.name, to: b ? b.name : '?', role: l.role })) : confirmResult('이 선을 판에서 뺀다. 오간 기록은 남는다.', m('linkRemove'));
+    // P81: 부모 → 하위 세션의 선이면 확인에서 "선만 끊기"와 "부모에서도 떼기"를 고른다. 떼기는 선 끊기를 겸한다(알림은 떼기의 것만)
+    const parentLink = !!(a && b && b.parentSessionId === a.sessionId);
+    const pl = parentLink ? { parentLink: { parent: a.name, child: b.name }, parentMsg: m('linkCutParent', { from: a.name, to: b.name }), parentMessage: `@${a.name} → @${b.name}는 부모와 하위 세션의 선입니다. 선만 끊으면 @${b.name}는 여전히 @${a.name}의 하위 세션입니다. 부모에서도 떼면 부모 없는 세션이 됩니다.` } : {};
+    if (!p.confirm) return l.role && a ? confirmResult(`@${a.name} → @${b ? b.name : '?'} 연결("${l.role}")을 끊는다. @${a.name}에 연결 해제를 알립니다. 주고받은 기록은 유지합니다.`, m('linkCut', { from: a.name, to: b ? b.name : '?', role: l.role }), pl) : confirmResult("보드에서 이 연결선을 제거합니다. 주고받은 기록은 유지합니다.", m('linkRemove'), pl);
+    if (p.detach) {
+      if (!parentLink) throw apiError('bad_request', "부모와 하위 세션의 선이 아닙니다. 선만 끊을 수 있습니다.");
+      return { removed: true, deliveryId: null, ...this.branch.detach(b, { by: 'user' }) };
+    }
     let deliveryId = null;
     if (l.role && a && b) { const d = this.queue.enqueue(a.sessionId, unlinkNotice({ role: l.role, agentName: b.agentName })); deliveryId = d.deliveryId; }
     this.linkEvent(l, 'unlink', l.role || null, { deliveryId }, { quiet: true });
     this.store.updateLink(l.linkId, { role: null, removedAt: Date.now() });
     this.api.broadcast('link.removed', { linkId: l.linkId, reason: 'user' });
     return { removed: true, deliveryId };
+  }
+  // P81: 판에서 부모에서 떼기(노드 메뉴). 확인 글은 무엇이 바뀌는지(머리줄, 사이드바, 끄기와 잠재우기 묶음)
+  detachSession(p) {
+    const s = this.resolve(p.session);
+    if (!s.parentSessionId) throw keyed(apiError('no_parent', `@${s.name}에게는 부모가 없습니다.`), 'detachNoParent', { name: s.name });
+    const parent = this.sessions.get(s.parentSessionId);
+    const pname = parent ? parent.name : (this.branch.rowOf(s.parentSessionId) || {}).name || '?';
+    if (!p.confirm) return confirmResult(`@${s.name}을 @${pname}에서 뗍니다. 머리줄과 사이드바에서 @${pname}의 하위 세션 표시가 빠지고, @${pname}가 끄거나 함께 깨어 있게 하는 묶음도 풀립니다. 되돌릴 수 없습니다.`, m('detach', { name: s.name, parent: pname }));
+    return this.branch.detach(s, { by: 'user' });
   }
 
   // ---------- F4: 세션 폴더의 git(워크트리) ----------
@@ -1940,7 +2190,7 @@ export class Backend {
 
   handlers() {
     return {
-      'backend.status': async () => ({ pid: process.pid, port: this.cfg.port, profile: this.cfg.profile, dataDir: this.cfg.dataDir, startedAt: this.startedAt, previousRun: this.previousRun, herdr: await this.herdrStatus(), sessions: this.sessions.size, relay: this.relay.stats(), clients: this.clients || null, plugin: this.plugin, migration: this.migrationView(), web: this.web ? this.web.status() : null }),
+      'backend.status': async () => ({ pid: process.pid, port: this.cfg.port, profile: this.cfg.profile, dataDir: this.cfg.dataDir, startedAt: this.startedAt, previousRun: this.previousRun, herdr: await this.herdrStatus(), sessions: this.sessions.size, relay: this.relay.stats(), clients: this.clients || null, plugin: this.plugin, migration: this.migrationView(), web: this.web ? this.web.status() : null, version: this.updater ? this.updater.running : null }),
       'backend.shutdown': async () => { setTimeout(() => this.stop('api').then(() => process.exit(0)), 50); return { stopping: true }; },
       'herdr.status': () => this.herdrStatus(),
       'herdr.stop': (p) => this.herdrControl('stop', p.confirm),
@@ -1951,10 +2201,13 @@ export class Backend {
       'session.list': () => [...this.sessions.values()].map((s) => this.summary(s)),
       'session.get': (p) => this.get(p),
       'session.send': (p) => this.send(p),
-      'delivery.cancel': (p) => this.queue.cancel(p.deliveryId),
-      'delivery.list': (p) => this.store.deliveries({ sessionId: p.session ? this.resolve(p.session).sessionId : undefined, limit: p.limit || 20 }).map((d) => ({ ...d, name: this.nameOf(d.sessionId) })),
+      'session.rename': (p) => renameSession(this, p), // P66: 판의 이름 바꾸기(name, clear, by: human|cli)
+      'delivery.cancel': (p) => this.queue.cancelWait(p.deliveryId), // P106: 막혀 다시 보내는 중(sending)인 전달도 취소한다
+      // P106: active면 아직 끝나지 않은 전달 모두(창이 다시 열려도 막힌 전달을 보이고 취소할 수 있게)
+      'delivery.list': (p) => p.active ? this.queue.list(p.session ? this.resolve(p.session).sessionId : undefined).map((d) => ({ ...(this.store.getDelivery(d.deliveryId) || {}), status: d.status, reason: d.reason, attempts: d.attempts || 0, name: this.nameOf(d.sessionId) })) : this.store.deliveries({ sessionId: p.session ? this.resolve(p.session).sessionId : undefined, limit: p.limit || 20 }).map((d) => ({ ...d, name: this.nameOf(d.sessionId) })),
       'session.kill': (p) => this.kill(p),
       'session.answer': (p) => this.answer(p),
+      'session.keys': (p, c) => this.sendKeysTo(p, c), // P104: 휴대폰 키 줄(원격 기기도 부른다)
       'session.markSeen': (p) => { const s = this.resolve(p.session); s.seenAt = Date.now(); this.store.updateSession(s.sessionId, { seenAt: s.seenAt }); this.touch(s); this.broadcastSession(s); return { seenAt: s.seenAt }; },
       'inbox.list': () => this.inbox(),
       'session.messages': (p) => { const s = this.resolve(p.session); if (s.kind === 'codex' && s.rt.codexSessionId && this.desktopImport?.codex) return readCodexMessages(this.desktopImport.codex, s.rt.codexSessionId, { afterSeq: p.afterSeq ?? -1, limit: p.limit || 200 }); return readMessages(s.rt.transcriptPath || transcriptPathFor(this.cfg.claudeProjects, s.cwd, this.launchOf(s).sessionId), { afterSeq: p.afterSeq ?? -1, limit: p.limit || 200 }); },
@@ -1988,9 +2241,13 @@ export class Backend {
         const before = this.store.nodes().find((n) => n.session_id === s.sessionId);
         const n = { session_id: s.sessionId, x: p.x, y: p.y, w: p.w, h: p.h, z: p.z };
         this.store.setNode(n);
+        // P73: 사람이 테두리를 끌어 크기를 바꾸면 고른 비율과 크기 단계를 끈다(자유 비율)
+        if (before && (Math.round(before.w) !== Math.round(n.w) || Math.round(before.h) !== Math.round(n.h)) && (before.aspect || before.size)) this.store.setNodeAspect(s.sessionId, null, null);
         noteNodeMove(this, s, before, n, p.cause);
         // P47: 다른 창도 옮긴 자리를 바로 그린다(예전에는 다음 board.changed까지 옛 자리). 보낸 창은 by로 알아보고 무시한다
         this.api.broadcast('board.node', { sessionId: s.sessionId, x: p.x, y: p.y, w: p.w, h: p.h, z: p.z, by: (c && c.clientId) || null });
+        // P75: 테두리를 끌어 키웠으면 줄의 뒤 형제를 아래로 민다(작아지면 당기지 않는다)
+        if (before && (n.w > before.w + 0.5 || n.h > before.h + 0.5) && (reflowLines(this, s.sessionId, 'resize').length + settleRegions(this, 'resize').length)) this.api.broadcast('board.changed', { why: 'line pushed' });
         return { ok: true };
       },
       // P6a: workspace 없이 부르면 캔버스 하나의 뷰포트. P5처럼 workspace를 주면 그 워크스페이스 줄에 남긴다
@@ -2002,7 +2259,7 @@ export class Backend {
         return { ok: true, workspace: w ? w.key : null };
       },
       // 리포지토리 워크스페이스(P5, G1·G3)
-      'workspace.list': () => ({ workspaces: this.workspaceList(), current: this.currentWorkspace(), groups: readGroups(this).groups }),
+      'workspace.list': () => (syncWsGroups(this, 'list') && this.broadcastWorkspaces(), { workspaces: this.workspaceList(), current: this.currentWorkspace(), groups: readGroups(this).groups }),
       'workspace.open': (p) => this.workspaceOpen(p),
       'workspace.close': (p) => this.workspaceClose(p),
       'workspace.select': (p) => this.workspaceSelect(p),
@@ -2018,7 +2275,8 @@ export class Backend {
       'link.list': () => this.linksOpen(),
       'link.create': (p) => this.linkCreate(p),
       'link.delete': (p) => this.linkDelete(p),
-      'link.log': (p) => { const l = this.store.getLink(p.link); if (!l) throw apiError('not_found', `없는 연결: ${p.link}`); return { link: this.linkView(l), events: this.store.linkEvents(l.linkId, p.limit || 200) }; },
+      'session.detach': (p) => this.detachSession(p), // P81
+      'link.log': (p) => { const l = this.store.getLink(p.link); if (!l) throw apiError('not_found', `연결을 찾을 수 없습니다: ${p.link}`); return { link: this.linkView(l), events: this.store.linkEvents(l.linkId, p.limit || 200) }; },
       'agent.kinds': () => this.adapter.agentKinds(),
       'agent.models': (p) => this.agentModels(p),
       // 자원과 붙은 클라이언트(D1·D3)

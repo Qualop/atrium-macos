@@ -3,7 +3,7 @@
 // P5: 폴더는 지금 워크스페이스의 저장소 루트가 기본이다. 다른 저장소의 폴더를 고르면 그 세션은 그 저장소의 워크스페이스에 생긴다(G1).
 //     종류 "셸(PowerShell)"은 에이전트 없이 패널만 연다(G2).
 // P33: 띄우는 방법은 호출자(설정의 호출자 탭)다. 창 맨 위에서 호출자를 고르면 그 값으로 띄우고, 여기서 바꾼 모델은 호출자 값을 덮는다(session.spawn { launcher, model }).
-//     "직접 고르기"는 옛 방식(종류, 모델, 권한 모드, 인자)이다. 왼쪽 레일의 즐겨찾기 호출자는 이 창 없이 quickSpawn으로 바로 띄우고, Shift+누르기는 그 호출자를 채워 이 창을 연다.
+//     "직접 고르기"는 옛 방식(종류, 모델, 권한 모드, 인자)이다. 왼쪽 레일의 즐겨찾기 호출자는 이 창 없이 quickSpawn으로 띄우고(P97: 먼저 이름 칸 QuickName.jsx), Shift+누르기는 그 호출자를 채워 이 창을 연다.
 //     칩 "새 세션…"과 영역의 "+ 세션"은 첫 즐겨찾기 호출자를 고른 채로 연다.
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
@@ -11,30 +11,33 @@ import { toast, getState, useStore, wsName, openDialog, goWhenOpen } from './sto
 import { useT, t, tOr, errText } from './lib/i18n.js';
 import { kindOf } from './lib/kinds.js';
 import { hasModelCatalog, spawnDefaults } from './lib/spawn.js';
-import { favoriteLaunchers, orderedLaunchers, previewLine } from './lib/launchers.js';
+import { favoriteLaunchers, orderedLaunchers, previewLine, autoApprovalApplies } from './lib/launchers.js';
 import { useDialog } from './dialog.js';
 
-const startedText = (r) => t('spawn.started', { name: r.name, kind: r.flavor ? t('spawn.startedKind', { kind: kindOf(r.flavor).label + (r.command ? t('spawn.startedCommand') : '') }) : r.command ? t('spawn.startedKind', { kind: t('launchers.harness.command') }) : r.kind && r.kind !== 'claude' ? t('spawn.startedKind', { kind: r.kind === 'shell' ? t('spawn.shell') : kindOf(r.kind).label }) : '', trust: r.trust && r.trust.needsTrust ? t('spawn.startedTrust') : '', ws: r.workspaceKey && r.workspaceKey !== getState().currentWs ? t('spawn.startedWs', { ws: wsName(r.workspaceKey) || r.workspaceRoot }) : '' });
+export const startedText = (r) => t('spawn.started', { name: r.name, kind: r.flavor ? t('spawn.startedKind', { kind: kindOf(r.flavor).label + (r.command ? t('spawn.startedCommand') : '') }) : r.command ? t('spawn.startedKind', { kind: t('launchers.harness.command') }) : r.kind && r.kind !== 'claude' ? t('spawn.startedKind', { kind: r.kind === 'shell' ? t('spawn.shell') : kindOf(r.kind).label }) : '', trust: r.trust && r.trust.needsTrust ? t('spawn.startedTrust') : '', ws: r.workspaceKey && r.workspaceKey !== getState().currentWs ? t('spawn.startedWs', { ws: wsName(r.workspaceKey) || r.workspaceRoot }) : '' });
 
 const findLauncher = (id) => { const d = getState().launchers; return (d && d.launchers.find((l) => l.id === id)) || null; };
 const MODEL_HARNESS = new Set(['claude', 'codex', 'gemini', 'agy']);
 // 개발용 판은 모델을 비운 Claude Code 호출자를 haiku로 띄운다(api.info.defaultModel)
-const devModel = (l) => (l && l.harness === 'claude' && !l.model ? (api.info || {}).defaultModel || '' : '');
+export const devModel = (l) => (l && l.harness === 'claude' && !l.model ? (api.info || {}).defaultModel || '' : '');
 
 let quickBusy = false;
 // 지금 워크스페이스의 폴더에 그 호출자로 띄우고 그 터미널로 들어간다. 지금 워크스페이스가 없으면 폴더를 묻는 창을 연다
-export async function quickSpawn(launcherId) {
+// P97: name은 레일 이름 칸에 친 세션 이름(없으면 판이 짓는다). 돌려주는 값: true(띄움), false(실패, 알림을 보였다), 'dialog'(새 세션 창을 열었다), null(이미 띄우는 중)
+export async function quickSpawn(launcherId, name) {
   const st = getState();
   const cur = st.workspaces.find((w) => w.key === st.currentWs);
-  if (!cur) { openDialog({ kind: 'spawn', launcher: launcherId }); return; }
-  if (quickBusy) return;
+  if (!cur) { openDialog({ kind: 'spawn', launcher: launcherId }); return 'dialog'; }
+  if (quickBusy) return null;
   quickBusy = true;
-  const p = { cwd: cur.root, launcher: launcherId };
+  const p = { cwd: cur.root, launcher: launcherId, ...(name ? { name } : {}) };
   const dm = devModel(findLauncher(launcherId));
   if (dm) p.model = dm;
-  try { const r = await api.call('session.spawn', p); toast(startedText(r)); goWhenOpen(r.sessionId); }
+  let ok = false;
+  try { const r = await api.call('session.spawn', p); toast(startedText(r)); goWhenOpen(r.sessionId); ok = true; }
   catch (e) { toast(t('spawn.failed', { error: errText(e) }), 'error'); }
   quickBusy = false;
+  return ok;
 }
 
 // cwd: 영역 이름표의 "+ 세션"에서 열면 그 워크스페이스의 폴더(P6a)
@@ -43,6 +46,7 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launc
   const t = useT();
   const info = api.info || {};
   const data = useStore((st) => st.launchers);
+  const settings = useStore((st) => st.settings);
   const list = orderedLaunchers(data);
   const first = favoriteLaunchers(data)[0] || list[0] || null;
   const cur = getState().workspaces.find((w) => w.key === getState().currentWs);
@@ -73,6 +77,7 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launc
   const claude = harness === 'claude' || (!L && deepseek && !direct);
   const shell = harness === 'shell';
   const typed = harness === 'command';
+  const autoApprove = !direct && autoApprovalApplies(settings, harness);
   const modelPicker = hasModelCatalog(kind);
   const kindLabel = kindOf(kind).label;
   const pickKind = (k) => { setKind(k); const defaults = defaultsFor(k); setArgs(defaults.args); setModel(defaults.model); };
@@ -125,6 +130,7 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launc
           </label>
           {L && <div className="mt-ln-preview mono" data-role="launcher-preview" title={previewLine(L.preview, t('launchers.shellPreview'))}>{previewLine(L.preview, t('launchers.shellPreview'))}{L.preview && L.preview.env && L.preview.env.length ? <span className="dim">  · {t('launchers.envShort')}: {L.preview.env.join(', ')}</span> : null}</div>}
         </>}
+        {autoApprove && <div className="mt-effective-approval" data-role="spawn-effective-approval" role="status"><strong>{t('autoApproval.effective')}</strong><span>{t('autoApproval.override')}</span></div>}
         {/* P48: 찾아보기. Electron 창은 OS 대화상자, 웹 화면은 PC 폴더 탐색기(window.mt.pickFolder) */}
         <label>{t('spawn.folder')}<span className="mt-row-wide"><input value={cwd} onChange={(e) => setCwd(e.target.value)} data-field="cwd" /><button type="button" className="mt-btn" data-action="spawn-browse" onClick={async () => { try { const p = await window.mt.pickFolder(); if (p && alive.current) setCwd(p); } catch {} }}>{t('workspaces.browse')}</button></span></label>
         {claude && trust && trust.needsTrust && <div className="mt-warn">{t('spawn.trustNeeded')}</div>}
@@ -148,20 +154,20 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launc
           {MODEL_HARNESS.has(L.harness) && (hasModelCatalog(L.harness)
             ? <ModelField key={L.id} kind={L.harness} value={lmodel} onChange={setLmodel} />
             : <label>{t('spawn.model')}<input value={lmodel} onChange={(e) => setLmodel(e.target.value)} placeholder={t('spawn.modelPh')} data-field="model" /></label>)}
-          {claude && <div className="mt-card-sub" data-role="launcher-permission">{t('spawn.mode')}: {tOr(`permissionModes.${L.permissionMode || 'manual'}`, L.permissionMode || 'manual')}</div>}
+          {claude && <div className="mt-card-sub" data-role="launcher-permission">{t('spawn.mode')}: {autoApprove ? t('autoApproval.short') : tOr(`permissionModes.${L.permissionMode || 'manual'}`, L.permissionMode || 'manual')}</div>}
           {typed ? <div className="mt-card-sub" data-role="command-note">{t('launchers.commandNote')}</div>
             : shell ? <div className="mt-card-sub" data-role="shell-note">{t('spawn.shellNote')}</div> : null}
         </> : shell ? <div className="mt-card-sub" data-role="shell-note">{t('spawn.shellNote')}</div> : direct ? null : claude ? <>
           <div className="mt-row">
             <label>{t('spawn.model')}<input value={model} onChange={(e) => setModel(e.target.value)} placeholder={t('spawn.modelPh')} data-field="model" /></label>
             <label>{t('spawn.mode')}
-              <select data-field="permission-mode" value={mode} onChange={(e) => setMode(e.target.value)}>
+              <select data-field="permission-mode" disabled={autoApprove} value={mode} onChange={(e) => setMode(e.target.value)}>
                 {['manual', 'acceptEdits', 'plan', 'auto', ...(['manual', 'acceptEdits', 'plan', 'auto'].includes(mode) ? [] : [mode])].map((m) => <option key={m} value={m}>{tOr(`permissionModes.${m}`, m)}</option>)}
               </select>
             </label>
           </div>
-          <label className="mt-check"><input type="checkbox" checked={allowHerdr} onChange={(e) => setAllowHerdr(e.target.checked)} data-field="allow-herdr" /><span>{t('settings.allowHerdrName')}</span></label>
-          <div className="mt-card-sub">{t('spawn.allowHerdr')}</div>
+          {!autoApprove && <><label className="mt-check"><input type="checkbox" checked={allowHerdr} disabled={autoApprove} onChange={(e) => setAllowHerdr(e.target.checked)} data-field="allow-herdr" /><span>{t('settings.allowHerdrName')}</span></label>
+          <div className="mt-card-sub">{t('spawn.allowHerdr')}</div></>}
         </> : <>
           {modelPicker ? <ModelField key={kind} kind={kind} value={model} onChange={setModel} /> : <label>{t('spawn.args')}<input value={args} onChange={(e) => setArgs(e.target.value)} data-field="args" /></label>}
           {modelPicker && <details data-role="advanced-args"><summary>{t('spawn.advanced')}</summary>

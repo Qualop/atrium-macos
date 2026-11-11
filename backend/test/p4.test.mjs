@@ -78,7 +78,7 @@ test('F2: 연결 알림 글에는 herdr 이름, 패널, 역할, 쓸 명령이 �
   assert.ok(!/--session|--machine|--remote/.test(t + unlinkNotice({ role: '리뷰어', agentName: 'rv' }) + paneChangedNotice({ role: '리뷰어', agentName: 'rv', paneId: 'w5:p1' })));
   assert.ok(ROLE_RE.test('리뷰어')); assert.ok(!ROLE_RE.test('a"b')); assert.ok(!ROLE_RE.test('')); assert.ok(!ROLE_RE.test('x\ny'));
   assert.equal(linkLabel({ role: '리뷰어', lastText: 'Reply with exactly: pong' }), '리뷰어 · "Reply with exactly: pong"');
-  assert.equal(linkLabel({ spawned: true }), '띄움');
+  assert.equal(linkLabel({ spawned: true }), '세션 생성');
 });
 
 test('F3·F5: hook이 없는 세션은 herdr 상태만으로 — 막히면 화면을 보는 내 차례, unknown은 추정 준비', () => {

@@ -13,7 +13,7 @@
 
 Atrium keeps AI coding sessions, project folders, notes and delegated work on one canvas. Claude Code, Codex, Gemini CLI, Antigravity and your shell run inside herdr terminals; Atrium manages their layout, connections and message delivery.
 
-This source tree is **v0.3.0**. It integrates the approved upstream P30–P55 features while retaining the macOS port, provider integrations and worker limits. Removing worker limits and the unmerged P56–P59 remote-security proposals are outside this integration.
+The **0.4 source integration** brings upstream features through P111 to the macOS branch, including phone access, optional passkeys and push, native bundle updates, and finer layout and sleep controls. Native Codex/Gemini integrations and worker limits remain. Integration, native-runtime and packaging checks are still in progress; this is not a release-completion notice.
 
 ![Atrium on macOS: Korean UI and Codex model selection](docs/images/model-picker-macos.png)
 
@@ -21,7 +21,7 @@ This source tree is **v0.3.0**. It integrates the approved upstream P30–P55 fe
 
 ## Download and build status
 
-Download the **macOS Apple Silicon DMG or ZIP** from the [v0.3.0 release](https://github.com/Qualop/atrium-macos/releases/tag/v0.3.0). SHA-256 checksums are included. Node 24.22.2 and herdr 0.9.5 are bundled; no separate Node installation is needed.
+Published packages and checksums are listed in the [Qualop/atrium-macos releases](https://github.com/Qualop/atrium-macos/releases). The 0.4 release artifacts, final validation results and direct download links are pending the remaining integration and package checks.
 
 macOS packages target macOS 13 or later and include Node and herdr. Agent CLIs, credentials and sign-in remain separate. Local packages use an ad-hoc signature; this is not Apple notarization.
 
@@ -45,7 +45,7 @@ The board can open without herdr: stored layout, notes and history remain availa
 1. Open a project folder with **+**.
 2. Open **New session…**, or Shift-click a launcher in the left rail.
 3. Enter a session name such as `reviewer`. It identifies the session, independently of the model.
-4. Choose a launcher/provider and model, then start. Answer login, trust and approval prompts yourself in its terminal.
+4. Choose a launcher/provider and model, then start. Answer login, trust and questions in its terminal. Tool approvals follow the board setting below.
 5. Send an instruction from the bottom input:
 
    ```text
@@ -62,7 +62,7 @@ Model lists reflect the installed tools: **Codex `model/list`**, **Gemini CLI me
 
 ### Gemini and delegated workers
 
-For Google-account work, use **Gemini (Antigravity)** after installing and signing in to `agy`. Gemini CLI remains available for its supported authentication modes. Both providers keep their native login and approval flows. The board never accepts trust or login dialogs for you.
+For Google-account work, use **Gemini (Antigravity)** after installing and signing in to `agy`. Gemini CLI remains available for its supported authentication modes. Both providers keep their native sign-in and conversation formats. Automatic tool mode does not answer login, trust or questions for you.
 
 Assign a role between sessions, then ask the working agent to delegate through Atrium. Managed Claude, Codex, Gemini CLI and agy sessions can use `atrium models` and `atrium child`. Child names should describe their task. For example, from a managed session:
 
@@ -89,25 +89,33 @@ The import dialog lists eligible **Claude and Codex** histories with nothing pre
 
 A copied conversation may use the original's working folder; importing history does not copy project files or create a worktree. Development imports require explicitly isolated history locations. Existing Claude outside-history indexing and its bound-conversation checks remain separate from desktop import.
 
-## What v0.3 adds to the board
+## What the 0.4 integration adds
 
-| Area | Integrated behavior |
+| Area | Source behavior |
 |---|---|
-| Layout and relationships | Whole-board arrangement with undo, clearer dock/edge routing, a project-aware mission tree and drag controls at distant zoom levels. |
-| Project organization | Worktrees appear inside their repository as boxes. Folder-to-repository reclassification moves sessions, notes, boards and group membership together. Project groups organize the sidebar without creating session broadcast groups. |
-| Large sidebars | Virtualized rows, filters, keyboard navigation, width adjustment and attention counts for collapsed projects. Project archive/removal actions distinguish board records from conversation files. |
-| Terminals | Selection across scrollback, edge autoscroll and copying outside the visible viewport, with macOS copy/IME handling and provider-aware paste behavior. |
-| Reading and navigation | Session-filtered request history, copy/retry/edit-and-send, independent interface and terminal text scaling, bottom-bar visibility controls, focus-aware dialogs and arrow navigation. |
-| Startup and reliability | Engine discovery, operation readiness while the backend starts, shared concurrent start requests, model-error reporting and existing delivery/pane ownership guards. |
-| Existing tools | Markdown notes, kanban, output views, search, loops, attention indicators and session recovery remain on the same canvas. Loops can consume provider tokens. |
+| Response needed | `ResponseNotice` explains questions, trust, sign-in or errors. Its action and native OS notification clicks open the actual terminal; desktop approval/answer cards are replaced. |
+| Names and delegation | Display labels, including Korean, can change while agent addresses stay stable. Child providers receive compatible permission settings; limits remain 4 direct children, depth 3 and 16 board children. |
+| Layout and groups | Mixed-worktree docks stay in their repository, workers form columns, nested folders can group automatically, and whole-board arrangement considers relationships with undo. Sizing preserves the dock tree's proportions. |
+| Sleep scopes (P111) | Eligible managed Claude sessions can sleep individually even while their project is busy. Project-scoped wake leaves individually sleeping sessions alone; selecting one wakes that session. Untouched imports remain asleep. |
+| Phone and browser | Phone board, mission and terminal views, touch controls, optional passkeys, cookie sessions and per-device push subscriptions. Remote access remains off by default. |
+| Native updates | Stable/dev release selection for complete macOS bundles from this fork's repository, with checksum, bundle/signature and compatibility checks before replacement. |
+| Preserved integrations | Dynamic provider catalogs, one Gemini/agy default favorite, exact native conversation recovery, Codex copies, private command/env replay, macOS shortcuts and IME, notes, kanban, search and request history. |
+
+**Automatic tool mode** is a board setting, `agentAutoApprove`, whose public default is **false**. Enable it explicitly on a board to apply the provider's automatic tool flags to managed Claude Code, Codex, Gemini CLI and agy launches, reopen and wake. It does not edit global CLI permission settings or answer login, project trust or questions. Remaining prompts lead to the terminal through Response needed and notifications.
 
 ## Multiple clients and optional browser access
 
-Desktop and browser clients can share a terminal controller while keeping their own viewport. Recent focus/input selects the sizing client; notification routing follows client activity. Reconnect handling keeps stale controller events from taking over a newer attachment.
+Electron windows and registered browsers share board state. Each client keeps its viewport, while terminal controllers share frames and track size ownership and connection generations.
 
-**Browser and remote access are off by default.** Enable them deliberately from the local **Connected devices** settings. The backend still listens on loopback; a remote browser reaches it through explicitly configured Tailscale Serve. `atrium remote status` and `atrium remote guide` describe the setup. `atrium remote enable` previews changes; `--yes` authorizes the change. Disabling remote access closes device connections and stops new pairing.
+**Browser and remote access are off by default.** Enable them from the local **Connected devices** settings. The backend listens on loopback; remote browsers use explicitly configured Tailscale Serve. `atrium remote status` and `atrium remote guide` describe the setup. `atrium remote enable` previews changes; `--yes` authorizes them. Disabling remote access closes device connections, stops pairing and removes push subscriptions. Tailscale Funnel is not part of this flow.
 
-Pair through a one-time code or a request approved on the host. Device credentials are separate from the board API token. The default Tailscale policy allows the host's login and explicitly allowed logins. Connected browsers can use folder selection, file/image uploads, reconnect/latency indicators and an installable web view. These are capabilities of the host user's board, including terminal control; pairing is not a read-only share. Tailscale Funnel is not part of this flow. Passkeys and the unmerged P56–P59 proposals are not claimed as implemented.
+Pair with a one-time code or a host-approved request. Browser sessions use HttpOnly, SameSite=Strict cookies, with Secure on HTTPS; server records keep session hashes. **Passkey verification is optional and off by default** (`remotePasskey`). When enabled, registration and later login use WebAuthn challenges bound to the board's origin. Session expiry and disconnection timeouts apply in passkey mode. The Tailscale login/device policy and host pairing remain separate checks.
+
+The phone interface supports board and mission navigation, terminals and sending instructions. Push notifications require permission and a subscription on each device; notification delivery uses that browser's push service. Connected devices can control the host's terminals, so this is not a read-only share. Folder selection, uploads, reconnect indicators and the installable web view remain available.
+
+## In-app macOS updates
+
+The updater uses [Qualop/atrium-macos](https://github.com/Qualop/atrium-macos), with separate stable and dev channels. It downloads a complete app ZIP and matching SHA-256 checksums, validates the bundle, signature, CPU architecture and runtime compatibility, then uses a helper to replace and relaunch the installed app. A saved previous bundle supports recovery after a failed replacement. It does not run release source, npm installation or a build in the checkout. Package and recovery checks for 0.4 remain open.
 
 ## Package for Finder
 
@@ -144,7 +152,7 @@ npm --prefix app test
 npm --prefix app run build
 ```
 
-Use `cd app && npm run mac -- --dev` for a separate development board. The [testing guide](docs/testing.md) describes isolated profiles and optional macOS integration commands. The v0.3.0 validation includes 715 backend tests and 228 renderer tests on macOS, six Node versions, and isolated Electron tests of the packaged app: model selection, Korean input, nine concurrent sessions and backend restart recovery. Codex copying uses synthetic native-protocol fixtures; web pairing, shared terminals and revocation use a local HTTPS/WSS proxy. Real user conversations and external Tailscale devices were not used for these tests. Windows CI covers unit tests and builds; this release does not include a Windows installer.
+Use `cd app && npm run mac -- --dev` for a separate development board. The [testing guide](docs/testing.md) describes isolated profiles and macOS integration commands. The 0.4 integration still requires final regression, native-runtime, notification-click, updater recovery and packaged-app checks. Test counts and release links will be filled in after those checks. Use fresh temporary profiles and synthetic histories; existing user conversations, Tailscale configuration and global CLI settings are not test fixtures. Node support remains 22.13+ (22.x), 24.x and 26.x; support does not stand in for a completed version matrix.
 
 See the [architecture](docs/ARCH.md), [current decisions](docs/BRIEF.md) and [plan](docs/PLAN.md).
 

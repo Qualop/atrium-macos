@@ -75,3 +75,13 @@ export function worktreeBoxes(cards) {
 
 // 대화 노드의 얼굴. 세션 노드와 같은 너비 기준(lib/faces.js)을 쓰되 카드에는 터미널이 없으므로 가까이·중간은 같은 "카드" 얼굴이다
 export const convoFace = (face) => (face === 'close' || face === 'middle' ? 'card' : face);
+
+// P67: 판 세션끼리의 띄움은 판의 연결(ARCH 4절 F3, K1) 하나로만 보인다. 대화 띄움 선(J6)은 판 밖 대화가 낀 띄움에만 긋는다.
+// e: { from, to, via } (from·to는 판 세션 ID나 convo:<대화 ID>), linked(a, b): 판에 a → b 연결이 있는가(지운 연결도 친다)
+// → 판의 연결과 겹치므로 긋지 않을 선이면 true. 판의 띄움 명령(atrium child|spawn)은 연결이 늦게 생겨도 판이 잇는다
+export const BOARD_SPAWN_VIA = new Set(['atrium-child', 'atrium-spawn', 'mtask-child', 'mtask-spawn']);
+export function boardSpawnDup(e, linked = () => false) {
+  const board = (id) => !!id && !String(id).startsWith('convo:');
+  if (!e || !board(e.from) || !board(e.to)) return false;
+  return BOARD_SPAWN_VIA.has(e.via) || !!linked(e.from, e.to) || !!linked(e.to, e.from);
+}

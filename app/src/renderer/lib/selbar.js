@@ -1,55 +1,59 @@
-// 고른 노드 막대(P26, ARCH 4절 H6·H7)의 순수 함수(단위 시험 app/test/p26-lib.test.mjs). 부르는 곳은 Search.jsx SelectionBar.
-// - 크기: "가로 | 세로" 토글 하나와 크게·보통·작게 단추 셋. 값은 P23의 여섯(canvas.mjs SIZE_STEPS·BAR_SIZES)이다.
-//   지금 노드(덩어리면 덩어리 바깥)의 크기가 여섯 중 하나와 맞으면(±1px) 그 단추에 불이 들어온다. 고른 것이 여럿이면 모두 같은 단계일 때만.
+// 고른 노드 막대(P26, P73, ARCH 4절 H6·H7)의 순수 함수(단위 시험 app/test/p26-lib.test.mjs, p73-lib.test.mjs). 부르는 곳은 Search.jsx SelectionBar.
+// - P73: 크기는 방향(가로 | 세로) × 종횡비(16:9 | 4:3) × 단계(크게·보통·작게)다(canvas.mjs SIZE_TABLE, resolveSize).
+//   세로에서 비율 단추의 글은 돌린 비율(9:16, 3:4)이다. P80: 덩어리는 틀 비율을 지키고, 바깥을 같은 규칙의 단독 세션 하나로 본다(dock-tree.mjs dockVirtual·dockFit).
+//   비율 불은 판 기록에 남긴 비율(노드 aspect, 덩어리 aspect)이 있고 사각형이 그 비율에 맞을 때만, 단계 불은 비율에 불이 있고 넓이가 그 단계일 때만.
+//   고른 것이 여럿이면 모두 같을 때만 불이 들어온다.
+// - P73: 세션 하나만 골라도 막대가 뜬다(크기와 비율만). 배치 틀은 덩어리에 든 세션이나 세션 둘 이상을 골랐을 때(틀에 들어갈 세션이 둘 이상).
 // - 자리: 위 왼쪽·오른쪽 알약 묶음과 같은 줄(맨 위)의 가운데. 창 가운데에 두되 두 묶음 사이에 들어가게 민다.
 //   두 묶음 사이가 좁으면 단계별로 줄이고(COMPACT_LEVELS), 가장 줄인 막대도 들어가지 않으면 그 아래 줄로 접는다.
-import { SIZE_STEPS, BAR_SIZES } from '../../../../backend/src/canvas.mjs';
+import { SIZE_DIRS, SIZE_LEVELS, ASPECT_KEYS, dirOf, aspectOf, levelOf, stepSize, nearestAspect, bbox } from '../../../../backend/src/canvas.mjs';
+import { dockVirtual, dockFit } from '../../../../backend/src/dock-tree.mjs';
 
-export const SIZE_DIRS = Object.keys(BAR_SIZES); // ['wide', 'tall']
-export const SIZE_LEVELS = ['large', 'normal', 'small'];
+export { SIZE_DIRS, SIZE_LEVELS, ASPECT_KEYS };
 
-// 크기 단계 열쇠 → { dir, i }(없는 열쇠면 null)
-export function stepPlace(key) {
-  for (const dir of SIZE_DIRS) { const i = BAR_SIZES[dir].indexOf(key); if (i >= 0) return { dir, i }; }
-  return null;
+// 비율 단추의 글: 세로면 돌린 비율(16:9 → 9:16)
+export const aspectLabel = (aspect, dir) => { if (dir !== 'tall') return aspect; const [a, b] = aspect.split(':'); return `${b}:${a}`; };
+
+// 사각형(혼자인 노드는 그 노드, 덩어리는 바깥)과 기록한 비율 → { dir, aspect(불), level(불) }
+export function blockState(rect, stored = null) {
+  if (!rect) return null;
+  const aspect = aspectOf(rect, stored);
+  return { dir: dirOf(rect), aspect, level: aspect ? levelOf(rect, aspect) : null };
 }
 
-// 사각형 크기와 맞는 막대 크기 단계(여섯 중). 없으면 null
-export function sizeStepOf(r, tol = 1) {
-  if (!r) return null;
-  for (const dir of SIZE_DIRS) for (const k of BAR_SIZES[dir]) if (Math.abs(SIZE_STEPS[k].w - r.w) <= tol && Math.abs(SIZE_STEPS[k].h - r.h) <= tol) return k;
-  return null;
+// P80: 덩어리의 상태. 바깥을 같은 규칙의 단독 세션 하나(single)로 보고 단독 세션처럼 불을 켠다(백엔드 canvas-ops dockState와 같다)
+// tree: 덩어리 나무, memberRects: 구성 노드 사각형 → { dir, aspect, level, single } | null
+export function dockState(tree, memberRects, stored = null) {
+  const v = dockVirtual(tree, bbox(memberRects || []));
+  return v ? { ...blockState(v, stored), single: v } : null;
+}
+// P80: 덩어리 단계 단추의 풀이 크기(그 단계의 덩어리 바깥). single은 dockState의 single(불이 없을 때 가까운 비율을 고른다)
+export function dockLevelSize(level, { dir, aspect, tree, single = null }) {
+  return dockFit(tree, levelSize(level, { dir, aspect, rect: single }));
 }
 
-// 고른 것들(혼자인 노드는 그 사각형, 덩어리는 바깥)이 모두 같은 단계면 그 열쇠, 아니면 null
-export function litStep(rects) {
-  const rs = (rects || []).filter(Boolean);
-  if (!rs.length) return null;
-  const k = sizeStepOf(rs[0]);
-  return k && rs.every((r) => sizeStepOf(r) === k) ? k : null;
+// 고른 것들의 상태 → 막대의 불. 방향은 첫 것, 비율·단계는 모두 같을 때만
+export function litOf(states) {
+  const ss = (states || []).filter(Boolean);
+  if (!ss.length) return { dir: 'wide', aspect: null, level: null };
+  const same = (k) => (ss.every((x) => x[k] === ss[0][k]) ? ss[0][k] : null);
+  return { dir: ss[0].dir, aspect: same('aspect'), level: same('level') };
 }
 
-// 토글의 처음 쪽: 불이 들어온 단계의 쪽, 없으면 첫 사각형이 가로로 길면 wide
-export function autoDir(rects, lit = litStep(rects)) {
-  if (lit) return stepPlace(lit).dir;
-  const r = (rects || []).find(Boolean);
-  return r && r.h > r.w ? 'tall' : 'wide';
+// 단계 단추의 풀이 글에 쓸 크기(지금 방향과 불이 든 비율, 없으면 모양이 가까운 비율)
+export function levelSize(level, { dir, aspect, rect = null }) {
+  return stepSize(dir, aspect || (rect ? nearestAspect(rect) : '16:9'), level);
 }
 
-// 사각형 크기와 가장 가까운 dir 쪽 단계(넓이 비의 로그 거리가 가장 작은 것: 모양은 쪽이 정하고 크기 수준만 맞춘다)
-export function nearestStep(r, dir) {
-  if (!r || !(r.w > 0) || !(r.h > 0) || !BAR_SIZES[dir]) return null;
-  const far = (k) => Math.abs(Math.log((SIZE_STEPS[k].w * SIZE_STEPS[k].h) / (r.w * r.h)));
-  return BAR_SIZES[dir].reduce((best, k) => (far(k) < far(best) ? k : best));
-}
+// 막대를 보일까: 세션을 하나라도 골랐으면. 배치 틀은 틀에 들어갈 세션이 둘 이상일 때
+export const showBar = (selected) => (selected || []).length >= 1;
+export const showLayouts = (selected, docks) => layoutCount(selected, docks) >= 2;
 
-// 토글을 누를 때 쓸 크기: 불이 들어온 단계가 있으면 다른 쪽의 같은 단계(보통 → 보통, 같은 쪽이면 null로 그대로).
-// P30: 불이 없으면(붙여 막 만든 덩어리처럼 여섯 단계 어디에도 맞지 않으면) 누른 쪽에서 지금 크기(rect)와 가장 가까운 단계.
-//      전에는 쪽만 바꿔서 토글이 아무 일도 하지 않는 것처럼 보였다. rect가 없으면 null(쪽만 바꾼다)
-export function flipStep(lit, dir, rect = null) {
-  const p = lit && stepPlace(lit);
-  if (p) return p.dir !== dir ? BAR_SIZES[dir][p.i] : null;
-  return nearestStep(rect, dir);
+// 배치 틀 단추를 그림 대신 글자로(H: 모두 가로 한 줄, V: 모두 세로 한 줄). 칸이 다섯 넘게 많으면 그림이 읽히지 않는다
+export const LINE_GLYPH_FROM = 5;
+export function presetGlyph(id, n) {
+  if (n < LINE_GLYPH_FROM) return null;
+  return id === 'row' ? 'H' : id === 'col' ? 'V' : null;
 }
 
 // 고른 노드 → 크기를 쓸 대상들(덩어리 안 노드는 그 덩어리 하나로). docks: [{ dockId, members }]
@@ -72,8 +76,9 @@ export function layoutCount(selected, docks) {
   return all.size;
 }
 
-// 막대를 줄이는 단계(styles.css .mt-selbar[data-compact]): 0 다 펴짐, 1 이름 목록 숨김, 2 고른 수·고름 풀기를 짧게(수, ×), 3 배치 틀을 단추 하나로 접음(누르면 아래로 펼침)
-export const COMPACT_LEVELS = 4;
+// 막대를 줄이는 단계(styles.css .mt-selbar[data-compact]): 0 다 펴짐, 1 이름 목록 숨김, 2 고른 수·고름 풀기를 짧게(수, ×), 3 배치 틀을 단추 하나로 접음(누르면 아래로 펼침),
+// 4(P73) 방향·단계 단추의 글을 짧게(가로·세로는 모양 그림, 크게·보통·작게는 한 글자). 비율 단추(16:9, 4:3)는 이미 짧아 그대로
+export const COMPACT_LEVELS = 5;
 
 // 막대 자리. width: 막대가 놓이는 곳(캔버스)의 너비, tlRight·trLeft: 위 왼쪽 묶음의 오른쪽 끝, 위 오른쪽 묶음의 왼쪽 끝(같은 기준의 px),
 // widths: 줄이는 단계마다 막대 너비, gap: 묶음과 막대 사이

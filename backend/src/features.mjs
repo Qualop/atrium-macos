@@ -14,7 +14,8 @@ import { LoopEngine, normalizeTrigger, normalizeStop, describeLoop, describeLoop
 import { confirmResult, keyed } from './msg.mjs'; // P16: 화면 글 열쇠
 import { missionGraph } from './mission.mjs';
 import { Settings } from './settings.mjs';
-import { Launchers } from './launchers.mjs'; // P33: 호출자
+import { Launchers, HARNESSES } from './launchers.mjs'; // P33: 호출자
+import { CodexModels } from './codex-models.mjs'; // P72: Codex 모델 목록
 import { placeItem } from './canvas-ops.mjs';
 
 const SHELL = 'shell';
@@ -41,7 +42,9 @@ export function attachFeatures(b, { timers = true } = {}) {
 
   const f = {};
   f.settings = new Settings({ store, broadcast });
-  f.launchers = new Launchers({ store, broadcast, gateway: { healthUrl: b.cfg.ocxHealthUrl, baseUrl: b.cfg.ocxBaseUrl } }); // 처음 켤 때 옛 새 세션 기본값을 옮긴다
+  // P72: Codex 모델 목록은 Codex의 캐시 파일을 읽는다(설정 탭의 모델 고르기와 atrium models). 폴더를 주지 않은 판(시험)은 고정 목록
+  f.codexModels = b.cfg.codexHome ? new CodexModels({ home: b.cfg.codexHome, fallback: HARNESSES.codex.models }) : null;
+  f.launchers = new Launchers({ store, broadcast, gateway: { healthUrl: b.cfg.ocxHealthUrl, baseUrl: b.cfg.ocxBaseUrl }, codexModels: f.codexModels }); // 처음 켤 때 옛 새 세션 기본값을 옮긴다
   if (f.launchers.migrated) b.log(`launchers created (${f.launchers.migrated.oldBoard ? 'from old settings' : 'new board'}): favorites ${f.launchers.migrated.favorites.join(',')}`);
   f.outputs = new Outputs({ cfg: b.cfg, store, resolve: (r) => b.resolve(r), hooked: (s) => b.hooked(s), transcriptOf, readMessages, workspaceName: wsName, apiError });
   // Native history is fetched only for explicit output.get/output.save calls.
@@ -102,10 +105,10 @@ export function attachFeatures(b, { timers = true } = {}) {
   const loopCreate = (p) => {
     if (!p.session) throw apiError('bad_request', 'session required');
     const s = b.resolve(p.session);
-    if (s.kind === SHELL) throw keyed(apiError('not_agent', `@${s.name}은 일반 셸이다. 루프는 에이전트에게만 건다`), 'shellNoLoop', { name: s.name });
+    if (s.kind === SHELL) throw keyed(apiError('not_agent', `@${s.name} 세션은 일반 셸입니다. 반복 작업은 에이전트 세션에서만 사용할 수 있습니다.`), 'shellNoLoop', { name: s.name });
     const target = { kind: 'session', id: s.sessionId, name: s.name };
     const trigger = normalizeTrigger(p.trigger), stop = normalizeStop(p.stop || {});
-    if (!String(p.prompt || '').trim()) throw apiError('bad_request', '보낼 지시가 없다');
+    if (!String(p.prompt || '').trim()) throw apiError('bad_request', "보낼 요청을 입력하세요.");
     if (!p.confirm) return confirmResult(describeLoop({ targetLabel: `@${target.name}`, prompt: p.prompt, trigger, stop }), describeLoopMsg({ target: `@${target.name}`, prompt: p.prompt, trigger, stop }));
     const v = f.loops.create({ target, prompt: p.prompt, trigger, stop });
     store.addEvent(target.id, 'loop_created', { loopId: v.loopId, target, trigger, stop });
@@ -148,6 +151,8 @@ export function attachFeatures(b, { timers = true } = {}) {
     'launcher.favorite': (p) => f.launchers.favorite(p),
     'launcher.order': (p) => f.launchers.order(p),
     'launcher.preview': (p) => f.launchers.preview(p),
+    // P97: 붙여 넣은 명령줄 → 호출자 칸(herdr가 아는 에이전트 종류로 하네스를 알아본다)
+    'launcher.parse': async (p) => f.launchers.parse({ ...p, kinds: await b.adapter.agentKinds().then((ks) => ks.map((k) => k.kind)).catch(() => []) }),
   };
   // 세션 요약에 덧붙이는 값: 긴 답인지(출력 보기), 켜진 루프 수(노드 배지)
   f.summaryExtra = (s) => ({ output: { long: isLongAnswer(s.rt.lastAnswer), chars: typeof s.rt.lastAnswer === 'string' ? s.rt.lastAnswer.length : 0 }, loops: f.loops.activeCount(s.sessionId) });

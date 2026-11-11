@@ -34,14 +34,14 @@ export async function shutdownLegacyBackend(legacyDataDir, { waitMs = 15000 } = 
   if (!info || !info.pid || info.pid === process.pid || !pidAlive(info.pid)) return { running: false };
   let error = null;
   try {
-    if (!(await health(info.port))) throw new Error(`옛 백엔드(pid ${info.pid})가 포트 ${info.port}에서 답하지 않는다`);
+    if (!(await health(info.port))) throw new Error(`옛 백엔드(pid ${info.pid})가 포트 ${info.port}에서 응답하지 않습니다.`);
     const c = new ApiClient(info); await c.open();
     await c.call('backend.shutdown').catch(() => {}); // 끄면서 연결이 끊길 수 있다
     try { c.close(); } catch {}
   } catch (e) { error = e.message; }
   const t0 = Date.now();
   while (Date.now() - t0 < waitMs) { if (!pidAlive(info.pid)) return { stopped: true, pid: info.pid, ms: Date.now() - t0 }; await sleep(200); }
-  return { stopped: false, pid: info.pid, error: error || `옛 백엔드(pid ${info.pid})가 ${waitMs / 1000}초 안에 꺼지지 않았다` };
+  return { stopped: false, pid: info.pid, error: error || `옛 백엔드(pid ${info.pid})가 ${waitMs / 1000}초 안에 종료되지 않았습니다.` };
 }
 
 // 옛 폴더에서 새 폴더로 옮긴다. rename(a, b)는 시험이 실패를 흉내 내려고 바꾼다. → { method: 'rename'|'merge', moved, copied: [], failed: [], leftover }
@@ -62,12 +62,12 @@ export function moveDataDir(src, dst, { rename = fs.renameSync, retries = 5 } = 
     if (!fs.existsSync(a)) continue;
     const b = path.join(dst, f);
     try {
-      if (fs.existsSync(b)) throw new Error(`새 폴더에 ${f}가 이미 있다`);
+      if (fs.existsSync(b)) throw new Error(`새 폴더에 ${f} 파일이 이미 있습니다.`);
       try { rename(a, b); done.push([a, b, 'moved']); r.moved++; }
       catch { fs.copyFileSync(a, b, fs.constants.COPYFILE_EXCL); done.push([a, b, 'copied']); r.copied.push(f); }
     } catch (e) {
       for (const [x, y, how] of done.reverse()) { try { if (how === 'moved') rename(y, x); else fs.rmSync(y, { force: true }); } catch {} }
-      throw new LegacyBlocked('data_move_failed', `판 기록(${f})을 옮기지 못했다: ${e.message}`);
+      throw new LegacyBlocked('data_move_failed', `보드 기록(${f})을 이전하지 못했습니다: ${e.message}`);
     }
   }
   mergeInto(src, dst, '', r, rename);
@@ -151,7 +151,7 @@ export async function migrateLegacyData(cfg, { log = () => {}, herdr = null, shu
     // 옛 백엔드를 끈다
     const sd = await shutdown(from);
     res.legacyBackend = sd;
-    if (sd.stopped === false) { log(`rename: legacy backend still running: ${sd.error}`); throw new LegacyBlocked('legacy_backend_running', `옛 판 백엔드를 끄지 못해 옮기지 않았다(다음에 다시 해 본다): ${sd.error}`); }
+    if (sd.stopped === false) { log(`rename: legacy backend still running: ${sd.error}`); throw new LegacyBlocked('legacy_backend_running', `이전 보드의 백엔드를 종료하지 못해 데이터를 이전하지 않았습니다. 다음에 다시 시도합니다: ${sd.error}`); }
     if (sd.stopped) log(`rename: legacy backend pid ${sd.pid} stopped`);
     writeTombstone(from, { pid: process.pid, port: cfg.port, token: '', movedTo: to });
     // 옛 herdr를 옮길 차례면 먼저 끈다(옛 폴더 로그를 놓게)
@@ -160,14 +160,14 @@ export async function migrateLegacyData(cfg, { log = () => {}, herdr = null, shu
       const st = await legacyH.stopServer();
       res.herdr.stopped = !!st.stopped;
       log(`rename: legacy herdr ${lg.herdrSession} stop ${JSON.stringify(st)}`);
-      if (!st.stopped) res.problems.push(`옛 herdr 세션 ${lg.herdrSession}을 끄지 못했다`);
+      if (!st.stopped) res.problems.push(`옛 herdr 세션 ${lg.herdrSession}을 종료하지 못했습니다.`);
     }
     try { res.move = moveDataDir(from, to, rename ? { rename } : {}); }
     catch (e) { log(`rename: data move failed ${e.message}`); throw e; }
     res.data = 'moved';
-    if (res.move.failed.length) res.problems.push(`옮기지 못한 파일 ${res.move.failed.length}개(옛 폴더에 남음): ${res.move.failed.map((f) => f.name).slice(0, 5).join(', ')}`);
+    if (res.move.failed.length) res.problems.push(`옮기지 못한 파일 ${res.move.failed.length}개 (이전 폴더에 유지): ${res.move.failed.map((f) => f.name).slice(0, 5).join(', ')}`);
     fs.mkdirSync(from, { recursive: true });
-    fs.writeFileSync(path.join(from, MARKER), JSON.stringify({ movedTo: to, at: res.at, method: res.move.method, copied: res.move.copied, failed: res.move.failed, note: '이 판은 Atrium으로 옮겼다. 이 폴더의 남은 파일은 지워도 된다' }, null, 2));
+    fs.writeFileSync(path.join(from, MARKER), JSON.stringify({ movedTo: to, at: res.at, method: res.move.method, copied: res.move.copied, failed: res.move.failed, note: "이 보드의 데이터를 Atrium으로 이전했습니다. 이 폴더에 남은 파일은 삭제해도 됩니다." }, null, 2));
     writeTombstone(from, { pid: process.pid, port: cfg.port, token: '', movedTo: to });
     log(`rename: data ${from} → ${to} ${JSON.stringify(res.move)}`);
   }
@@ -181,7 +181,7 @@ export async function migrateLegacyData(cfg, { log = () => {}, herdr = null, shu
         res.herdr.stopped = !!st.stopped;
         log(`rename: legacy herdr ${lg.herdrSession} stop ${JSON.stringify(st)}`);
       }
-      if ((await herdrState(legacyH)).running) res.problems.push(`옛 herdr 세션 ${lg.herdrSession}을 끄지 못해 옮기지 않았다`);
+      if ((await herdrState(legacyH)).running) res.problems.push(`옛 herdr 세션 ${lg.herdrSession}을 종료하지 못해 데이터를 이전하지 않았습니다.`);
       else res.herdr.pending = true;
     }
   }
@@ -195,7 +195,7 @@ export async function checkLegacyDevHerdr(cfg, { herdr = null } = {}) {
   const session = `${LEGACY_ID}-dev`;
   const a = (herdr || ((s) => new HerdrAdapter({ herdrPath: cfg.herdrPath, session: s, logDir: cfg.logDir })))(session);
   if (!a.exists() || !(await a.probe()).running) return null;
-  throw new LegacyBlocked('legacy_dev_herdr_running', `옛 개발용 herdr 세션 ${session}이 돈다. 그 안의 세션을 정리하고 서버를 끄거나(herdr --session ${session} server stop), 옛 판을 그대로 쓰려면 ATRIUM_HERDR_SESSION=${session}으로 띄운다`);
+  throw new LegacyBlocked('legacy_dev_herdr_running', `옛 개발용 herdr 세션 ${session}이 실행 중입니다. 해당 세션을 정리하고 서버를 종료하거나(herdr --session ${session} server stop), 옛 보드를 그대로 쓰려면 ATRIUM_HERDR_SESSION=${session}으로 실행하세요.`);
 }
 
 // 옛 폴더의 backend.json: 이 프로세스(새 백엔드)를 가리킨다. 옛 백엔드는 pid가 살아 있으면 뜨지 않고, 열린 옛 창은 새 백엔드에 붙는다

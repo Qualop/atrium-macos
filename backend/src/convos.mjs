@@ -281,9 +281,9 @@ export function bindingOf({ convId, entrypoints = [], mtime = 0, now = Date.now(
   const d = desktop.get(id);
   if (d) return { bound: true, where: 'desktop', sure: true, archived: d.archived, label: d.archived ? '데스크톱 앱 · 보관됨' : '데스크톱 앱' };
   if (entrypoints.some((e) => /desktop/i.test(e))) return { bound: true, where: 'desktop', sure: true, label: '데스크톱 앱' };
-  if (!entrypoints.length) return { bound: true, where: 'unknown', sure: false, label: '묶여 있을 수 있음 · 출처 모름' };
-  if (entrypoints.some((e) => e !== 'cli')) return { bound: true, where: 'unknown', sure: false, label: `묶여 있을 수 있음 · ${entrypoints.filter((e) => e !== 'cli').join(', ')}` };
-  if (mtime && now - mtime < recentMs) return { bound: true, where: 'unknown', sure: false, label: '묶여 있을 수 있음 · 방금 기록됨' };
+  if (!entrypoints.length) return { bound: true, where: 'unknown', sure: false, label: "다른 곳에서 사용 중일 수 있음 · 실행 위치 확인 불가" };
+  if (entrypoints.some((e) => e !== 'cli')) return { bound: true, where: 'unknown', sure: false, label: `다른 곳에서 사용 중일 수 있음 · ${entrypoints.filter((e) => e !== 'cli').join(', ')}` };
+  if (mtime && now - mtime < recentMs) return { bound: true, where: 'unknown', sure: false, label: "다른 곳에서 사용 중일 수 있음 · 최근 활동 감지" };
   return { bound: false };
 }
 

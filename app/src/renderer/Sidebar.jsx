@@ -1,3 +1,4 @@
+import { shortFolder } from './lib/folder-display.js';
 // P7(J5): 왼쪽 사이드바. 평소에는 닫혀 있고 위쪽 줄 왼쪽 단추(☰)와 Ctrl+Shift+E로 연다. 캔버스는 그 옆으로 줄어들 뿐 자리와 배율은 그대로다.
 // 판 세션을 누르면 그 노드로 들어가고(H4), 리포 이름을 누르면 그 영역으로 간다. 닫힌 세션과 묶여 있지 않은 대화는 "판으로 열기"(J2·J4),
 // 다른 곳에 묶인 대화는 흐리게 묶인 곳만 보인다. 닫힌 세션과 판 밖 대화는 백엔드 recall.list로 읽고, recall.updated가 오면 사이드바가 열려 있을 때만 다시 읽는다.
@@ -11,17 +12,22 @@
 //   - 그룹 만들기·이름 바꾸기·지우기, 워크스페이스를 그룹 머리줄이나 다른 워크스페이스 줄에 끌어 놓기(메뉴의 "그룹으로 옮기기"도 같다).
 //   - 오른쪽 가장자리를 끌어 폭을 바꾼다(두 번 누르면 기본 폭). 고르기 모드에서 워크스페이스 여럿을 골라 판에서 지운다(Workspaces.jsx CloseWsDialog).
 //   열림, 폭, 접힘, 거르기는 창 프로필의 localStorage에 둔다.
+// P103: 나무 모양으로 다듬었다. 단계마다 16px 들여쓰기와 옅은 세로 안내선, 작은 펼침 화살표(SVG), 이름은 대문자로 바꾸지 않는다.
+//   뜻을 알기 어렵던 표시를 뺐다: 폴더 □·저장소 ⎇ 기호(가리키면 풀이), 이름 뒤 보라 점(상태 점을 보라로), 셸 $(종류 글), 닫힘·대화 꼬리표(절 이름이 말한다).
+//   수는 자리로 뜻을 나눈다: 이름 옆 옅은 수 = 안에 든 것, 오른쪽 = 상태(응답 필요·오류 배지, 접힌 곳의 작업 중 ●n). 지금 연 세션(focusId)은 강조색.
 import './sidebar.css';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { api } from './api.js';
-import { useStore, getState, selectWorkspace, toast, goWhenOpen, openDialog } from './store.js';
+import { useStore, getState, selectWorkspace, toast, goWhenOpen, openDialog, setRenaming } from './store.js';
 import { ago, askLine, STATE_LABEL } from './lib/labels.js';
 import { useT, t, errText, tMsg, tOr } from './lib/i18n.js';
 import { archiveRows, SECTION_STEP, bindingText } from './lib/sidebar.js';
-import { buildRows, offsetsOf, windowOf, scrollFor, moveCursor, parentOf, dropTarget, adjustIndex, freshGroupName, clampWidth, SIDE_W, BUCKETS, bucketOf, kindOf } from './lib/sidebar-tree.js'; // P44
+import { buildRows, offsetsOf, windowOf, scrollFor, moveCursor, parentOf, dropTarget, adjustIndex, freshGroupName, clampWidth, SIDE_W, BUCKETS, bucketOf, kindOf, TREE, headBadges } from './lib/sidebar-tree.js'; // P44. P103: TREE, headBadges
 import { shownKind, kindOf as agentKindOf } from './lib/kinds.js'; // P25: DeepSeek(flavor)를 종류처럼 보인다
 import { branchLabel } from './lib/branch.js'; // P8(K4): 하위 세션은 부모 아래에 들여 보인다
 import { Icon } from './lib/icons.jsx';
+import { RenameInput, useRenaming } from './Rename.jsx'; // P66: 세션 줄 메뉴의 이름 바꾸기
+import { addressOf, renamed } from './lib/session-name.js';
 
 const KEY = 'mt.sidebar';
 function load() { try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch { return {}; } }
@@ -172,6 +178,7 @@ function setSelecting(v) { side.selecting = v; side.selected = new Set(); bump()
 function toggleSelected(key) { const n = new Set(side.selected); if (n.has(key)) n.delete(key); else n.add(key); side.selected = n; bump(); }
 export function setSidebarWidth(w, save = true) { side.width = clampWidth(w); if (save) persist(); bump(); }
 function openMenu(e, type, key) { const r = e.currentTarget.getBoundingClientRect(); side.menu = { type, key, x: r.right, y: r.bottom + 2 }; bump(); e.stopPropagation(); }
+function openMenuAt(e, type, key) { side.menu = { type, key, x: e.clientX + 180, y: e.clientY }; bump(); e.preventDefault(); e.stopPropagation(); } // P66: 오른쪽 누르기 메뉴(세션 줄)
 function closeMenu() { if (side.menu) { side.menu = null; bump(); } }
 async function groupCall(method, p, done) {
   try { const r = await api.call(method, p); if (done) done(r); return r; } catch (e) { toast(t('sbGroups.fail', { error: errText(e) }), 'error'); return null; }
@@ -200,13 +207,22 @@ const dragProps = (r) => ({
   onDragLeave: () => { if (side.dropAt && side.dropAt.id === r.id) { side.dropAt = null; bump(); } },
   onDrop: (e) => { e.preventDefault(); const rc = e.currentTarget.getBoundingClientRect(); dropOn(r, r.type === 'ws' && e.clientY > rc.top + rc.height / 2); },
 });
-const pad = (r, extra = 0) => ({ paddingLeft: 6 + (r.depth || 0) * 14 + Math.min(r.indent || 0, 4) * 12 + extra });
+// P103: 나무 단계(r.lv)만큼 들여 쓴다. 세로 안내선은 줄을 담은 칸(.mt-sb2-slot)이 단계 수(--lv)만큼 그린다(sidebar.css).
+// NAME: 펼침 화살표·상태 점 칸(16px)과 틈(6px). 화살표도 점도 없는 줄(절 이름, 닫힌 세션, 더 보기)은 이만큼 더 들여 이름 줄을 맞춘다
+const NAME = 22;
+const pad = (r, extra = 0) => ({ paddingLeft: TREE.pad + (r.lv || 0) * TREE.step + extra });
+// 작은 펼침 화살표(펼치면 아래로 돈다)
+const Fold = ({ open, action }) => <span className={`mt-sb2-fold${open ? ' open' : ''}`} data-action={action} aria-hidden="true"><Icon name="chev" /></span>;
 
-function sessionTitle(s, now) {
+function sessionTitle(s, now, { here = false, pinned = false } = {}) {
   const br = branchLabel(s);
   const ask = s.state === 'waiting' || s.state === 'trust_wait' ? askLine(s) : '';
   return [
     `@${s.name} · ${kindText(shownKind(s))} · ${STATE_LABEL[s.state] || s.state}${s.lastActivityAt ? ` · ${ago(s.lastActivityAt, now)}` : ''}`,
+    here && t('sb3.here'),
+    s.unseen && bucketOf(s) === 'idle' && t('sb3.unseen'),
+    pinned && t('sb3.pinned'),
+    renamed(s) && t('rename.address', { address: addressOf(s) }),
     ask && `${t('sb2.tipAsk')}: ${ask}`,
     s.state === 'error' && s.error && `${t('state.error')}: ${typeof s.error === 'string' ? s.error : s.error.message || ''}`,
     s.lastPrompt && `${t('sb2.tipPrompt')}: ${s.lastPrompt}`,
@@ -216,40 +232,60 @@ function sessionTitle(s, now) {
   ].filter(Boolean).join('\n');
 }
 
-// 판 세션 한 줄: 상태 점, 이름, 종류(claude가 아니면), 지난 시간. 응답 필요·오류는 질문(또는 오류) 한 줄을 더 보인다
-const SessionRow = memo(function SessionRow({ r, now, cur }) {
+// 판 세션 한 줄: 상태 점, 이름, 역할·종류(claude가 아니면, 옅은 글), 지난 시간. 응답 필요·오류는 질문(또는 오류) 한 줄을 더 보인다.
+// P103: 안 본 결과는 이름 뒤 점 대신 상태 점을 보라로 하고 이름을 진하게, 지금 연 세션(here)은 이름을 강조색으로
+const SessionRow = memo(function SessionRow({ r, now, cur, here }) {
   const t = useT();
   const s = r.s;
   const b = bucketOf(s);
   const ask = r.attn ? (b === 'need' ? askLine(s) || t(`state.${s.state}`) : (s.error && (typeof s.error === 'string' ? s.error : s.error.message)) || t(`state.${s.state}`)) : '';
   const k = shownKind(s);
-  return (
-    <button className={`mt-sb2-row sess b-${b}${r.attn ? ' attn' : ''}${r.pinned ? ' pinned' : ''}${cur ? ' cur' : ''}${s.unseen ? ' unseen' : ''}`} style={pad(r)} data-sb="session" data-row={r.id} data-session={s.sessionId} data-name={s.name} data-state={s.state} data-indent={r.indent || 0} data-pinned={r.pinned ? '1' : undefined}
-      title={sessionTitle(s, now)} onClick={() => { setCursor(r.id); getState().navigateTo && getState().navigateTo(s.sessionId, { focusTerminal: true }); }}>
+  const editing = useRenaming(s.sessionId, 'sidebar');
+  // P66: 이름을 바꾸는 동안은 줄을 단추가 아닌 칸으로 그린다(단추 안의 입력칸은 초점을 받지 못한다)
+  if (editing) return (
+    <div className={`mt-sb2-row sess b-${b} cur editing`} style={pad(r)} data-sb="session" data-row={r.id} data-session={s.sessionId} data-name={s.name} data-state={s.state}>
       <span className="mt-sb2-line">
         <span className={`mt-sb2-dot st-${s.state}`} data-state={s.state} />
-        {k === 'shell' && <span className="mt-sb2-sh" title={kindText(k)}>$</span>}
+        <RenameInput s={s} where="sidebar" className="mt-sb2-srename" />
+      </span>
+    </div>
+  );
+  return (
+    <button className={`mt-sb2-row sess b-${b}${r.attn ? ' attn' : ''}${r.pinned ? ' pinned' : ''}${cur ? ' cur' : ''}${s.unseen ? ' unseen' : ''}${here ? ' here' : ''}`} style={pad(r)} data-sb="session" data-row={r.id} data-session={s.sessionId} data-name={s.name} data-state={s.state} data-indent={r.indent || 0} data-pinned={r.pinned ? '1' : undefined} data-focused={here ? '1' : undefined}
+      title={sessionTitle(s, now, { here, pinned: r.pinned })} onClick={() => { setCursor(r.id); getState().navigateTo && getState().navigateTo(s.sessionId, { focusTerminal: true }); }}
+      onContextMenu={(e) => { setCursor(r.id); openMenuAt(e, 'session', s.sessionId); }}>
+      <span className="mt-sb2-line">
+        <span className={`mt-sb2-dot st-${s.state}`} data-state={s.state} />
         <b className="mt-sb2-name">{s.name}</b>
-        {k !== 'claude' && k !== 'shell' && <span className="mt-sb2-kind">{kindText(k)}</span>}
         {s.branch && s.branch.role && <span className="mt-sb2-role">{s.branch.role}</span>}
+        {k !== 'claude' && <span className="mt-sb2-kind">{kindText(k)}</span>}
         {r.attn && <span className={`mt-sb2-tag ${b}`}>{b === 'need' ? t('sb2.st_need') : t('sb2.st_error')}</span>}
         <span className="mt-sb2-time">{ago(s.lastActivityAt || s.createdAt, now)}</span>
+        <span role="button" tabIndex={-1} className="mt-sb2-more" data-action="session-menu" title={t('sb2.menu')} onClick={(e) => { setCursor(r.id); openMenu(e, 'session', s.sessionId); }}><Icon name="more" /></span>
       </span>
       {r.attn && <span className="mt-sb2-ask">{ask}</span>}
     </button>
   );
 });
 
-function Counts({ c, attnOnly = false }) {
+// P103: 머리줄 오른쪽 상태 수. 응답 필요(노랑 배지)·오류(붉은 배지)는 늘, 작업 중(주황 점과 수)은 접혔을 때만. 가리키면 무엇을 세는지 글로
+function Counts({ c, open }) {
   const t = useT();
+  const b = headBadges(c, open);
+  const tip = (key, n) => ({ title: t(key, { n }), 'aria-label': t(key, { n }) });
   return (
     <span className="mt-sb2-c">
-      {c.need > 0 && <span className="need" data-count="need" title={t('state.waiting')}>{c.need}</span>}
-      {c.error > 0 && <span className="err" data-count="error" title={t('state.error')}>{c.error}</span>}
-      {!attnOnly && c.working > 0 && <span className="work" data-count="working" title={t('state.working')}>{c.working}</span>}
-      {!attnOnly && <span className="all" data-count="sessions" title={t('sb2.sessionsN', { n: c.sessions })}>{c.sessions}</span>}
+      {b.need > 0 && <span className="need" data-count="need" {...tip('sb3.needN', b.need)}>{b.need}</span>}
+      {b.error > 0 && <span className="err" data-count="error" {...tip('sb3.errorN', b.error)}>{b.error}</span>}
+      {b.working > 0 && <span className="work" data-count="working" {...tip('sb3.workingN', b.working)}>{b.working}</span>}
     </span>
   );
+}
+// P103: 이름 옆 옅은 수 = 안에 든 것(그룹은 워크스페이스 수, 워크스페이스는 세션 수, 거르는 중이면 맞는 세션 수)
+function Inside({ n, what, kind }) {
+  const t = useT();
+  if (!(n > 0) && kind !== 'matched') return null;
+  return <span className="mt-sb2-gn" data-count={kind} title={t(what, { n })}>{n}</span>;
 }
 
 function GroupRow({ r, cur, renaming, dropAt }) {
@@ -258,14 +294,14 @@ function GroupRow({ r, cur, renaming, dropAt }) {
   useEffect(() => { if (renaming) setVal(r.g.name || ''); }, [renaming, r.g.name]);
   const none = r.none;
   return (
-    <div className={`mt-sb2-row grp${r.open ? '' : ' folded'}${cur ? ' cur' : ''}${none ? ' none' : ''}${dropAt ? ' drop' : ''}`} style={pad(r, r.none ? 18 : 0)} data-sb="group" data-row={r.id} data-group={r.g.id || ''} data-name={r.g.name || ''} {...dragProps(r)}
+    <div className={`mt-sb2-row grp${r.open ? '' : ' folded'}${cur ? ' cur' : ''}${none ? ' none' : ''}${dropAt ? ' drop' : ''}`} style={pad(r)} data-sb="group" data-row={r.id} data-group={r.g.id || ''} data-name={r.g.name || ''} {...dragProps(r)}
       onClick={() => { setCursor(r.id); if (!none && !renaming) toggleFold(r.id); }}>
-      {!none && <span className="mt-sb2-fold" data-action="fold">{r.open ? '▾' : '▸'}</span>}
+      {none ? <span className="mt-sb2-fold" aria-hidden="true" /> : <Fold open={r.open} action="fold" />}
       {renaming
         ? <input className="mt-sb2-rename" data-role="group-rename" autoFocus value={val} maxLength={40} onClick={(e) => e.stopPropagation()} onChange={(e) => setVal(e.target.value)} onBlur={() => (val.trim() && val.trim() !== r.g.name ? renameGroup(r.g.id, val) : (side.renaming = null, bump()))} onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { side.renaming = null; bump(); } }} />
-        : <span className="mt-sb2-gname" onDoubleClick={(e) => { if (!none) { e.stopPropagation(); side.renaming = r.g.id; bump(); } }}>{none ? t('sbGroups.none') : r.g.name}</span>}
-      <span className="mt-sb2-gn">{r.wsN}</span>
-      <Counts c={r.c} attnOnly={!r.open} />
+        : <span className="mt-sb2-gname" data-role="group-name" onDoubleClick={(e) => { if (!none) { e.stopPropagation(); side.renaming = r.g.id; bump(); } }}>{none ? t('sbGroups.none') : r.g.name}</span>}
+      <Inside n={r.wsN} what="sb3.wsN" kind="workspaces" />
+      <Counts c={r.c} open={r.open} />
       {!none && <button className="mt-sb2-more" data-action="group-menu" title={t('sb2.menu')} onClick={(e) => openMenu(e, 'group', r.g.id)}><Icon name="more" /></button>}
     </div>
   );
@@ -275,17 +311,16 @@ function WsRow({ r, cur, selecting, selected, dropAt }) {
   const t = useT();
   const w = r.w;
   return (
-    <div className={`mt-sb2-row ws${r.open ? '' : ' folded'}${cur ? ' cur' : ''}${selected ? ' sel' : ''}${dropAt ? (dropAt.after ? ' drop-after' : ' drop-before') : ''}`} style={pad(r)} data-sb="ws" data-row={r.id} data-ws={w.key} data-name={w.name}
+    <div className={`mt-sb2-row ws${r.open ? '' : ' folded'}${cur ? ' cur' : ''}${selected ? ' sel' : ''}${dropAt ? (dropAt.after ? ' drop-after' : ' drop-before') : ''}`} style={pad(r)} data-sb="ws" data-row={r.id} data-ws={w.key} data-name={w.name} data-kind={w.kind}
       draggable={!selecting} onDragStart={(e) => { side.drag = w.key; try { e.dataTransfer.setData('text/plain', w.name); e.dataTransfer.effectAllowed = 'move'; } catch {} bump(); }} onDragEnd={() => { side.drag = null; side.dropAt = null; bump(); }} {...dragProps(r)}
-      title={`${w.root}\n${t('sb2.wsTip')}`}
+      title={`${w.root}\n${t(w.kind === 'repo' ? 'sb3.repo' : 'sb3.folder')}\n${t('sb2.wsTip')}`}
       onClick={() => { setCursor(r.id); if (selecting) toggleSelected(w.key); else toggleFold(w.key); }}>
       {selecting
         ? <input type="checkbox" className="mt-sb2-check" data-action="ws-select" checked={selected} readOnly />
-        : <span className="mt-sb2-fold" data-action="fold">{r.open ? '▾' : '▸'}</span>}
-      {!selecting && <span className="mt-sb2-icon">{w.kind === 'repo' ? '⎇' : '▢'}</span>}
-      <button className="mt-sb2-wname" data-action="go-ws" title={t('sidebar.goWs')} onClick={(e) => { e.stopPropagation(); setCursor(r.id); if (selecting) toggleSelected(w.key); else selectWorkspace(w.key); }}>{w.name}</button>
-      {r.matched != null && <span className="mt-sb2-gn" data-count="matched">{r.matched}</span>}
-      <Counts c={r.c} attnOnly={!r.open && r.matched == null} />
+        : <Fold open={r.open} action="fold" />}
+      <button className="mt-sb2-wname" data-action="go-ws" title={t('sidebar.goWs')} onClick={(e) => { e.stopPropagation(); setCursor(r.id); if (selecting) toggleSelected(w.key); else selectWorkspace(w.key); }}>{w.label || w.name}</button>{/* P91: 저절로 만든 묶음 안에서는 뿌리에서의 상대 경로 */}
+      {r.matched != null ? <Inside n={r.matched} what="sb3.matchedIn" kind="matched" /> : <Inside n={r.c.sessions} what="sb3.sessionsIn" kind="sessions" />}
+      <Counts c={r.c} open={r.open} />
       {!selecting && <button className="mt-sb2-more" data-action="ws-menu" title={t('sb2.menu')} onClick={(e) => openMenu(e, 'ws', w.key)}><Icon name="more" /></button>}
     </div>
   );
@@ -294,34 +329,35 @@ function WsRow({ r, cur, selecting, selected, dropAt }) {
 function ExtraRow({ r, cur }) {
   const t = useT();
   return (
-    <button className={`mt-sb2-row extra${cur ? ' cur' : ''}`} style={pad(r, 4)} data-sb="extra" data-row={r.id} data-ws={r.key} data-action="extra" onClick={() => { setCursor(r.id); toggleExtra(r.key); }}>
-      <span className="mt-sb2-fold">{r.open ? '▾' : '▸'}</span>
-      {[r.closedN > 0 && t('sidebar.cClosed', { n: r.closedN }), r.convosN > 0 && t('sidebar.cConvos', { n: r.convosN })].filter(Boolean).join(' · ')}
+    <button className={`mt-sb2-row extra${cur ? ' cur' : ''}`} style={pad(r)} data-sb="extra" data-row={r.id} data-ws={r.key} data-action="extra" title={t('sb3.extraTip')} onClick={() => { setCursor(r.id); toggleExtra(r.key); }}>
+      <Fold open={r.open} />
+      <span className="mt-sb2-gname">{[r.closedN > 0 && t('sb3.closedN', { n: r.closedN }), r.convosN > 0 && t('sb3.convosN', { n: r.convosN })].filter(Boolean).join(' · ')}</span>
     </button>
   );
 }
 function SecRow({ r }) {
   const t = useT();
-  return <div className="mt-sb2-row sec" style={pad(r, 18)} data-sec={r.sec}>{r.sec === 'closed' ? t('sidebar.secClosed') : t('sidebar.secConvos')} <span className="mt-sb-n">{r.n}</span></div>;
+  return <div className="mt-sb2-row sec" style={pad(r, NAME)} data-sec={r.sec}>{r.sec === 'closed' ? t('sidebar.secClosed') : t('sidebar.secConvos')} <span className="mt-sb-n">{r.n}</span></div>;
 }
 function MoreRow({ r, cur }) {
   const t = useT();
   const go = () => { setCursor(r.id); if (r.pinMore) { const k = r.key.slice(4); toggleFold(k, true); } else showMore(r.key); };
-  return <button className={`mt-sb2-row morerow${cur ? ' cur' : ''}`} style={pad(r, 18)} data-action="more" data-row={r.id} onClick={go}>{r.pinMore ? t('sb2.attnMore', { n: r.n }) : t('sidebar.more', { n: r.n })}</button>;
+  return <button className={`mt-sb2-row morerow${cur ? ' cur' : ''}`} style={pad(r, NAME)} data-action="more" data-row={r.id} onClick={go}>{r.pinMore ? t('sb2.attnMore', { n: r.n }) : t('sidebar.more', { n: r.n })}</button>;
 }
 function EmptyRow({ r }) {
   const t = useT();
-  return <div className="mt-sb2-row empty" style={pad(r, 18)}>{r.group != null ? t('sbGroups.empty') : t('sidebar.wsEmpty')}</div>;
+  return <div className="mt-sb2-row empty" style={pad(r, NAME)}>{r.group != null ? t('sbGroups.empty') : t('sidebar.wsEmpty')}</div>;
 }
-// 닫힌 세션·판 밖 대화: 한 줄(꼬리표, 제목, 시간). 단추(판으로 열기, 보관)와 묶인 곳은 마우스를 올리거나 고르면 보인다
+// 닫힌 세션·판 밖 대화: 한 줄(제목, 시간). 무엇인지는 위 절 이름이 말한다(P103: 줄마다 붙던 "닫힘"·"대화" 꼬리표는 뺐다).
+// 단추(판으로 열기, 보관)와 묶인 곳은 마우스를 올리거나 고르면 보인다
 function ClosedRow({ r, now, busy, cur }) {
   const t = useT();
   const c = r.x;
   const why = c.binding && c.binding.bound ? bindingText(c.binding) : null;
   const reason = (c.reason && tOr(`closeReason.${c.reason}`, c.reasonLabel)) || c.reasonLabel || t('sidebar.closedTag');
   return (
-    <div className={`mt-sb2-row item closed${why ? ' bound' : ''}${cur ? ' cur' : ''}`} style={pad(r, 18)} data-sb="closed" data-row={r.id} data-session={c.sessionId} data-name={c.name} title={`@${c.name} · ${reason}${c.lastPrompt ? `\n${c.lastPrompt}` : ''}${why ? `\n${why}` : ''}`} onClick={() => setCursor(r.id)}>
-      <span className="mt-sb-tag closed">{t('sidebar.closedTag')}</span><b className="mt-sb2-name">{c.name}</b>{shownKind(c) !== 'claude' && <span className="mt-sb2-kind">{kindText(shownKind(c))}</span>}
+    <div className={`mt-sb2-row item closed${why ? ' bound' : ''}${cur ? ' cur' : ''}`} style={pad(r, NAME)} data-sb="closed" data-row={r.id} data-session={c.sessionId} data-name={c.name} title={`@${c.name} · ${t('sidebar.closedTag')} · ${reason}${c.lastPrompt ? `\n${c.lastPrompt}` : ''}${why ? `\n${why}` : ''}`} onClick={() => setCursor(r.id)}>
+      <b className="mt-sb2-name">{c.name}</b>{shownKind(c) !== 'claude' && <span className="mt-sb2-kind">{kindText(shownKind(c))}</span>}
       <span className="mt-sb2-time">{ago(c.closedAt, now)}</span>
       <span className="mt-sb2-acts">
         {why ? <span className="mt-sb-bound" data-bound={c.binding.where}>{why}</span>
@@ -337,9 +373,8 @@ function ConvoRow({ r, now, busy, cur }) {
   const b = c.binding || { bound: false };
   const title = c.title || c.firstPrompt || c.convId.slice(0, 8);
   return (
-    <div className={`mt-sb2-row item convo${b.bound ? ' bound' : ''}${cur ? ' cur' : ''}`} style={pad(r, 18)} data-sb="convo" data-row={r.id} data-convo={c.convId} data-bound={b.bound ? b.where : ''} onClick={() => setCursor(r.id)}
+    <div className={`mt-sb2-row item convo${b.bound ? ' bound' : ''}${cur ? ' cur' : ''}`} style={pad(r, NAME)} data-sb="convo" data-row={r.id} data-convo={c.convId} data-bound={b.bound ? b.where : ''} onClick={() => setCursor(r.id)}
       title={`${c.title || ''}\n${t('sidebar.convoId', { id: c.convId })}${c.cwd ? `\n${c.cwd}` : ''}${[c.folder, c.branch && `⎇ ${c.branch}`].filter(Boolean).length ? `\n${[c.folder, c.branch && `⎇ ${c.branch}`].filter(Boolean).join(' · ')}` : ''}${c.lastPrompt && c.lastPrompt !== c.title ? `\n${c.lastPrompt}` : ''}${b.bound ? `\n${bindingText(b)}` : ''}`}>
-      <span className="mt-sb-tag convo">{t('sidebar.convoTag')}</span>
       {c.onCanvas ? <button className="mt-sb-title link mt-sb2-name" data-action="go-convo" title={t('sidebar.goConvo')} onClick={(e) => { e.stopPropagation(); getState().navigateToItem && getState().navigateToItem(`convo:${c.convId}`); }}>{title}</button> : <b className="mt-sb2-name">{title}</b>}
       <span className="mt-sb2-time">{ago(c.lastAt, now)}</span>
       <span className="mt-sb2-acts">
@@ -351,11 +386,11 @@ function ConvoRow({ r, now, busy, cur }) {
   );
 }
 
-function Row({ r, now, cur, busy, selecting, selected, renaming, dropAt }) {
+function Row({ r, now, cur, busy, selecting, selected, renaming, dropAt, here }) {
   switch (r.type) {
     case 'group': return <GroupRow r={r} cur={cur} renaming={renaming} dropAt={dropAt} />;
     case 'ws': return <WsRow r={r} cur={cur} selecting={selecting} selected={selected} dropAt={dropAt} />;
-    case 'session': return <SessionRow r={r} now={now} cur={cur} />;
+    case 'session': return <SessionRow r={r} now={now} cur={cur} here={here} />;
     case 'extra': return <ExtraRow r={r} cur={cur} />;
     case 'sec': return <SecRow r={r} />;
     case 'closed': return <ClosedRow r={r} now={now} busy={busy} cur={cur} />;
@@ -400,7 +435,16 @@ function SideMenu() {
   if (!menu) return null;
   const item = (action, label, fn, extra = {}) => <button key={action + (extra.k || '')} className={`mt-sb2-mi${extra.on ? ' on' : ''}${extra.danger ? ' danger' : ''}`} data-action={action} data-group={extra.group} disabled={extra.disabled} onClick={() => { closeMenu(); fn(); }}>{label}</button>;
   let body = null;
-  if (menu.type === 'ws') {
+  if (menu.type === 'session') {
+    // P66: 세션 줄 메뉴. 이름 바꾸기(에이전트 주소는 그대로), 노드로 가기
+    const s = getState().sessions.get(menu.key);
+    if (!s) return null;
+    body = <>
+      <div className="mt-sb2-mh">{s.name}{renamed(s) ? <span className="mt-sb2-maddr"> · {addressOf(s)}</span> : null}</div>
+      {item('menu-rename-session', t('rename.menu'), () => setRenaming(s.sessionId, 'sidebar'))}
+      {item('menu-go-session', t('rename.goNode'), () => { const st = getState(); if (st.navigateTo) st.navigateTo(s.sessionId, { viewOnly: true }); })}
+    </>;
+  } else if (menu.type === 'ws') {
     const w = workspaces.find((x) => x.key === menu.key);
     if (!w) return null;
     const cur = (groups.find((g) => g.members.includes(w.key)) || {}).id || null;
@@ -463,7 +507,7 @@ function FilterBar({ counts, kinds, rows }) {
       )}
       {any ? <button className="mt-sb2-chip clear" data-action="clear-filters" onClick={clearFilters}>{t('sb2.clear')}</button> : null}
       <span className="mt-sb2-tools">
-        <button className="mt-sb2-tool" title={allFolded ? t('sb2.unfoldAll') : t('sb2.foldAll')} data-action={allFolded ? 'unfold-all' : 'fold-all'} onClick={() => foldAll(!allFolded)}>{allFolded ? '⊞' : '⊟'}</button>
+        <button className="mt-sb2-tool" title={allFolded ? t('sb2.unfoldAll') : t('sb2.foldAll')} aria-label={allFolded ? t('sb2.unfoldAll') : t('sb2.foldAll')} data-action={allFolded ? 'unfold-all' : 'fold-all'} onClick={() => foldAll(!allFolded)}><Icon name={allFolded ? 'unfoldAll' : 'foldAll'} /></button>
         <button className="mt-sb2-tool" title={t('sbGroups.newTitle')} data-action="group-new" onClick={() => newGroup()}><Icon name="plus" /></button>
         <button className={`mt-sb2-tool text${selecting ? ' on' : ''}`} title={t('sbRemove.selectTitle')} data-action="select-mode" onClick={() => setSelecting(!selecting)}>{t('sbRemove.select')}</button>
       </span>
@@ -481,6 +525,7 @@ function VirtualList({ rows, now, scroller }) {
   const selected = useSide((st) => st.selected);
   const renaming = useSide((st) => st.renaming);
   const dropAt = useSide((st) => st.dropAt);
+  const focusId = useStore((st) => st.focusId); // P103: 지금 연 세션(마지막에 들어간 노드)
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
@@ -506,8 +551,8 @@ function VirtualList({ rows, now, scroller }) {
     const r = rows[i];
     const key = r.type === 'ws' ? r.w.key : r.type === 'closed' || r.type === 'convo' ? r.x.sessionId || r.x.convId : '';
     out.push(
-      <div key={r.id} className="mt-sb2-slot" style={{ top: off[i], height: r.h }}>
-        <Row r={r} now={now} cur={cursor === r.id} busy={busy.has(key)} selecting={selecting} selected={r.type === 'ws' && selected.has(r.w.key)} renaming={r.type === 'group' && !!renaming && renaming === r.g.id} dropAt={dropAt && dropAt.id === r.id ? dropAt : null} />
+      <div key={r.id} className="mt-sb2-slot" style={{ top: off[i], height: r.h, '--lv': r.lv || 0 }} data-lv={r.lv || 0}>{/* P103: 칸이 단계 수만큼 세로 안내선을 그린다 */}
+        <Row r={r} now={now} cur={cursor === r.id} busy={busy.has(key)} selecting={selecting} selected={r.type === 'ws' && selected.has(r.w.key)} renaming={r.type === 'group' && !!renaming && renaming === r.g.id} dropAt={dropAt && dropAt.id === r.id ? dropAt : null} here={r.type === 'session' && !!focusId && focusId === r.s.sessionId} />
       </div>,
     );
   }
@@ -542,7 +587,7 @@ function ArchiveBox({ now }) {
   return (
     <div ref={box} className={`mt-sb-archive${open ? ' open' : ''}`} data-role="archive-box">
       <button className="mt-sb-archive-head" data-action="archive-box" onClick={() => setArchiveOpen(!open)} title={t('archive.boxTitle')}>
-        <span>{open ? '▾' : '▸'}</span> {t('archive.box')} <span className="mt-sb-n">{open && data ? total : counted}</span>
+        <Fold open={open} /> {t('archive.box')} <span className="mt-sb-n">{open && data ? total : counted}</span>
         {data && data.days > 0 && <span className="mt-sb-dim">· {t('archive.autoDays', { n: data.days })}</span>}
       </button>
       {open && (
@@ -577,7 +622,7 @@ function MissedBox({ now }) {
   return (
     <div ref={box} className={`mt-sb-archive mt-sb-missed${open ? ' open' : ''}`} data-role="missed-box">
       <button className="mt-sb-archive-head" data-action="missed-box" onClick={() => setMissedOpen(!open)} title={t('missed.boxTitle')}>
-        <span>{open ? '▾' : '▸'}</span> {t('missed.box')} <span className="mt-sb-n" data-count="missed">{open && data ? data.count : counted}</span>
+        <Fold open={open} /> {t('missed.box')} <span className="mt-sb-n" data-count="missed">{open && data ? data.count : counted}</span>
         {open && data && data.count > 0 && <span className="mt-sb-dim">· {fmtBytes(data.bytes)}</span>}
       </button>
       {open && (
@@ -588,8 +633,8 @@ function MissedBox({ now }) {
           {data && data.folders.map((g) => (
             <div key={g.folder} className="mt-sb-missed-ws" data-folder={g.folder} data-why={g.why}>
               <div className="mt-sb-missed-head">
-                <button className="mt-sb-fold" data-action="missed-fold" onClick={() => setUnfold((u) => ({ ...u, [g.folder]: !u[g.folder] }))}>{unfold[g.folder] ? '▾' : '▸'}</button>
-                <span className="mt-sb-missed-path" title={g.folder}>{g.folder.split('/').slice(-2).join('/')}</span>
+                <button className="mt-sb-fold" data-action="missed-fold" aria-expanded={!!unfold[g.folder]} onClick={() => setUnfold((u) => ({ ...u, [g.folder]: !u[g.folder] }))}><Fold open={unfold[g.folder]} /></button>
+                <span className="mt-sb-missed-path" title={g.folder}>{shortFolder(g.folder)}</span>
                 <span className="mt-sb-tag missed">{WHY[g.why] ? t(WHY[g.why]) : g.why}</span>
               </div>
               <div className="mt-sb-missed-meta"><span data-count="folder">{t('missed.count', { n: g.count })}</span> · {fmtBytes(g.bytes)} · {ago(g.lastAt, now)}
@@ -713,6 +758,7 @@ export function Sidebar() {
     if (e.key === 'Home') return go('home');
     if (e.key === 'End') return go('end');
     if (e.key === 'Enter') { e.preventDefault(); activate(r); return; }
+    if (e.key === 'F2' && r && r.type === 'session') { e.preventDefault(); setRenaming(r.s.sessionId, 'sidebar'); return; } // P66
     if (e.key === ' ' && r && r.type === 'ws' && side.selecting) { e.preventDefault(); toggleSelected(r.w.key); return; }
     if (e.key === 'ArrowRight' && r) {
       e.preventDefault();

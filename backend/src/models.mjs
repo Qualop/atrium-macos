@@ -1,7 +1,7 @@
 // P41: 판이 띄울 수 있는 모델의 목록(atrium models)과 말로 한 모델 이름 풀기(atrium child --model).
 // 목록은 세 곳에서 온다.
 // - 호출자(launchers.mjs): 이름, 하네스, 모델, 게이트웨이 경유 여부. 띄우는 명령은 atrium child <이름> --launcher <호출자>.
-// - 하네스가 아는 모델(HARNESSES의 models)과 짧은 별칭(opus, sonnet, haiku, fable).
+// - 하네스가 아는 모델(HARNESSES의 models)과 짧은 별칭(opus, sonnet, haiku, fable). P72: Codex는 Codex의 모델 목록 캐시(codex-models.mjs)를 읽은 목록이다.
 // - 게이트웨이가 알려 주는 모델: 게이트웨이를 쓰는 claude 호출자(ANTHROPIC_BASE_URL)마다 그 주소의 /v1/models를 Claude Code처럼(anthropic-version 머리글) 읽는다.
 //   이 모델은 그 호출자의 env(게이트웨이 주소 등)로 띄운다. 판이 알려진 Anthropic 모델은 게이트웨이를 거치지 않고 하네스 줄로 띄우므로 게이트웨이 목록에서 뺀다.
 // 이름 풀기는 정확한 ID → 별칭 → 느슨한 맞춤(대소문자, 띄어쓰기·하이픈, "deepseek flash" ↔ deepseek-flash) 순서다. 같은 모델을 가리키는 줄이 여럿이면 하나로 본다(호출자 > 하네스 > 게이트웨이).
@@ -60,19 +60,19 @@ function targetOfModel(harness, model) {
 }
 
 // 목록 만들기. launchers: 호출자들, gateways: [{ url, host(호출자), ok, models: [/v1/models의 data], why }]
-export function buildCatalog({ launchers = [], gateways = [], providers = {} } = {}) {
+export function buildCatalog({ launchers = [], gateways = [], providers = {}, harnessModels = {} } = {}) {
   const entries = [];
   for (const l of launchers) {
     const h = harnessOf(l.harness);
     if (!AGENT_HARNESS(h)) continue;
     const gw = gatewayOf(l);
     const t = targetOfModel(h.id, l.model || '');
-    entries.push({ source: 'launcher', harness: h.id, kind: h.kind, launcher: l.name, launcherId: l.id, model: l.model || '', gateway: gw ? (l.env && l.env.ANTHROPIC_BASE_URL) || gw.url : null, keys: { exact: [l.name, l.id], exactModel: l.model ? [l.model] : [], alias: l.model ? [t.base] : [] }, ...t, words: [l.name, l.model, t.base].filter(Boolean).join(' '), command: `atrium child <이름> --launcher ${launcherRef(l)}` });
+    entries.push({ source: 'launcher', harness: h.id, kind: h.kind, launcher: l.name, launcherId: l.id, model: l.model || '', gateway: gw ? (l.env && l.env.ANTHROPIC_BASE_URL) || gw.url : null, keys: { exact: [l.name, l.id], exactModel: l.model ? [l.model] : [], alias: l.model ? [t.base] : [] }, ...t, words: [l.name, l.model, t.base].filter(Boolean).join(' '), command: `atrium child <이름> --launcher ${launcherRef(l)}`, startCommand: l.startCommand || '' }); // P97: 실행 명령
   }
   for (const h of Object.values(HARNESSES)) {
     // Provider lists are loaded by Branch through Backend.agentModels. Never
     // substitute a hard-coded Codex model when discovery is unavailable.
-    const live = providers[h.kind];
+    const live = providers[h.kind] ?? harnessModels[h.id];
     const rows = h.liveModels ? (Array.isArray(live) ? live : live?.models || []) : h.models || [];
     const seenModels = new Set();
     for (const row of rows) {
@@ -139,6 +139,10 @@ export function resolveModel(query, catalog, { kind = null } = {}) {
     const keysOf = (e) => [...e.keys.exact, ...e.keys.exactModel, ...e.keys.alias, e.base].filter(Boolean).map((k) => norm(stripVariants(k)));
     const strong = entries.filter((e) => keysOf(e).includes(nq));
     if (strong.length) return pick(strong, qv, 'loose');
+    // P96: 제공자 앞머리(deepseek/, b.ai/)를 뗀 이름으로 한 번 더(Codex의 opencodex 이름 deepseek/deepseek-flash ↔ "deepseek flash")
+    const tail = (k) => k.slice(k.lastIndexOf('/') + 1);
+    const strongTail = entries.filter((e) => keysOf(e).map(tail).includes(nq));
+    if (strongTail.length) return pick(strongTail, qv, 'loose');
     const weak = entries.filter((e) => { const et = new Set(tokens(e.words)); return qt.length && qt.every((t) => et.has(t)); });
     if (weak.length) return pick(weak, qv, 'loose');
   }
@@ -171,9 +175,9 @@ function lev(a, b) {
 
 // 한 줄 설명(atrium models, 후보 목록)
 export function describeEntry(e) {
-  if (e.source === 'launcher') return `호출자 ${e.launcher} · ${HARNESSES[e.harness] ? HARNESSES[e.harness].label : e.harness} · 모델 ${e.model || '(하네스 기본)'}${e.gateway ? ` · 게이트웨이 경유(${e.gateway})` : ''}`;
+  if (e.source === 'launcher') return `런처 ${e.launcher} · ${HARNESSES[e.harness] ? HARNESSES[e.harness].label : e.harness}${e.startCommand ? ` · 실행 명령 ${e.startCommand}` : ''} · 모델 ${e.model || '(하네스 기본)'}${e.gateway ? ` · 게이트웨이 경유(${e.gateway})` : ''}`;
   if (e.source === 'harness') return `${HARNESSES[e.harness].label} 모델 ${e.model}${e.aliases && e.aliases.length ? `(별칭 ${e.aliases.join(', ')})` : ['opus', 'sonnet', 'haiku'].includes(e.model) ? '(Claude Code 별칭)' : ''}`;
-  return `게이트웨이 모델 ${e.label || e.model} · Claude Code · 게이트웨이 경유(${e.gateway}${e.host ? `, 호출자 ${e.host}의 env` : ''})`;
+  return `게이트웨이 모델 ${e.label || e.model} · Claude Code · 게이트웨이 경유(${e.gateway}${e.host ? `, 런처 ${e.host}의 env` : ''})`;
 }
 export const candidateLines = (list) => list.map((e) => `  - ${describeEntry(e)}\n    ${e.command}`).join('\n');
 
@@ -185,7 +189,7 @@ export async function fetchGatewayModels(baseUrl, { timeoutMs = 2000, fetchImpl 
     if (!r.ok) return { ok: false, why: `HTTP ${r.status}` };
     const j = await r.json().catch(() => null);
     const data = j && Array.isArray(j.data) ? j.data : null;
-    if (!data) return { ok: false, why: '모델 목록이 아니다' };
+    if (!data) return { ok: false, why: "유효한 모델 목록이 아닙니다." };
     return { ok: true, models: data.filter((m) => m && typeof m.id === 'string').map((m) => ({ id: m.id, display_name: m.display_name || null, owned_by: m.owned_by || null })) };
   } catch (e) { return { ok: false, why: e && e.name === 'TimeoutError' ? 'timeout' : (e && e.cause && e.cause.code) || (e && e.message) || 'unreachable' }; }
 }

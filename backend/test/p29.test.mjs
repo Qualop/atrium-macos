@@ -48,7 +48,7 @@ test('3 첫 시도의 working 신호를 다음 시도의 확인으로 쓰지 않
   const q = new DeliveryQueue({ store: fakeStore(), cfg, view: ready, send: async () => { if (++n === 1) { q.onAgentWorking('s'); throw Object.assign(new Error('blocked'), { code: 'agent_blocked' }); } } });
   const d = q.enqueue('s', 'hello');
   await tick(); await tick(); // 첫 시도 실패 → queued
-  q.pump(); await tick(); await tick(); // 두 번째 시도 성공, 새 working 없음
+  q.poke('s'); await tick(); await tick(); // 상태 변화로 물러남을 풀고 두 번째 시도, 새 working 없음
   assert.equal(d.status, 'sent');
 });
 

@@ -1,15 +1,19 @@
 // P11: 캔버스 위에 떠 있는 크롬(목업 app/design/board-mock/ ?scene=ours). P6a~P10의 위쪽 줄(InboxBar)과 아래쪽 워크스페이스 단추(Regions)가 하던 일을 옮겼다.
 // - 위 왼쪽: 사이드바, 워크스페이스 탭(지금 영역은 주황 갈색, 세션 수), 리포 열기 +, 찾기(Ctrl+F)
 // - 위 오른쪽: 내 차례(누르면 기다리는 세션 목록, N으로 다음), 검토, 문제, 연결과 세션 수, 메모리, 바뀐 것, 설정
-// - 왼쪽 레일: 선택, 새 세션(Claude, Codex, Gemini, DeepSeek(P25), 셸), 메모, 칸반, 그룹, 손으로 잇기, 전체 보기
+// - 왼쪽 레일: 선택, 새 세션(Claude, Codex, Gemini, DeepSeek(P25), 셸), 메모, 칸반, 그룹, 손으로 잇기, 전체 보기, 작업 중만 또렷하게(P85)
 // - 오른쪽 레일: 사이드바(리포), 미션 맵, 루프, 보관함, 설정
 // - 아래: 빠른 동작 칩 줄, 줌 알약(− n% +, 누르면 전체 보기). 명령 입력은 CommandBar.jsx
 // 새 기능은 없다. 모든 단추는 이미 있던 동작을 부른다.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore, getState, openDialog, toast, wsName, setMissionOpen, setSearchOpen, selectWorkspace } from './store.js';
-import { quickSpawn } from './SpawnDialog.jsx';
+import { createPortal } from 'react-dom';
+import { useStore, getState, openDialog, toast, wsName, setMissionOpen, setSearchOpen, selectWorkspace, selectGroup, setSpotlight } from './store.js';
+import { openResponseTerminal } from './response-needed.js';
+import { QuickName } from './QuickName.jsx'; // P97: 레일 빠른 생성의 이름 칸
 import { favoriteLaunchers, launcherIcon, launcherMark, launcherTooltip } from './lib/launchers.js'; // P33: 레일 = 즐겨찾기 호출자
 import { api } from './api.js';
+import { useConnSteady } from './steady.js'; // P82
+import { isWeb } from './web.js';
 import { createItem } from './Memo.jsx';
 import { arrangeBoard, BOARD_ARRANGED } from './Regions.jsx'; // P31: 칩의 정리는 판 전체
 import { toggleSidebar, openArchiveBox, useSide } from './Sidebar.jsx';
@@ -23,11 +27,12 @@ import { STATE_LABEL, EXIT_LABEL, ago, askLine } from './lib/labels.js';
 import { useT, errText, fmtTime } from './lib/i18n.js';
 import { shortcutText } from './lib/shortcuts.js';
 import { workspaceCounts } from '../../../backend/src/workspaces.mjs';
+import { wsTabs, sumCounts, groupPick, memberLabel } from './lib/ws-tabs.js'; // P98: 위 바 묶음 칩
 import { sleepIdle, asleepStats, memByRepo } from './sleep.js'; // P21(D4), P24: 리포별로 묶는다
 
 function useNow(ms = 1000) { const [n, set] = useState(Date.now()); useEffect(() => { const t = setInterval(() => set(Date.now()), ms); return () => clearInterval(t); }, [ms]); return n; }
 const fmtMB = (x) => (x >= 1024 ? `${(x / 1024).toFixed(1)}GB` : `${Math.round(x)}MB`);
-const go = (id) => getState().navigateTo && getState().navigateTo(id);
+const go = openResponseTerminal;
 
 // 펼침 목록: 알약 아래로 펼치고 바깥을 누르거나 Esc면 닫는다
 function useDropdown() {
@@ -36,7 +41,7 @@ function useDropdown() {
   useEffect(() => {
     if (!open) return;
     const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e) => { if (!e.isComposing && e.keyCode !== 229 && e.key === 'Escape') setOpen(false); };
     window.addEventListener('mousedown', onDown, true);
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('mousedown', onDown, true); window.removeEventListener('keydown', onKey); };
@@ -45,28 +50,127 @@ function useDropdown() {
 }
 
 // ---------- 위 왼쪽 ----------
+// P98: 묶음 칩에서 마지막으로 고른 구성(묶음 ID → 워크스페이스 키). 묶음 칩을 누르면 그것을 지금 워크스페이스로 둔다
+const lastInGroup = new Map();
+
+function wsTitle(t, w, c) {
+  return `${t('top.wsTitle', { kind: w.kind === 'repo' ? t('top.wsRepo') : t('top.wsFolder'), root: w.root, sessions: c.sessions, shells: c.shells, working: c.working, needsYou: c.needsYou, review: c.review })}\n${t('boardKeys.ws')}`;
+}
+const closeWs = (e, w) => { e.stopPropagation(); openDialog({ kind: 'wsclose', ws: w }); };
+
+function WsChip({ w, list, on }) {
+  const t = useT();
+  const c = workspaceCounts(list, w.key);
+  return (
+    <div role="button" tabIndex={0} className={`mt-wsbtn${on ? ' on' : ''}${c.needsYou ? ' hot' : ''}`} data-ws={w.key} data-name={w.name}
+      title={wsTitle(t, w, c)} onClick={() => selectWorkspace(w.key)} onKeyDown={(e) => { if (e.key === 'Enter') selectWorkspace(w.key); }}>
+      {c.needsYou > 0 && <span className="mt-ws-need" data-count="needsYou" title={t('top.turnN', { n: c.needsYou })}>{c.needsYou}</span>}
+      <span className="mt-ws-name">{w.name}</span>
+      <span className={`mt-ws-n${on ? ' badge' : ''}`} data-count="sessions">{c.sessions}</span>
+      {c.sessions === 0 && <span role="button" className="mt-ws-x" title={t('top.wsClose')} data-action="ws-close" onClick={(e) => closeWs(e, w)}><Icon name="x" /></span>}
+    </div>
+  );
+}
+
+// P98: 묶음 하나의 대표 칩. 이름은 묶음 이름, 수와 응답 필요는 구성의 합. 누르면 지금 워크스페이스를 고르고(groupPick) 묶음 전체로 화면을 맞춘다.
+// 끝의 ▾는 구성 목록을 펼친다(바는 가로 스크롤이라 목록은 body에 띄운다). 지금 워크스페이스가 묶음 안이면 켜지고 › 뒤에 안의 이름을 작게 보인다
+function GroupChip({ tab, list, current }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const chip = useRef(null);
+  const chev = useRef(null);
+  const menu = useRef(null);
+  const [at, setAt] = useState(null);
+  const c = sumCounts(list, tab.keys);
+  const on = tab.keys.includes(current);
+  const cur = on ? tab.ws.find((w) => w.key === current) : null;
+  const kind = tab.auto ? t('wsGroupTab.kindAuto', { root: tab.root || '' }) : t('wsGroupTab.kindGroup');
+  const title = `${t('wsGroupTab.title', { name: tab.name, n: tab.keys.length, kind, sessions: c.sessions, shells: c.shells, working: c.working, needsYou: c.needsYou, review: c.review })}${cur ? `\n${t('wsGroupTab.current', { name: memberLabel(cur) })}` : ''}\n${t('boardKeys.ws')}`;
+  const pickGroup = () => { setOpen(false); selectGroup(tab.keys, groupPick(tab, current, lastInGroup.get(tab.id))); };
+  const pickOne = (k) => { setOpen(false); lastInGroup.set(tab.id, k); selectWorkspace(k); };
+  useEffect(() => { if (on) lastInGroup.set(tab.id, current); }, [on, current, tab.id]);
+  const place = () => { const r = chip.current && chip.current.getBoundingClientRect(); if (r) setAt({ left: Math.max(8, Math.min(r.left, window.innerWidth - 288)), top: r.bottom + 8 }); };
+  const toggle = (e, viaKey = false) => {
+    e.stopPropagation();
+    if (open) { setOpen(false); return; }
+    place(); setOpen(viaKey ? 'key' : true);
+  };
+  // 바깥을 누르거나, Esc, 창 크기 바뀜, 바를 넘기면 닫는다. 키보드로 열었으면 첫 줄에 초점
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (!(chip.current && chip.current.contains(e.target)) && !(menu.current && menu.current.contains(e.target))) setOpen(false); };
+    const onKey = (e) => { if (!e.isComposing && e.keyCode !== 229 && e.key === 'Escape') { setOpen(false); chev.current && chev.current.focus(); } };
+    const close = () => setOpen(false);
+    window.addEventListener('mousedown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', close);
+    const seg = chip.current && chip.current.closest('.mt-seg');
+    if (seg) seg.addEventListener('scroll', close);
+    if (open === 'key') requestAnimationFrame(() => { const b = menu.current && menu.current.querySelector('[role="menuitem"]'); if (b) b.focus(); });
+    return () => { window.removeEventListener('mousedown', onDown, true); window.removeEventListener('keydown', onKey); window.removeEventListener('resize', close); if (seg) seg.removeEventListener('scroll', close); };
+  }, [open]);
+  // 목록 안 ↑·↓로 줄을 옮긴다
+  const onMenuKey = (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const items = [...menu.current.querySelectorAll('[role="menuitem"]')];
+    const i = items.indexOf(document.activeElement);
+    const n = items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length];
+    if (n) n.focus();
+  };
+  return (
+    <div ref={chip} role="button" tabIndex={0} className={`mt-wsbtn mt-wsgrp${on ? ' on' : ''}${c.needsYou ? ' hot' : ''}${tab.auto ? ' auto' : ''}`} data-group={tab.id} data-name={tab.name} data-ws={on ? current : undefined} data-members={tab.keys.length}
+      title={title} onClick={pickGroup} onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === 'Enter') pickGroup(); else if (e.key === 'ArrowDown' && e.altKey) toggle(e, true); }}>
+      {c.needsYou > 0 && <span className="mt-ws-need" data-count="needsYou" title={t('top.turnN', { n: c.needsYou })}>{c.needsYou}</span>}
+      <Icon name={tab.auto ? 'folder' : 'layers'} className="mt-wsgrp-ico" />
+      <span className="mt-ws-name">{tab.name}</span>
+      {cur && <><span className="mt-wsgrp-sep" aria-hidden="true">›</span><span className="mt-wsgrp-sub" data-role="ws-group-current">{memberLabel(cur)}</span></>}
+      <span className={`mt-ws-n${on ? ' badge' : ''}`} data-count="sessions">{c.sessions}</span>
+      <span ref={chev} role="button" tabIndex={0} className={`mt-wsgrp-chev${open ? ' open' : ''}`} data-action="ws-group-open" aria-haspopup="menu" aria-expanded={!!open} aria-label={t('wsGroupTab.pick', { name: tab.name })} title={t('wsGroupTab.pick', { name: tab.name })}
+        onClick={(e) => toggle(e)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); toggle(e, true); } }}><Icon name="chevDown" /></span>
+      {open && at && createPortal(
+        <div ref={menu} className="mt-dropdown mt-wsgrp-menu" role="menu" aria-label={t('wsGroupTab.pick', { name: tab.name })} data-role="ws-group-menu" data-group={tab.id} style={{ left: at.left, top: at.top }} onKeyDown={onMenuKey} onClick={(e) => e.stopPropagation()}>
+          <div className="mt-dropdown-head"><span>{tab.name} · {t(tab.auto ? 'wsGroupTab.headAuto' : 'wsGroupTab.headGroup')}</span><span className="mono">{tab.keys.length}</span></div>
+          {tab.ws.map((w) => {
+            const x = workspaceCounts(list, w.key);
+            return (
+              <div key={w.key} role="menuitem" tabIndex={-1} className={`mt-wsgrp-item${w.key === current ? ' on' : ''}`} data-ws={w.key} data-name={w.name} title={wsTitle(t, w, x)}
+                onClick={() => pickOne(w.key)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickOne(w.key); } }}>
+                {x.needsYou > 0 && <span className="mt-ws-need" data-count="needsYou" title={t('top.turnN', { n: x.needsYou })}>{x.needsYou}</span>}
+                <span className="mt-wsgrp-item-name">{memberLabel(w)}</span>
+                <span className="mt-ws-n" data-count="sessions">{x.sessions}</span>
+                {x.sessions === 0 && <span role="button" className="mt-ws-x" title={t('top.wsClose')} data-action="ws-close" onClick={(e) => { setOpen(false); closeWs(e, w); }}><Icon name="x" /></span>}
+              </div>
+            );
+          })}
+        </div>, document.body)}
+    </div>
+  );
+}
+
 function WorkspaceTabs() {
   const t = useT();
   const workspaces = useStore((st) => st.workspaces);
+  const groups = useStore((st) => st.groups);
   const current = useStore((st) => st.currentWs);
   const sessions = useStore((st) => st.sessions);
   const list = useMemo(() => [...sessions.values()], [sessions]);
+  const tabs = useMemo(() => wsTabs(workspaces, groups), [workspaces, groups]); // P98: 묶음은 대표 칩 하나
+  const seg = useRef(null);
+  // 지금 칩이 바 밖이면(←·→, 다른 곳에서 고름) 바만 가로로 넘겨 보이게 한다(scrollIntoView는 바깥 칸까지 넘길 수 있어 쓰지 않는다)
+  useEffect(() => {
+    const box = seg.current, el = box && box.querySelector('.mt-wsbtn.on');
+    if (!el) return;
+    const br = box.getBoundingClientRect(), er = el.getBoundingClientRect();
+    const l = er.left - br.left + box.scrollLeft, r = l + er.width;
+    if (l < box.scrollLeft) box.scrollLeft = Math.max(0, l - 8);
+    else if (r > box.scrollLeft + box.clientWidth) box.scrollLeft = r - box.clientWidth + 8;
+  }, [current, tabs]);
   return (
-    <div className="mt-seg" data-role="workspaces" onWheel={(e) => { if (!e.deltaX && e.deltaY) e.currentTarget.scrollLeft += e.deltaY; }}>
-      {workspaces.map((w) => {
-        const c = workspaceCounts(list, w.key);
-        const on = w.key === current;
-        return (
-          <div key={w.key} role="button" tabIndex={0} className={`mt-wsbtn${on ? ' on' : ''}${c.needsYou ? ' hot' : ''}`} data-ws={w.key} data-name={w.name}
-            title={t('top.wsTitle', { kind: w.kind === 'repo' ? t('top.wsRepo') : t('top.wsFolder'), root: w.root, sessions: c.sessions, shells: c.shells, working: c.working, needsYou: c.needsYou, review: c.review })}
-            onClick={() => selectWorkspace(w.key)} onKeyDown={(e) => { if (e.key === 'Enter') selectWorkspace(w.key); }}>
-            {c.needsYou > 0 && <span className="mt-ws-need" data-count="needsYou" title={t('top.turnN', { n: c.needsYou })}>{c.needsYou}</span>}
-            <span className="mt-ws-name">{w.name}</span>
-            <span className={`mt-ws-n${on ? ' badge' : ''}`} data-count="sessions">{c.sessions}</span>
-            {c.sessions === 0 && <span role="button" className="mt-ws-x" title={t('top.wsClose')} data-action="ws-close" onClick={(e) => { e.stopPropagation(); openDialog({ kind: 'wsclose', ws: w }); }}><Icon name="x" /></span>}
-          </div>
-        );
-      })}
+    <div ref={seg} className="mt-seg" data-role="workspaces" onWheel={(e) => { if (!e.deltaX && e.deltaY) e.currentTarget.scrollLeft += e.deltaY; }}>
+      {tabs.map((tab) => (tab.type === 'group'
+        ? <GroupChip key={`g:${tab.id}`} tab={tab} list={list} current={current} />
+        : <WsChip key={tab.key} w={tab.w} list={list} on={tab.key === current} />))}
       {!workspaces.length && <span className="mt-ws-empty">{t('top.wsEmpty')}</span>}
       <button className="mt-seg-plus" data-action="ws-open" title={t('top.wsOpen')} onClick={() => openDialog({ kind: 'wsopen' })}><Icon name="plus" /></button>
     </div>
@@ -152,7 +256,9 @@ function ListPill({ list, label, cls, role, line, empty }) {
 
 function ConnPill() {
   const t = useT();
-  const conn = useStore((st) => st.conn);
+  const rawConn = useStore((st) => st.conn);
+  const { grace } = useConnSteady(); // P82: 웹 화면은 짧은 끊김(2초 안)에 알약을 바꾸지 않는다
+  const conn = isWeb && grace ? 'open' : rawConn;
   const herdr = useStore((st) => st.herdr);
   const count = useStore((st) => st.sessions.size);
   const links = useStore((st) => st.links.size);
@@ -251,49 +357,61 @@ export function TopRight({ maxControllers }) {
 }
 
 // ---------- 도구 레일 ----------
-function Tool({ icon, kind, label, on, onClick, action }) {
+function Tool({ icon, kind, label, on, onClick, action, pressed }) {
   return (
-    <button className={`mt-tool${on ? ' on' : ''}`} title={label} aria-label={label} data-action={action} onClick={onClick}>
+    <button className={`mt-tool${on ? ' on' : ''}`} title={label} aria-label={label} aria-pressed={pressed} data-action={action} onClick={onClick}>
       {kind ? <KindIcon kind={kind} title={label} badge /> : <Icon name={icon} />}
     </button>
   );
 }
 const Sep = () => <span className="mt-rail-sep" />;
-// P33: 즐겨찾기 호출자 하나. 누르면 지금 워크스페이스에 그 호출자로 바로 띄운다. Shift+누르기는 그 호출자를 채운 새 세션 창.
+// P33: 즐겨찾기 호출자 하나. Shift+누르기는 그 호출자를 채운 새 세션 창.
+// P97: 누르면 바로 띄우지 않고 단추 옆에 세션 이름 칸(QuickName.jsx)을 연다. 다시 누르면 닫는다
 // 아이콘은 하네스 로고(고른 아이콘이 먼저), 셸은 터미널, 직접 명령은 터미널 위에 이름 첫 글자. 마우스를 올리면 이름과 명령 미리보기
-function LauncherTool({ l }) {
+function LauncherTool({ l, open, onOpen }) {
   const t = useT();
   const kind = launcherIcon(l);
   const tip = launcherTooltip(l, { shellText: t('launchers.shellPreview'), envText: t('launchers.envShort') });
-  const go = (e) => (e && e.shiftKey ? openDialog({ kind: 'spawn', launcher: l.id }) : quickSpawn(l.id));
+  const go = (e) => (e && e.shiftKey ? openDialog({ kind: 'spawn', launcher: l.id }) : onOpen(open ? null : { id: l.id, el: e.currentTarget }));
   return (
-    <button className="mt-tool" title={tip} aria-label={l.name} data-action="launch" data-launcher={l.id} data-name={l.name} onClick={go}>
+    <button className={`mt-tool${open ? ' on' : ''}`} title={tip} aria-label={l.name} aria-haspopup="dialog" aria-expanded={open} data-action="launch" data-launcher={l.id} data-name={l.name} onClick={go}>
       {kind === 'shell' ? <Icon name="terminal" /> : kind ? <KindIcon kind={kind} title={tip} badge /> : <span className="mt-tool-mark" data-role="launcher-mark">{launcherMark(l)}</span>}
     </button>
   );
 }
-// 즐겨찾기가 많으면 이 칸만 위아래로 넘긴다(레일은 창 높이를 넘지 않는다)
+// 즐겨찾기가 많으면 이 칸만 위아래로 넘긴다(레일은 창 높이를 넘지 않는다). P97: 끝의 +는 설정 › 런처 › 새 런처(명령줄 붙여 넣기 칸에 초점)
 function Favorites() {
+  const t = useT();
   const data = useStore((st) => st.launchers);
   const favs = favoriteLaunchers(data);
-  if (!favs.length) return null;
-  return <div className="mt-rail-favs" data-role="rail-favorites">{favs.map((l) => <LauncherTool key={l.id} l={l} />)}</div>;
+  const [open, setOpen] = useState(null); // { id, el }: 이름 칸을 연 단추
+  const cur = open && favs.find((l) => l.id === open.id);
+  return (
+    <div className="mt-rail-favs" data-role="rail-favorites">
+      {favs.map((l) => <LauncherTool key={l.id} l={l} open={!!cur && cur.id === l.id} onOpen={setOpen} />)}
+      <button className="mt-tool add" title={t('quickName.addLauncher')} aria-label={t('quickName.addLauncher')} data-action="launcher-add" onClick={() => openDialog({ kind: 'settings', tab: 'launchers', newLauncher: true })}><Icon name="plus" /></button>
+      {cur && <QuickName launcher={cur} anchor={open.el} onClose={() => setOpen(null)} />}
+    </div>
+  );
 }
 
 export function LeftRail({ linking, setLinking }) {
   const t = useT();
+  const spot = useStore((st) => st.spotlight);
   return (
     <div className="mt-rail left" data-role="rail-left">
-      <Tool icon="pointer" on={!linking} label={`${t('rail.select')}\n${t('boardKeys.tool')}`} action="tool-select" onClick={() => { setLinking(false); getState().clearSelection && getState().clearSelection(); }} />
-      {/* 손으로 잇기는 선택과 서로 바뀌는 모드라 바로 아래에 둔다. P43: 판에서 ← 키로도 바꾼다(main.jsx) */}
-      <Tool icon="link" on={linking} label={`${t('rail.link')}\n${t('boardKeys.tool')}`} action="link-mode" onClick={() => setLinking(!linking)} />
+      <Tool icon="pointer" on={!linking} label={t('rail.select')} action="tool-select" onClick={() => { setLinking(false); getState().clearSelection && getState().clearSelection(); }} />
+      {/* 손으로 잇기는 선택과 서로 바뀌는 모드라 바로 아래에 둔다 */}
+      <Tool icon="link" on={linking} label={t('rail.link')} action="link-mode" onClick={() => setLinking(!linking)} />
       <Sep />
       <Favorites />
       <Sep />
       <Tool icon="note" label={t('rail.memo')} action="memo-new" onClick={() => createItem('memo')} />
       <Tool icon="kanban" label={t('rail.kanban')} action="kanban-new" onClick={() => createItem('kanban')} />
       <Sep />
-      <Tool icon="expand" label={t('rail.fitAll')} action="fit-all" onClick={() => getState().fitAll && getState().fitAll(250)} />
+      <Tool icon="expand" label={t('spaceFit.rail')} action="fit-all" onClick={() => getState().fitAll && getState().fitAll(250)} />
+      {/* P85: 멀리 보기에서 일함·내 차례·오류 밖의 노드를 더 물린다. 이 창 프로필에 남는다(단축키 없음) */}
+      <Tool icon="spot" on={spot} pressed={spot} label={t(spot ? 'spotlight.off' : 'spotlight.on')} action="spotlight" onClick={() => setSpotlight(!spot)} />
     </div>
   );
 }
@@ -339,7 +457,7 @@ export function ChipRow() {
     ...(boardArranged ? [[t('arrangeAll.undo'), 'chip-arrange-undo', t('arrangeAll.undoTitle'), () => arrangeBoard(true)]] : []),
     [t('chips.mission'), 'chip-mission', t('chips.missionTitle'), () => setMissionOpen(true)],
     [t('chips.changes'), 'chip-changes', t('chips.changesTitle'), () => getState().showChanges && getState().showChanges(60)],
-    [t('chips.fit'), 'chip-fit', t('chips.fitTitle'), () => getState().fitAll && getState().fitAll(250)],
+    [t('chips.fit'), 'chip-fit', t('spaceFit.chip'), () => getState().fitAll && getState().fitAll(250)],
   ];
   return (
     <div className="mt-chips" data-role="chips" data-hidden={shown ? undefined : '1'}>
@@ -356,7 +474,7 @@ export function ZoomPill() {
   return (
     <div className="mt-cp zoom" data-role="zoom">
       <button title={t('zoom.out')} data-action="zoom-out" onClick={() => by(1 / 1.25)}><Icon name="minus" /></button>
-      <button className="mt-zoom-n mono" title={t('zoom.fit')} data-action="zoom-fit" onClick={() => getState().fitAll && getState().fitAll(250)}>{Math.round(z * 100)}%</button>
+      <button className="mt-zoom-n mono" title={t('spaceFit.zoom')} data-action="zoom-fit" onClick={() => getState().fitAll && getState().fitAll(250)}>{Math.round(z * 100)}%</button>
       <button title={t('zoom.in')} data-action="zoom-in" onClick={() => by(1.25)}><Icon name="plus" /></button>
     </div>
   );

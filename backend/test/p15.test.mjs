@@ -89,7 +89,7 @@ test('닫으며 삭제: 대화 기록이 없는 세션(다른 종류 등)은 행
   assert.equal(out.trashed, 0);
   assert.equal(trashed.length, 0);
   assert.equal(store.closedSession(ID(4)), null);
-  await assert.rejects(() => r.forgetClosed(ID(5), { waitMs: 0 }), /닫힌 세션이 아니다/);
+  await assert.rejects(() => r.forgetClosed(ID(5), { waitMs: 0 }), { code: 'not_found' });
   assert.equal(store.deleteClosedSession(ID(5)), false);
   assert.ok(store.getSession(ID(5)));
 });

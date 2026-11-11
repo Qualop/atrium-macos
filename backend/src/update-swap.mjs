@@ -8,6 +8,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeResult, readJson, resourcesOf, cleanEnv, samePath, fail } from './update.mjs';
 import { verifyBundle } from './update-verify.mjs';
+import { validateRestartJob, claimRestartLeaseSync, releaseRestartLeaseSync, assertRestartLeaseSync, restartPermitEnv, withoutRestartPermit } from './update-lease.mjs';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 async function waitGone(pids, ms = 30000) {
@@ -17,21 +18,25 @@ async function waitGone(pids, ms = 30000) {
 }
 const within = (file, root) => path.resolve(file).startsWith(path.resolve(root) + path.sep);
 export function validateJob(job) {
-  if (job?.format !== 1 || !job.targetBundle?.endsWith('.app') || !job.preparedBundle?.endsWith('/Atrium.app') || !path.isAbsolute(job.targetBundle)) throw fail('bad_job', 'Invalid bundle update job.');
+  if (job?.format !== 1 || !job.targetBundle?.endsWith('.app') || typeof job.preparedBundle !== 'string' || path.basename(job.preparedBundle) !== 'Atrium.app' || !path.isAbsolute(job.targetBundle)) throw fail('bad_job', 'Invalid bundle update job.');
   for (const name of ['installDir', 'staging', 'helperDir']) if (!path.isAbsolute(job[name] || '')) throw fail('bad_job', 'Invalid update directory.');
   if (!within(job.preparedBundle, job.staging) || !within(job.staging, job.installDir) || !within(job.helperDir, job.installDir)) throw fail('bad_job', 'Staged app must be inside the private update directory.');
-  if (!job.cfg?.dataDir || within(job.cfg.dataDir, job.targetBundle) || samePath(job.cfg.dataDir, job.targetBundle) || within(job.installDir, job.targetBundle)) throw fail('bad_job', 'Board data must stay outside the bundle.');
+  if (!path.isAbsolute(job.cfg?.dataDir || '') || !path.isAbsolute(job.cfg?.backendFile || '') || !job.cfg?.herdrSession || within(job.cfg.dataDir, job.targetBundle) || samePath(job.cfg.dataDir, job.targetBundle) || within(job.installDir, job.targetBundle)) throw fail('bad_job', 'Board data must stay outside the bundle.');
   if (!Array.isArray(job.waitPids) || job.waitPids.some(p => !Number.isSafeInteger(p) || p < 2) || !job.waitPids.includes(job.oldBackendPid)) throw fail('bad_job', 'Invalid process wait list.');
   if (!['real', 'dev'].includes(job.cfg.profile) || !Number.isSafeInteger(job.cfg.port) || job.cfg.port < 1 || job.cfg.port > 65535 || !job.to?.version || !job.from?.version) throw fail('bad_job', 'Invalid profile or release.');
+  validateRestartJob(job);
 }
 export function createLifecycle(job, { spawnProcess = spawn, pause = sleep } = {}) {
-  const env = { ...cleanEnv(), ...job.profileEnv };
+  const env = withoutRestartPermit({ ...cleanEnv(), ...job.profileEnv });
   return {
-    async start(bundle, version) {
+    async start(bundle, version, role = version === job.to.version ? 'candidate' : 'rollback') {
+      assertRestartLeaseSync(job);
+      if (!samePath(bundle, job.targetBundle) || version !== (role === 'candidate' ? job.to.version : job.from.version)) throw fail('bad_job', 'Backend role does not match the update bundle/version.');
+      const permit = restartPermitEnv(job, role);
       fs.mkdirSync(path.join(job.cfg.dataDir, 'logs'), { recursive: true });
       const root = resourcesOf(bundle), out = fs.openSync(path.join(job.cfg.dataDir, 'logs/backend.out'), 'a');
       let child;
-      try { child = spawnProcess(path.join(root, 'runtime/node'), [path.join(root, 'backend/src/main.mjs')], { cwd: root, env: { ...env, PATH: [path.join(root, 'runtime'), env.PATH || '/usr/bin:/bin'].join(path.delimiter) }, detached: true, stdio: ['ignore', out, out] }); }
+      try { child = spawnProcess(path.join(root, 'runtime/node'), [path.join(root, 'backend/src/main.mjs')], { cwd: root, env: { ...env, ...permit, PATH: [path.join(root, 'runtime'), env.PATH || '/usr/bin:/bin'].join(path.delimiter) }, detached: true, stdio: ['ignore', out, out] }); }
       finally { fs.closeSync(out); }
       const handle = { child, root, version, error: null };
       child.on('error', e => { handle.error = e; }); child.unref();
@@ -76,6 +81,7 @@ export function createLifecycle(job, { spawnProcess = spawn, pause = sleep } = {
 }
 export async function runSwap(job, deps = {}) {
   validateJob(job);
+  claimRestartLeaseSync(job);
   const lifecycle = deps.lifecycle || createLifecycle(job);
   const verify = deps.verify || verifyBundle, wait = deps.waitGone || waitGone;
   const copyBundle = deps.copyBundle || ((from, to) => execFileSync('/usr/bin/ditto', [from, to], { timeout: 180000, stdio: 'pipe' }));
@@ -90,9 +96,10 @@ export async function runSwap(job, deps = {}) {
     const verified = await verify(next, { version: job.to.version, arch: job.arch, protocol: job.protocol, currentBundle: job.targetBundle });
     if (!verified.ok) throw Error(verified.problems.join('; '));
     if (!(await wait(job.waitPids, job.waitMs || 30000))) throw Error('Previous backend or window is still running. No app files were replaced.');
+    assertRestartLeaseSync(job);
     rename(job.targetBundle, backup); moved = true;
     rename(next, job.targetBundle); installed = true;
-    candidate = await lifecycle.start(job.targetBundle, job.to.version);
+    candidate = await lifecycle.start(job.targetBundle, job.to.version, 'candidate');
     const health = await lifecycle.healthy(candidate);
     result.ok = true; result.backendPid = health.pid; result.backupBundle = backup;
   } catch (e) {
@@ -100,14 +107,16 @@ export async function runSwap(job, deps = {}) {
     if (moved) {
       try {
         await lifecycle.stop(candidate);
+        assertRestartLeaseSync(job);
         if (installed) rename(job.targetBundle, failed);
         rename(backup, job.targetBundle); result.rolledBack = true;
-        const old = await lifecycle.start(job.targetBundle, job.from.version);
+        const old = await lifecycle.start(job.targetBundle, job.from.version, 'rollback');
         try { const health = await lifecycle.healthy(old); result.backendPid = health.pid; } catch (error) { await lifecycle.stop(old); throw error; }
       } catch (error) { result.rollbackError = String(error.message || error).slice(0, 700); result.backupBundle = fs.existsSync(backup) ? backup : job.targetBundle; active = null; }
     } else if (await wait([job.oldBackendPid], 0)) {
       try {
-        const old = await lifecycle.start(job.targetBundle, job.from.version);
+        assertRestartLeaseSync(job);
+        const old = await lifecycle.start(job.targetBundle, job.from.version, 'rollback');
         try { const health = await lifecycle.healthy(old); result.backendPid = health.pid; }
         catch (error) { await lifecycle.stop(old); throw error; }
       } catch (error) { result.rollbackError = String(error.message || error).slice(0, 700); result.backupBundle = job.targetBundle; active = null; }
@@ -117,7 +126,13 @@ export async function runSwap(job, deps = {}) {
   // Persist failure/success before reopening a window, including a failed
   // rollback. No automatic release/tag deletion or local backup pruning.
   (deps.writeResult || writeResult)(job.installDir, result);
-  if (job.relaunch && active) {
+  // Only the same job may lift exclusion, after candidate/recovery health has
+  // settled and BEFORE Electron starts. A failed rollback retains intent until
+  // this helper exits (or the hard expiry); no unknown process is stopped.
+  if (result.backendPid || (!moved && !result.rollbackError)) {
+    if (!releaseRestartLeaseSync(job)) { result.leaseError = 'Restart intent belongs to another generation.'; active = null; (deps.writeResult || writeResult)(job.installDir, result); }
+  }
+  if (job.relaunch && active && result.backendPid) {
     try { const opened = await lifecycle.relaunch(active); result.relaunchPid = opened?.pid || null; (deps.writeResult || writeResult)(job.installDir, result); } catch (e) { result.relaunchError = String(e.message || e).slice(0, 300); (deps.writeResult || writeResult)(job.installDir, result); }
   }
   // Discard only downloaded copies after recovery is settled. Keep the

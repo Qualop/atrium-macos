@@ -167,7 +167,7 @@ function spawnBackend() {
   b.branch = { settingsExtra: () => ({}), noteChild() {}, placeChild: () => null };
   b.features = { settings: { get: () => ({ ...DEFAULTS }) }, launchers: null };
   b.features.launchers = new Launchers({ store: b.store });
-  b.queue = { enqueue() {}, pending: () => 0 };
+  b.queue = { enqueue() {}, cancelSession() {}, pending: () => 0 };
   b.api = { broadcast() {} };
   b.broadcastSession = () => {}; b.broadcastWorkspaces = () => {}; b.probeGit = () => {}; b.registerResume = () => {};
   const calls = []; let n = 0;

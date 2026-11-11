@@ -239,8 +239,8 @@ export function isolatedUpdateTest(cfg, env = process.env, running = {}) {
   const root = envValue('UPDATE_TEST_ROOT', env);
   if (!root || !path.isAbsolute(root) || !path.basename(root).startsWith('atrium-update-e2e-')) return false;
   try {
-    const tempRoots = [...new Set([fs.realpathSync(os.tmpdir()), fs.realpathSync('/tmp')])];
-    if (!samePath(root, fs.realpathSync(root)) || !tempRoots.some(base => root.startsWith(base + path.sep))) return false;
+    const tempRoots = [...new Set([os.tmpdir(), '/tmp'].filter(p => fs.existsSync(p)).map(p => fs.realpathSync.native(p)))];
+    if (!samePath(root, fs.realpathSync.native(root)) || !tempRoots.some(base => root.startsWith(base + path.sep))) return false;
     const locations = [running.bundle, cfg.dataDir, envValue('DATA_DIR', env), envValue('APP_USERDATA', env), env.HOME];
     return locations.every(p => p && path.resolve(p).startsWith(root + path.sep)) && samePath(cfg.dataDir, envValue('DATA_DIR', env));
   } catch { return false; }

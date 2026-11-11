@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as U from './update.mjs';
+import { acquireRestartLeaseSync, claimRestartLeaseSync, releaseRestartLeaseSync, withoutRestartPermit } from './update-lease.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const CHECK_EVERY_MS = 6 * 3600 * 1000;
@@ -25,7 +26,7 @@ export class Updater {
     if (this.apiUrl !== U.DEFAULT_UPDATE_API && (!this.testMode || !U.checkApiUrl(this.apiUrl).test)) throw U.fail('unsafe_update_api', 'A loopback release API requires an explicitly isolated temporary dev update fixture.');
     this.healthMs = this.testMode ? Math.min(60000, Math.max(1000, Number(U.envValue('UPDATE_HEALTH_MS', env)) || HEALTH_MS)) : HEALTH_MS; this.checkMs = checkMs ?? CHECK_EVERY_MS;
     this.logFile = path.join(b.cfg.logDir, 'update.log');
-    this.job = null; this.leaving = []; this.checking = null; this.applying = false;
+    this.job = null; this.leaving = []; this.checking = null; this.applying = false; this.stopped = false;
     this.noteResult();
     this.handlers = {
       'update.status': () => this.view(),
@@ -177,32 +178,50 @@ export class Updater {
     return { ok: true };
   }
   async swap({ prepared, to }) {
+    if (this.stopped) throw U.fail('backend_stopped', 'Backend stopped before update handoff.');
     // The helper and its Node/dylibs live outside the .app being renamed.
     const helperDir = fs.mkdtempSync(path.join(this.dir, '.helper-'));
     fs.cpSync(path.join(this.codeRoot, 'runtime'), path.join(helperDir, 'runtime'), { recursive: true, verbatimSymlinks: true });
-    for (const f of ['update-swap.mjs', 'update.mjs', 'update-verify.mjs', 'update-native.mjs', 'update-version.mjs', 'runtime.mjs']) fs.copyFileSync(path.join(HERE, f), path.join(helperDir, f));
-    this.setJob({ phase: 'restarting', step: null }); this.leaving = [];
-    this.b.api.broadcast('update.restart', { kind: 'update', from: { tag: this.running.tag, version: this.running.version }, to });
-    await sleep(this.leaveWaitMs);
+    for (const f of ['update-swap.mjs', 'update-lease.mjs', 'update.mjs', 'update-verify.mjs', 'update-native.mjs', 'update-version.mjs', 'runtime.mjs']) fs.copyFileSync(path.join(HERE, f), path.join(helperDir, f));
     const cfg = this.b.cfg;
     const profileEnv = { ATRIUM_PROFILE: cfg.profile, ATRIUM_DATA_DIR: cfg.dataDir, ATRIUM_PORT: String(cfg.port), ATRIUM_HERDR_SESSION: cfg.herdrSession };
     const job = { format: 1, kind: 'update', installDir: this.dir, targetBundle: this.running.bundle, preparedBundle: prepared.bundle, staging: prepared.staging,
       from: { tag: this.running.tag, version: this.running.version }, to,
       waitPids: [process.pid, ...this.leaving.map(x => x.pid)], oldBackendPid: process.pid,
-      relaunch: this.leaving.length > 0, healthMs: this.healthMs, arch: this.arch,
+      relaunch: true, healthMs: this.healthMs, arch: this.arch,
       protocol: this.b.herdrCompat?.ok ? this.b.herdrCompat.protocol : null, herdrServerPid: this.b.adapter?.serverPid?.() || null,
       cfg: { profile: cfg.profile, dataDir: cfg.dataDir, port: cfg.port, herdrSession: cfg.herdrSession, backendFile: cfg.backendFile || path.join(cfg.dataDir, 'backend.json') },
       profileEnv, helperDir, logFile: this.logFile };
-    const file = path.join(helperDir, U.JOB_FILE); U.writeJson(file, job);
-    // A failed spawn must not terminate the working backend.
-    await this.spawnSwap(file, job);
+    const file = path.join(helperDir, U.JOB_FILE);
+    // Persist exclusion before ANY restart notification or shutdown. A window
+    // starting/reconnecting now need not have subscribed to update.restart.
+    acquireRestartLeaseSync(job);
+    let helperStarted = false;
+    try {
+      this.leaving = [];
+      this.setJob({ phase: 'restarting', step: null });
+      this.b.api.broadcast('update.restart', { kind: 'update', from: job.from, to });
+      await sleep(this.leaveWaitMs);
+      if (this.stopped) throw U.fail('backend_stopped', 'Backend stopped before update handoff.');
+      job.waitPids = [process.pid, ...this.leaving.map(x => x.pid)];
+      U.writeJson(file, job);
+      // A failed spawn must not terminate the working backend. The helper
+      // becomes the live lease owner before the old backend can exit.
+      const helper = await this.spawnSwap(file, job);
+      if (!Number.isSafeInteger(helper?.pid) || helper.pid < 2) throw U.fail('helper_not_started', 'Update helper did not provide its process identity.');
+      helperStarted = true;
+      claimRestartLeaseSync(job, { ownerPid: helper.pid });
+    } catch (error) {
+      if (!helperStarted) releaseRestartLeaseSync(job);
+      throw error;
+    }
     try { this.b.store.addEvent?.(null, 'update_swap', { kind: 'update', from: job.from, to }); } catch (e) { this.log(`update event: ${e.message}`); }
     setTimeout(() => Promise.resolve(this.b.stop('update')).then(() => this.exit(0)).catch(e => this.log(`backend stop failed: ${e.message}`)), 50);
     return { swapping: true };
   }
   defaultSpawnSwap(file, job) {
     return new Promise((resolve, reject) => {
-      const p = spawn(path.join(job.helperDir, 'runtime/node'), [path.join(job.helperDir, 'update-swap.mjs'), file], { cwd: job.helperDir, env: U.cleanEnv(this.env), detached: true, stdio: 'ignore' });
+      const p = spawn(path.join(job.helperDir, 'runtime/node'), [path.join(job.helperDir, 'update-swap.mjs'), file], { cwd: job.helperDir, env: withoutRestartPermit(U.cleanEnv(this.env)), detached: true, stdio: 'ignore' });
       p.once('error', reject); p.once('spawn', () => { p.unref(); resolve({ pid: p.pid }); });
     });
   }

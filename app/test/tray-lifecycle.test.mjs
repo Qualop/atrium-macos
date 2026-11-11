@@ -31,18 +31,20 @@ before(async () => {
 });
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 const flush = async () => { for (let n = 0; n < 20; n++) await Promise.resolve(); };
-function fixture({ opening = Promise.resolve(), failSubscribe = false } = {}) {
+function fixture({ opening = Promise.resolve(), failSubscribe = false, updateSnapshot = {}, onUpdateRestart = () => {} } = {}) {
   const clients = [];
   globalThis.__trayTest = { notifications: 0, makeClient() {
     const c = { ws: new EventEmitter(), closed: false, open: () => opening, on(fn) { this.event = fn; }, close() { if (!this.closed) { this.closed = true; this.ws.emit('close'); } },
       async call(method) {
         if (method === 'events.subscribe') { if (failSubscribe) throw new Error('fixture subscribe failure'); return { sessions: [] }; }
         if (method === 'settings.get') return { settings: { tray: true, language: 'en' } };
+        if (method === 'update.status') return updateSnapshot;
+        if (method === 'update.leaving') { globalThis.__trayTest.leaving = true; return {}; }
         return {};
       },
     }; clients.push(c); return c;
   } };
-  const tray = startTray({ cfg: { profile: 'dev' }, log() {}, hasWindow: () => false, showNode() {}, quit() {} });
+  const tray = startTray({ cfg: { profile: 'dev' }, log() {}, hasWindow: () => false, showNode() {}, quit() {}, onUpdateRestart });
   return { tray, clients };
 }
 
@@ -70,4 +72,15 @@ test('stopping the tray cancels queued notifications', async (t) => {
   clients[0].event('session.updated', { sessionId: 'a', name: 'fixture', state: 'waiting', ask: { since: 1 } });
   tray.stop(); t.mock.timers.tick(1300);
   assert.equal(globalThis.__trayTest.notifications, 0);
+});
+
+test('a tray that missed the restart event exits from the initial update snapshot', async (t) => {
+  let restarts = 0;
+  const { tray } = fixture({ updateSnapshot: { job: { phase: 'restarting', to: 'v0.4.0' } }, onUpdateRestart(d) {
+    assert.equal(globalThis.__trayTest.leaving, true);
+    assert.equal(d.to.tag, 'v0.4.0'); restarts++;
+  } });
+  t.after(() => tray.stop());
+  await flush();
+  assert.equal(restarts, 1);
 });

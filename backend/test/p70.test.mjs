@@ -111,7 +111,7 @@ test('채널을 바꾸면 결과를 다시 확인한다. 앞 채널의 결과로
     const { inst, codeRoot } = installed(d, 'v0.1.1');
     const { b, meta, events, s } = fakeBoard(d);
     const gh = fakeGithub(['v0.1.1', 'v0.1.2-dev.1']);
-    const up = new Updater(b, { env: { ATRIUM_INSTALL_DIR: inst }, codeRoot, timers: false, fetchJson: gh.fetchJson });
+    const up = new Updater(b, { platform: 'darwin', env: { ATRIUM_INSTALL_DIR: inst }, codeRoot, timers: false, fetchJson: gh.fetchJson });
     // 정식: 알림 없음
     let v = await up.check('start');
     assert.equal(v.channel, 'stable'); assert.equal(v.available, false); assert.equal(v.latest.tag, 'v0.1.1');
@@ -153,7 +153,7 @@ test('확인 중에 채널을 바꾸면 앞 채널의 결과를 버리고 새 �
     const gh = fakeGithub(['v0.1.1', 'v0.1.2', 'v0.1.3-dev.1']);
     let waiting = 0;
     const fetchJson = async (u) => { if (u.endsWith('/latest')) { waiting++; await gate; } return gh.fetchJson(u); };
-    const up = new Updater(b, { env: { ATRIUM_INSTALL_DIR: inst }, codeRoot, timers: false, fetchJson });
+    const up = new Updater(b, { platform: 'darwin', env: { ATRIUM_INSTALL_DIR: inst }, codeRoot, timers: false, fetchJson });
     const first = up.check('start'); // 정식, 기다린다
     await new Promise((r) => setImmediate(r));
     assert.equal(waiting, 1); // 정식 확인이 releases/latest에서 기다리는 중
@@ -178,7 +178,7 @@ test('dev에서 정식으로 돌리면 낮은 버전을 알리지 않고, 더 �
     const { b, s } = fakeBoard(d, { updateChannel: 'stable' });
     const tags = ['v0.1.1', 'v0.1.2-dev.1', 'v0.1.2-dev.2'];
     const gh = fakeGithub(tags);
-    const up = new Updater(b, { env: { ATRIUM_INSTALL_DIR: inst }, codeRoot, timers: false, fetchJson: gh.fetchJson });
+    const up = new Updater(b, { platform: 'darwin', env: { ATRIUM_INSTALL_DIR: inst }, codeRoot, timers: false, fetchJson: gh.fetchJson });
     assert.equal(up.view().current.prerelease, true);
     let v = await up.check('start');
     assert.equal(v.latest.tag, 'v0.1.1'); assert.equal(v.available, false); // v0.1.1 < v0.1.2-dev.2
@@ -201,7 +201,7 @@ test('한 번만 다른 채널(atrium update --channel): 판 기록과 판 설�
     const { b, meta, s } = fakeBoard(d);
     const gh = fakeGithub(['v0.1.1', 'v0.1.2-dev.1']);
     const swaps = [];
-    const up = new Updater(b, { env: { ATRIUM_INSTALL_DIR: inst }, codeRoot, timers: false, leaveWaitMs: 10, fetchJson: gh.fetchJson, prepare: async ({ release: r }) => { const root = path.join(inst, r.tag); fs.mkdirSync(root, { recursive: true }); return { root }; }, spawnSwap: (f, job) => swaps.push(job), exit: () => {} });
+    const up = new Updater(b, { platform: 'darwin', env: { ATRIUM_INSTALL_DIR: inst }, codeRoot, timers: false, leaveWaitMs: 10, fetchJson: gh.fetchJson, prepare: async ({ release: r }) => { const root = path.join(inst, r.tag); fs.mkdirSync(root, { recursive: true }); return { root }; }, spawnSwap: (f, job) => swaps.push(job), exit: () => {} });
     await up.check('start');
     const v = await up.handlers['update.check']({ channel: 'dev' });
     assert.equal(v.once, true); assert.equal(v.channel, 'dev'); assert.equal(v.available, true); assert.equal(v.latest.tag, 'v0.1.2-dev.1');

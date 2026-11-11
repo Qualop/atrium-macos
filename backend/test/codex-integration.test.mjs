@@ -220,3 +220,35 @@ test('native output cannot be saved to a replacement session after a late histor
   await assert.rejects(f.b.api.handlers['output.save']({ session: sid }), { code: 'closed' });
   assert.equal(fs.existsSync(path.join(f.cfg.dataDir, 'outputs')), false);
 });
+
+test('a reused agent name cannot poison a fresh Codex UUID or send its first prompt to another pane', async t => {
+  const f = fixture(t), out = await launch(f), s = f.b.sessions.get(out.sessionId);
+  f.b.adapter.getAgent = async () => ({ paneId: 'other-pane', agentSessionId: ID(999) });
+  await f.ready(s);
+  assert.equal(s.rt.codexSessionId, undefined);
+  f.b.adapter.getPane = async paneId => ({ paneId, agent: 'codex' });
+  const targets = [];
+  f.b.adapter.prompt = async target => { targets.push(target); return {}; };
+  await f.b.promptManaged(s.sessionId, 'Synthetic first task');
+  assert.deepEqual(targets, [s.paneId]);
+  assert.equal(s.rt.codexSessionId, undefined);
+});
+
+test('first task is durable while native agent startup is still pending', async t => {
+  const f = fixture(t);
+  let release, entered;
+  const waiting = new Promise(r => { release = r; });
+  const started = new Promise(r => { entered = r; });
+  const original = f.b.adapter.startAgent;
+  f.b.adapter.startAgent = async p => { entered(); await waiting; return original(p); };
+  const pending = launch(f, { prompt: 'Synthetic durable first task' });
+  try {
+    await started;
+    const s = f.b.resolve('parent');
+    assert.equal(f.b.queue.pending(s.sessionId), 1);
+    const deliveries = f.b.store.activeDeliveries();
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].text, 'Synthetic durable first task');
+    assert.equal(deliveries[0].status, 'queued');
+  } finally { release(); await pending; }
+});

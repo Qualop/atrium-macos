@@ -52,6 +52,7 @@ import { resolveLauncher, exampleDeepseek, checkGateway, splitArgs, startWords, 
 import { attachWorktrees } from './worktrees.mjs'; // P27: 워크트리 영역
 import { attachDesktopImport } from './desktop-import.mjs'; // P34: 데스크톱 앱 세션 가져오기
 import { attachUpdater } from './updater.mjs'; // P69: 앱 안 업데이트
+import { assertRestartAllowedSync } from './update-lease.mjs';
 import { attachSleep, draftAfterInput } from './sleep.mjs'; // P21: 쉬는 Claude 세션 잠재우기와 깨우기(ARCH 5절 잠재우기, 기능 번호 D4 제안)
 import { migrateLegacyData, fixLegacyRecords, writeTombstone, checkLegacyDevHerdr, MARKER, PANE_PREFIX } from './rename-migrate.mjs'; // P18: 이름 옮기기(multitask → Atrium)
 
@@ -115,6 +116,7 @@ export class Backend {
   }
   async startInner() {
     const cfg = this.cfg;
+    assertRestartAllowedSync(cfg);
     for (const d of [cfg.dataDir, cfg.sessionsDir, cfg.logDir]) fs.mkdirSync(d, { recursive: true });
     try {
       const prev = JSON.parse(fs.readFileSync(cfg.backendFile, 'utf8'));
@@ -1001,7 +1003,7 @@ export class Backend {
   async refreshAgent(s) {
     const rt = s.rt, paneId = s.paneId;
     const a = await this.adapter.getAgent(s.agentName).catch(() => null);
-    if (!a || !this.currentSession(s, rt, paneId)) return null;
+    if (!a || !this.currentSession(s, rt, paneId) || (a.paneId && a.paneId !== paneId)) return null;
     s.rt.herdr.launchPending = a.launchPending;
     s.rt.herdr.agentSessionId = a.agentSessionId;
     if (s.kind === 'codex' && recordCodexSessionId(s, a.agentSessionId)) this.store.saveRuntime(s.sessionId, s.rt);
@@ -1233,10 +1235,10 @@ export class Backend {
     if (!current()) throw apiError('agent_not_found', '세션이 바뀌었거나 종료 중입니다');
     try {
       const expected = rt[`${s.kind}SessionId`];
-      if (expected && this.adapter.getAgent) {
+      if (this.adapter.getAgent) {
         const named = await this.adapter.getAgent(s.agentName).catch(() => null);
         if (!current()) throw apiError('agent_not_found', '세션이 바뀌었습니다');
-        if (named && ((named.paneId && named.paneId !== paneId) || named.agentSessionId !== expected)) throw apiError('agent_not_found', '에이전트 이름과 대화가 일치하지 않습니다');
+        if (named && ((named.paneId && named.paneId !== paneId) || (expected && named.agentSessionId !== expected))) throw apiError('agent_not_found', '에이전트 이름과 대화가 일치하지 않습니다');
       }
       return await this.adapter.prompt(s.agentName, text);
     }
@@ -1463,6 +1465,9 @@ export class Backend {
     if (p.branch && !p.branch.head && place) reflowLines(this, { workspaceKey: ws.key, cause: 'spawn child' });
     settleRegions(this, 'spawn');
     this.store.addEvent(sessionId, 'spawn', { name, kind, cwd: slash(cwd), workspace: ws.key, trust, args, allowHerdr, ...(plan.launcher ? { launcher: plan.launcher } : {}), ...(extraArgs.length ? { extraArgs } : {}), ...(plan.env ? { envKeys: Object.keys(plan.env) } : {}), ...(flavor ? { flavor, command: command ? '[command]' : null } : {}), ...(p.branch ? { parent: p.parentSessionId, worktree: p.worktree || null, place: place ? 'tree' : 'slot' } : {}) });
+    // Persist the first task before subscription/shell/agent startup can await.
+    // A restart can recover this queued task; starting state prevents delivery.
+    if (p.prompt) this.queue.enqueue(sessionId, p.prompt);
     await this.adapter.refreshSubscription();
     this.api.broadcast('session.created', { sessionId, name, workspaceKey: ws.key });
     this.broadcastSession(s, { cause: 'spawn' });
@@ -1483,6 +1488,7 @@ export class Backend {
     try { st = await this.adapter.startAgent({ name, paneId: hw.paneId, args, kind, ...(startCommand ? { command: startWords(startCommand) } : {}) }); }
     catch (e) {
       if (e.code === 'agent_not_detected') {
+        this.queue.cancelSession(sessionId, 'start command failed');
         this.store.addEvent(sessionId, 'start_command_failed', { startCommand: '[command]' });
         throw keyed(apiError('start_command_failed', '실행 명령으로 에이전트를 시작하지 못했습니다. 터미널에서 오류를 확인하세요.'), 'launcherStart.failed', { cmd: startCommand, kind });
       }
@@ -1493,7 +1499,6 @@ export class Backend {
     // B3 4번: 이어 가기 명령 등록. agent.start 직후에는 herdr가 resume_not_accepted("reporter to hold the pane")로 거부하고,
     // herdr가 패널에서 claude를 찾은 뒤(약 1.5초)에는 받는다. 받은 등록은 agent_session을 남기므로 신뢰 대화상자가 끝나 ready가 된 뒤에 한다.
     if (claude) this.registerResume(s);
-    if (p.prompt) this.queue.enqueue(sessionId, p.prompt);
     this.log(`spawned ${name} ${kind} ${sessionId} pane=${hw.paneId} ws=${ws.key} shellReady=${shellReady} trust=${JSON.stringify(trust)}`);
     return { ...out, argv: st.argv };
   }

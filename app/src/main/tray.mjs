@@ -316,6 +316,12 @@ export function startTray({ cfg, log, hasWindow, showNode, quit, notifications =
       st.connected = true;
       st.update = await c.call('update.status').catch(() => null);
       if (!current()) return;
+      // A window can connect after the restart broadcast. Catch up from the
+      // snapshot before it can try to revive the old backend.
+      if (st.update?.job?.phase === 'restarting') {
+        await updateRestart({ kind: 'update', to: { tag: st.update.job.to } });
+        return;
+      }
       const bst = await c.call('backend.status').catch(() => null);
       if (!current()) return;
       if (bst && bst.migration) noteMigration(bst.migration);

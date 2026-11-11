@@ -241,7 +241,7 @@ test('P105 패널: 같은 작업 공간에 다른 패널이 있거나 패널 목
     const { s, sl, calls } = fakeBoard({ panes: [{ paneId: 'w1:p1' }] });
     const out = await sl.sleep(s, { by: 'auto' });
     assert.ok(calls.some((c) => c[0] === 'closePane' && c[1] === 'w1:p1'), '마지막 패널도 그 패널만 닫아 조회 뒤 생긴 형제를 보존한다');
-    assert.ok(!calls.some((c) => c[0] === 'closeWorkspace')); 
+    assert.ok(!calls.some((c) => c[0] === 'closeWorkspace'));
     assert.equal(sl.blocked.has(s.sessionId), false); assert.equal(out.slept, true);
   }
 });

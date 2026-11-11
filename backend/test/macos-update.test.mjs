@@ -8,12 +8,13 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import * as U from '../src/update.mjs';
 import { Updater } from '../src/updater.mjs';
+import { acquireRestartLeaseSync } from '../src/update-lease.mjs';
 import { verifyBundle } from '../src/update-verify.mjs';
 import { runSwap, validateJob, createLifecycle } from '../src/update-swap.mjs';
 import { auditNativeBundle, bundleNativeBinary } from '../src/update-native.mjs';
 const local = { auth: { kind: 'local' } };
 const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, value); };
-function temp(t) { const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'atrium-update-fixture-'))); t.after(() => fs.rmSync(dir, { recursive: true, force: true })); return dir; }
+function temp(t) { const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'atrium-update-fixture-'))); t.after(() => fs.rmSync(dir, { recursive: true, force: true })); return dir; }
 const release = (tag = 'v0.5.0', extra = {}) => ({ tag_name: tag, prerelease: tag.includes('-'), html_url: `${U.RELEASES_URL}/tag/${tag}`, assets: [ { name: `Atrium-${tag.slice(1)}-macos-arm64.zip`, browser_download_url: `https://github.com/${U.UPDATE_REPO}/releases/download/${tag}/Atrium-${tag.slice(1)}-macos-arm64.zip` }, { name: 'SHA256SUMS.txt', browser_download_url: `https://github.com/${U.UPDATE_REPO}/releases/download/${tag}/SHA256SUMS.txt` } ], ...extra });
 function crc(buf) { let c = 0xffffffff; for (const b of buf) { c ^= b; for (let i = 0; i < 8; i++) c = c & 1 ? (c >>> 1) ^ 0xedb88320 : c >>> 1; } return (c ^ 0xffffffff) >>> 0; }
 function zip(files) {
@@ -48,6 +49,7 @@ function swapFixture(t) {
   const f = board(t), dir = path.join(f.b.cfg.dataDir, 'updates'), staging = path.join(dir, '.prepare-fixture'), preparedBundle = path.join(staging, 'extracted/Atrium.app'), helperDir = path.join(dir, '.helper-fixture'); bundle(preparedBundle, '0.5.0'); fs.mkdirSync(helperDir);
   write(path.join(f.app, 'original-marker'), 'original'); write(path.join(preparedBundle, 'new-marker'), 'new'); write(path.join(f.b.cfg.dataDir, 'board-state'), 'keep');
   const job = { format: 1, targetBundle: f.app, preparedBundle, staging, helperDir, installDir: dir, from: { tag: 'v0.4.0', version: '0.4.0' }, to: { tag: 'v0.5.0', version: '0.5.0' }, waitPids: [99999991, 99999992], oldBackendPid: 99999991, cfg: f.b.cfg, profileEnv: {}, arch: 'arm64', protocol: 22, relaunch: true };
+  acquireRestartLeaseSync(job);
   const calls = [], lifecycle = { start: async (app, version) => { calls.push(['start', app, version]); return { version }; }, healthy: async h => { calls.push(['health', h.version]); return { pid: h.version === '0.5.0' ? 99999993 : 99999994 }; }, stop: async h => calls.push(['stop', h?.version]), relaunch: async p => calls.push(['relaunch', p]) };
   const deps = { lifecycle, verify: async () => ({ ok: true }), waitGone: async () => true, copyBundle: (a, b) => fs.cpSync(a, b, { recursive: true, verbatimSymlinks: true }) };
   return { ...f, job, calls, deps };
@@ -98,7 +100,7 @@ test('failed signature verification cannot alter an installed app', async t => {
   assert.equal(U.versionOfRoot(f.root), '0.4.0'); assert.deepEqual(fs.readdirSync(f.up.dir), []);
 });
 function verifierExec(version = '0.5.0', signature = 'Signature=adhoc\nTeamIdentifier=not set\n') {
-  const calls = []; return { calls, exec: (cmd, args) => { calls.push([cmd, args]); if (cmd === '/bin/sh') return signature; if (cmd.includes('PlistBuddy')) return args[1].includes('CFBundleIdentifier') ? U.BUNDLE_ID : args[1].includes('CFBundleShortVersionString') ? macosVersionOf(version).baseVersion : macosVersionOf(version).bundleVersion; if (cmd.endsWith('/runtime/node')) return JSON.stringify({ node: '24.1.0', arch: 'arm64' }); return ''; } };
+  const calls = []; return { calls, exec: (cmd, args) => { calls.push([cmd, args]); if (cmd === '/bin/sh') return signature; if (cmd.includes('PlistBuddy')) return args[1].includes('CFBundleIdentifier') ? U.BUNDLE_ID : args[1].includes('CFBundleShortVersionString') ? macosVersionOf(version).baseVersion : macosVersionOf(version).bundleVersion; if (cmd.replace(/\\/g, '/').endsWith('/runtime/node')) return JSON.stringify({ node: '24.1.0', arch: 'arm64' }); return ''; } };
 }
 test('bundle verifier checks signature before executing Node and requires matching metadata, sqlite and protocols', async t => {
   const dir = temp(t), app = path.join(dir, 'Atrium.app'); bundle(app, '0.5.0'); const f = verifierExec();
@@ -111,7 +113,7 @@ test('bundle verifier checks signature before executing Node and requires matchi
 test('signature failure and signing-team change reject the release without running downloaded Node', async t => {
   const dir = temp(t), app = path.join(dir, 'Atrium.app'), old = path.join(dir, 'Old.app'); bundle(app, '0.5.0'); bundle(old);
   let nodeRuns = 0; const f = verifierExec();
-  const result = await verifyBundle(app, { version: '0.5.0', arch: 'arm64', exec: (cmd, args) => { if (cmd.endsWith('/runtime/node')) nodeRuns++; if (cmd.endsWith('/codesign')) throw Error('bad signature'); return f.exec(cmd, args); }, audit: () => ({ nativeFiles: 3 }) });
+  const result = await verifyBundle(app, { version: '0.5.0', arch: 'arm64', exec: (cmd, args) => { if (cmd.replace(/\\/g, '/').endsWith('/runtime/node')) nodeRuns++; if (cmd.endsWith('/codesign')) throw Error('bad signature'); return f.exec(cmd, args); }, audit: () => ({ nativeFiles: 3 }) });
   assert.equal(result.ok, false); assert.equal(nodeRuns, 0);
   const changed = await verifyBundle(app, { version: '0.5.0', arch: 'arm64', currentBundle: old, exec: (cmd, args) => cmd === '/bin/sh' ? `Authority=Developer ID\nTeamIdentifier=${args.at(-1) === old ? 'ORIGINAL' : 'OTHER'}\n` : f.exec(cmd, args), audit: () => ({ nativeFiles: 3 }) });
   assert.equal(changed.ok, false); assert.match(changed.problems[0], /signing team/);
@@ -226,7 +228,7 @@ test('packager-generated ditto ZIPs pass the same preflight used by the updater'
 test('loopback API and dev installation require all explicit temporary update-test boundaries', t => {
   const f = board(t);
   assert.throws(() => new Updater(f.b, { timers: false, codeRoot: f.root, env: { ATRIUM_UPDATE_API: 'http://127.0.0.1:12345/releases/latest' } }), { code: 'unsafe_update_api' });
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'atrium-update-e2e-'))); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'atrium-update-e2e-'))); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const app = path.join(root, 'Applications/Atrium.app'); bundle(app);
   const cfg = { profile: 'dev', port: 49999, dataDir: path.join(root, 'data'), herdrSession: 'atrium-dev-update-synthetic' };
   const env = { ATRIUM_UPDATE_TEST: '1', ATRIUM_UPDATE_TEST_ROOT: root, ATRIUM_PROFILE: 'dev', ATRIUM_DATA_DIR: cfg.dataDir, ATRIUM_APP_USERDATA: path.join(root, 'electron'), HOME: path.join(root, 'home') };
@@ -263,13 +265,13 @@ test('bundle verification reads real stable/dev plist fields and retains full Se
     const options = { version, arch: 'arm64', protocol: 22, exec, audit: () => ({ nativeFiles: 3 }) };
     const result = await verifyBundle(app, options); assert.equal(result.ok, true, result.problems.join('; ')); assert.equal(result.info.version, version); assert.equal(result.info.baseVersion, native.baseVersion); assert.equal(result.info.bundleVersion, native.bundleVersion);
     execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleVersion 999', plist]); f.calls.length = 0;
-    const bad = await verifyBundle(app, options); assert.equal(bad.ok, false); assert.match(bad.problems[0], /plist version mismatch/); assert.equal(f.calls.some(([cmd]) => cmd.endsWith('/runtime/node')), false);
+    const bad = await verifyBundle(app, options); assert.equal(bad.ok, false); assert.match(bad.problems[0], /plist version mismatch/); assert.equal(f.calls.some(([cmd]) => cmd.replace(/\\/g, '/').endsWith('/runtime/node')), false);
   }
 });
 test('dev verification rejects base-only or stale full-semver JSON despite a matching marketing version', async t => {
   for (const relative of ['app/package.json', 'backend/package.json', 'runtime/update-manifest.json']) {
     const dir = temp(t), app = path.join(dir, 'Atrium.app'), root = bundle(app, '0.4.1-dev.12'), f = verifierExec('0.4.1-dev.12');
     const file = path.join(root, relative), data = U.readJson(file); U.writeJson(file, { ...data, version: relative.startsWith('runtime/') ? '0.4.1-dev.11' : '0.4.1' });
-    const result = await verifyBundle(app, { version: '0.4.1-dev.12', arch: 'arm64', exec: f.exec, audit: () => ({ nativeFiles: 3 }) }); assert.equal(result.ok, false); assert.match(result.problems[0], /release versions disagree/); assert.equal(f.calls.some(([cmd]) => cmd.endsWith('/runtime/node')), false);
+    const result = await verifyBundle(app, { version: '0.4.1-dev.12', arch: 'arm64', exec: f.exec, audit: () => ({ nativeFiles: 3 }) }); assert.equal(result.ok, false); assert.match(result.problems[0], /release versions disagree/); assert.equal(f.calls.some(([cmd]) => cmd.replace(/\\/g, '/').endsWith('/runtime/node')), false);
   }
 });

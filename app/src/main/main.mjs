@@ -10,6 +10,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, BACKEND_ROOT, APP_NAME, APP_ID, envVar, legacyAppUserData } from '../../../backend/src/config.mjs';
 import { startBackend, stopBackend, backendInfo, health } from '../../../backend/src/client.mjs';
+import { restartBlockSync } from '../../../backend/src/update-lease.mjs';
 import { startTray, whenBoardReady } from './tray.mjs'; // I7(P6b): 트레이 상주
 import { translate, DEFAULT_LANGUAGE } from '../renderer/lib/i18n.js'; // P16: 대화상자 글. 언어는 트레이가 받은 판 설정
 import { macCliDirectories } from './cli-paths.mjs';
@@ -52,13 +53,19 @@ if (appMigration) early.push(`app profile migrated ${JSON.stringify({ ...appMigr
 if (!app.requestSingleInstanceLock()) app.quit();
 
 let starting = null;
+function deferUpdateRestart() {
+  if (!updating && restartBlockSync(cfg, { allowPermit: false })) onUpdateRestart({ kind: 'update' });
+  return updating;
+}
 async function ensureBackend() {
-  if (updating) return new Promise(() => {}); // P69: 옛 백엔드를 다시 띄우지 않는다(앱이 곧 끝난다)
+  if (deferUpdateRestart()) return new Promise(() => {});
   const info = backendInfo(cfg);
-  if (info && (await health(info.port))) return info;
+  const live = info && await health(info.port);
+  if (deferUpdateRestart()) return new Promise(() => {});
+  if (live) return info;
   starting ||= startBackend(cfg, { nodePath: envVar('NODE') || (fs.existsSync(bundledNode) ? bundledNode : 'node') })
-    .then((r) => { log('backend', JSON.stringify({ ...r, herdr: r.herdr && r.herdr.compat })); return backendInfo(cfg); })
-    .catch((e) => { log('backend start failed', e.message); if (tray) tray.noteError(e.message); throw e; }) // P18: 옛 판을 옮기지 못한 까닭 등을 트레이에 보인다
+    .then((r) => { if (deferUpdateRestart()) return new Promise(() => {}); log('backend', JSON.stringify({ ...r, herdr: r.herdr && r.herdr.compat })); return backendInfo(cfg); })
+    .catch((e) => { if (deferUpdateRestart()) return new Promise(() => {}); log('backend start failed', e.message); if (tray) tray.noteError(e.message); throw e; })
     .finally(() => { starting = null; });
   return starting;
 }
@@ -158,6 +165,7 @@ function onUpdateRestart(d) {
   app.quit();
 }
 app.whenReady().then(() => {
+  if (deferUpdateRestart()) return;
   if (process.platform === 'darwin') {
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]));
     app.dock?.setIcon(NOTIFY_ICON);

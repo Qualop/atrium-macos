@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { ApiClient } from '../../../backend/src/client.mjs';
 import { checksumFor, readResult, isolatedUpdateTest, resourcesOf } from '../../../backend/src/update.mjs';
+import { readRestartLeaseSync } from '../../../backend/src/update-lease.mjs';
 import { assertTestBoard } from './p9-guard.mjs';
 if (process.platform !== 'darwin') throw Error('Native updater E2E requires macOS.');
 const source = process.env.ATRIUM_TEST_APP && path.resolve(process.env.ATRIUM_TEST_APP);
@@ -105,6 +106,8 @@ async function scenario(rollback) {
     if (rollback) { assert.equal(finalResult.ok, false); assert.equal(finalResult.rolledBack, true); assert.equal(finalResult.rollbackError, undefined); }
     else assert.equal(finalResult.ok, true, JSON.stringify(finalResult));
     assert.ok(finalResult.relaunchPid, 'Helper must restart a native window with the fixture environment.'); assert.equal(finalResult.relaunchError, undefined);
+    assert.equal(readRestartLeaseSync({ profile: 'dev', dataDir: paths.data, port, herdrSession: session }), null, 'Settled helper must release restart exclusion before opening the new window.');
+    await until(() => child.exitCode !== null || child.signalCode, 'original window voluntarily exited for update');
     const afterInfo = await until(() => { const value = json(path.join(paths.data, 'backend.json')); return value?.pid !== info.pid ? value : null; }, 'new fixture backend metadata');
     client = new ApiClient(afterInfo); await client.open(); const expected = rollback ? oldVersion : '0.4.0';
     const after = await until(async () => { const s = await client.call('backend.status'); return s.version?.version === expected && s.herdr?.connected ? s : null; }, 'new backend/herdr health');
@@ -113,7 +116,7 @@ async function scenario(rollback) {
     assert.ok((await client.call('memo.list')).some(m => m.memoId === memo.memoId && m.text.includes('preservation fixture')));
     assert.equal(json(path.join(resourcesOf(target), 'app/package.json')).version, expected); assert.equal(json(path.join(resourcesOf(target), 'backend/package.json')).version, expected); assert.equal(json(path.join(resourcesOf(target), 'runtime/update-manifest.json')).version, expected);
     await until(() => { const content = fs.readFileSync(path.join(paths.data, 'logs/app-main.log'), 'utf8'); return content.includes(`version=${expected}`) && content.includes(`pid=${finalResult.relaunchPid}`); }, 'relaunched app kept the temporary profile');
-    report.assertions.push('actual release ZIP and SHA256', 'codesign verification', 'native bundle swap', 'new backend PID and expected version', 'same herdr PID/session', 'same shell session/pane/workspace', 'memo data preserved', 'direct native relaunch preserved temporary profile', rollback ? 'failed-health automatic rollback' : 'v0.4.0 app/backend/manifest');
+    report.assertions.push('actual release ZIP and SHA256', 'codesign verification', 'native bundle swap', 'new backend PID and expected version', 'same herdr PID/session', 'same shell session/pane/workspace', 'memo data preserved', 'original window voluntarily exited', 'restart lease cleared before native relaunch', 'direct native relaunch preserved temporary profile', rollback ? 'failed-health automatic rollback' : 'v0.4.0 app/backend/manifest');
     report.ok = true; report.result = finalResult;
   } catch (error) { report.ok = false; report.error = error.stack; throw error; }
   finally {

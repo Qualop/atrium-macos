@@ -12,7 +12,7 @@ import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { spawn, execFile } from 'node:child_process';
 import { HERDR_VERSION, HERDR_PROTOCOL, HERDR_PROTOCOLS, HERDR_TESTED } from '../config.mjs';
-import { discoverHerdr, parseWhere, herdrCompat, herdrServerExe, withPathFirst } from './discover.mjs';
+import { discoverHerdr, parseWhere, herdrCompat, herdrServerExe, herdrServerProcess, withPathFirst } from './discover.mjs';
 import { herdrDirectory, herdrSocket, findExecutable } from '../platform.mjs';
 import { psLine } from '../launch.mjs'; // P97: 실행 명령 줄
 
@@ -56,23 +56,27 @@ export async function findHerdr({ envPath = '', settingPath = '', bundledPath = 
 }
 
 // P40: 이 세션의 herdr 서버 프로세스의 실행 파일(읽기만 한다). 못 읽으면 null
-export async function readServerExe(session, serverPid = null) {
+export async function readServerIdentity(session, serverPid = null) {
   if (process.platform !== 'win32') {
     const rows = await execText('/bin/ps', serverPid ? ['-p', String(serverPid), '-o', 'pid=,comm='] : ['-axo', 'pid=,comm='], { timeout: 5000 });
-    if (rows.code !== 0) return null;
+    if (rows.code !== 0) return serverPid ? readServerIdentity(session) : null;
     for (const line of rows.stdout.split('\n')) {
       const m = /^\s*(\d+)\s+(.*)$/.exec(line); if (!m || path.basename(m[2]) !== 'herdr') continue;
       const args = await execText('/bin/ps', ['-p', m[1], '-o', 'args='], { timeout: 5000 });
       const raw = args.stdout.trim(), exe = m[2].trim();
       const cmd = raw.startsWith(exe) ? JSON.stringify(exe) + raw.slice(exe.length) : raw;
-      const found = herdrServerExe([{ pid: Number(m[1]), exe, cmd }], session, serverPid); if (found) return found;
+      const found = herdrServerProcess([{ pid: Number(m[1]), exe, cmd }], session, serverPid); if (found) return found;
     }
-    return null;
+    return serverPid ? readServerIdentity(session) : null;
   }
   const ps = `$ErrorActionPreference = 'SilentlyContinue'; @(Get-CimInstance Win32_Process -Filter "Name='herdr.exe'" -Property ProcessId,ExecutablePath,CommandLine | ForEach-Object { [pscustomobject]@{ i = $_.ProcessId; e = $_.ExecutablePath; c = $_.CommandLine } }) | ConvertTo-Json -Compress`;
   const r = await execText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeout: 15000 });
   if (r.code !== 0) return null;
-  try { return herdrServerExe([].concat(JSON.parse(r.stdout || '[]') || []).map((x) => ({ pid: x.i, exe: x.e || null, cmd: x.c || '' })), session, serverPid); } catch { return null; }
+  try { return herdrServerProcess([].concat(JSON.parse(r.stdout || '[]') || []).map((x) => ({ pid: x.i, exe: x.e || null, cmd: x.c || '' })), session, serverPid); } catch { return null; }
+}
+
+export async function readServerExe(session, serverPid = null) {
+  return (await readServerIdentity(session, serverPid))?.exe || null;
 }
 
 // P40: 레지스트리의 Machine+User PATH(펼친 값). herdr가 새 패널에 주는 PATH와 같은 출처다. 1분 동안 기억한다. 못 읽으면 null

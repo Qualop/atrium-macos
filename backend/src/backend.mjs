@@ -4,7 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { HerdrAdapter, findHerdr, readServerExe } from './herdr/adapter.mjs';
+import { HerdrAdapter, findHerdr, readServerExe, readServerIdentity } from './herdr/adapter.mjs';
 import { updateNotice } from './herdr/discover.mjs'; // P40: herdr 찾기와 업데이트 감지
 import { Store } from './store.mjs';
 import { ApiServer } from './api.mjs';
@@ -407,7 +407,9 @@ export class Backend {
     const p = await this.adapter.probe();
     let serverExe = null, note = null;
     if (p.running) {
-      serverExe = await readServerExe(this.cfg.herdrSession, this.adapter.serverPid()).catch(() => null);
+      const server = await readServerIdentity(this.cfg.herdrSession, this.adapter.serverPid()).catch(() => null);
+      serverExe = server?.exe || null;
+      if (server && Number.isSafeInteger(server.pid) && server.pid > 0) this.adapter._serverPid = server.pid;
       if (!serverExe) note = 'running server executable unreadable; using discovered path';
     }
     const chosen = serverExe ? { path: serverExe, source: 'server', reason: 'running board herdr server' } : found.path ? { path: found.path, source: found.source, reason: found.reason } : null;
@@ -1056,6 +1058,7 @@ export class Backend {
   }
 
   onHerdrDisconnected() {
+    if (this.adapter) this.adapter._serverPid = null;
     this.log('herdr disconnected');
     this.store.addEvent(null, 'herdr_disconnected', { expected: this.herdrStopping });
     this.herdrWasDown = true; // P7(J1): 다시 붙으면 herdr가 잃은 패널을 판이 되살린다
@@ -1071,6 +1074,10 @@ export class Backend {
   }
   async onHerdrConnected() {
     this.log('herdr connected');
+    if (this.herdrWasDown) {
+      await this.resolveHerdr('reconnected');
+      await this.checkHerdrUpdate('reconnected').catch(() => {});
+    }
     this.setHerdrCompat(this.adapter.checkCompat(this.adapter.pong));
     this.herdrMissing = null;
     const pid = this.adapter.serverPid();
@@ -1078,7 +1085,6 @@ export class Backend {
     this.store.addEvent(null, 'herdr_connected', { compat: this.herdrCompat, pid });
     this.api.broadcast('herdr', { ...this.herdrView(), compat: this.herdrCompat });
     // P40: 판 밖에서 다른 herdr로 서버가 다시 떴을 수 있다. 서버의 실행 파일을 다시 읽는다(기다리지 않는다)
-    if (this.herdrWasDown) this.resolveHerdr('reconnected').then(() => this.checkHerdrUpdate('reconnected')).then(() => this.api.broadcast('herdr', this.herdrView())).catch(() => {});
     // 백엔드가 꺼진 동안 herdr가 다시 떴다(재부팅 포함): 그 전에 돌던 세션은 herdr가 꺼져서 끝난 것으로 본다
     const afterRestart = !!(this.herdrWasDown || this.herdrRestartedWhileDown);
     this.herdrWasDown = false;

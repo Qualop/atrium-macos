@@ -90,7 +90,7 @@ const argvOf = (cmd) => (String(cmd || '').match(/"[^"]*"|\S+/g) || []).map((t) 
 
 // 도는 판 서버(`herdr --session <s> server`)의 실행 파일. procs: [{ pid, exe, cmd }](Win32_Process ExecutablePath·CommandLine).
 // 서버 PID를 알면 그 프로세스를 먼저 본다. 실행 파일 경로를 못 읽으면 명령 줄 첫 낱말. 없으면 null
-export function herdrServerExe(procs, session, serverPid = null) {
+export function herdrServerProcess(procs, session, serverPid = null) {
   const isServer = (p) => {
     const a = argvOf(p.cmd).slice(1);
     const si = a.indexOf('--session');
@@ -101,7 +101,10 @@ export function herdrServerExe(procs, session, serverPid = null) {
   const list = (procs || []).filter(isServer);
   const pick = (serverPid && list.find((p) => p.pid === serverPid)) || list[0];
   if (!pick) return null;
-  return pick.exe || argvOf(pick.cmd)[0] || null;
+  return { pid: pick.pid, exe: pick.exe || argvOf(pick.cmd)[0] || null };
+}
+export function herdrServerExe(procs, session, serverPid = null) {
+  return herdrServerProcess(procs, session, serverPid)?.exe || null;
 }
 
 // env의 PATH(Windows는 대소문자 무시, 보통 'Path') 맨 앞에 dir을 넣는다. 같은 폴더가 뒤에 있으면 뺀다. 새 객체를 돌려준다

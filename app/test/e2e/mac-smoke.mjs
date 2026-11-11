@@ -57,6 +57,8 @@ try {
   const info = JSON.parse(fs.readFileSync(path.join(dir, 'data/backend.json'), 'utf8'));
   client = new ApiClient(info); await client.open();
   await until(async () => (await client.call('backend.status')).herdr.connected, 'herdr connection');
+  const originalHerdrPid = (await client.call('backend.status')).herdr.serverPid;
+  assert.ok(originalHerdrPid > 0, 'Engine identity is required for a safe backend restart');
   console.log('PASS backend and herdr connected');
   if (process.env.ATRIUM_TEST_AUTO === '1') {
     await client.call('settings.set', { agentAutoApprove: true });
@@ -202,6 +204,7 @@ try {
   }, 'backend restarted by app');
   client = new ApiClient(nextInfo); await client.open();
   await until(async () => (await client.call('backend.status')).herdr.connected, 'herdr reattached');
+  assert.equal((await client.call('backend.status')).herdr.serverPid, originalHerdrPid, 'Backend reattachment retains the same engine identity');
   const restored = await until(async () => (await client.call('session.list')).find((s) => s.sessionId === shell.sessionId), 'restored backend session');
   assert.equal(restored.paneId, shell.paneId);
   console.log('PASS backend restart reattaches to the same live pane');

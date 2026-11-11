@@ -12,3 +12,11 @@ test('workspace creation preserves managed provider credentials and PATH while s
  assert.equal(params.env.GEMINI_CLI_HOME,'/private/profile');assert.equal(params.env.ATRIUM_BRANCH_FILE,'/private/session.json');assert.ok(params.env.PATH.startsWith('/engine'));
 });
 test('same protocol permits an untested engine version with a warning',()=>{const result=herdrCompat({version:'0.9.99',protocol:22,capabilities:{}},{protocols:[22],tested:['0.9.5']});assert.equal(result.ok,true);assert.equal(result.level,'untested');assert.ok(result.warning);});
+
+test('reattachment discovery preserves the exact server PID as well as executable', async () => {
+ const {herdrServerProcess}=await import('../src/herdr/discover.mjs');
+ const rows=[{pid:51,exe:'/app/herdr',cmd:'herdr --session atrium-dev-identity server'},{pid:52,exe:'/other/herdr',cmd:'herdr --session another server'},{pid:53,exe:'/new/herdr',cmd:'herdr --session atrium-dev-identity server'}];
+ assert.deepEqual(herdrServerProcess(rows,'atrium-dev-identity',53),{pid:53,exe:'/new/herdr'});
+ assert.deepEqual(herdrServerProcess(rows,'atrium-dev-identity'),{pid:51,exe:'/app/herdr'});
+ assert.equal(herdrServerProcess(rows,'missing'),null);
+});

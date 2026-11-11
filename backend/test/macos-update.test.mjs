@@ -106,7 +106,7 @@ test('bundle verifier checks signature before executing Node and requires matchi
   const dir = temp(t), app = path.join(dir, 'Atrium.app'); bundle(app, '0.5.0'); const f = verifierExec();
   assert.equal((await verifyBundle(app, { version: '0.5.0', arch: 'arm64', protocol: 22, exec: f.exec, audit: () => ({ nativeFiles: 3 }) })).ok, true);
   assert.ok(f.calls.findIndex(([c]) => c.endsWith('/codesign')) < f.calls.findIndex(([c]) => c.replace(/\\/g, '/').endsWith('/runtime/node')));
-  assert.ok(f.calls.find(([c, a]) => c.endsWith('/runtime/node') && a.join(' ').includes("node:sqlite")));
+  assert.ok(f.calls.find(([c, a]) => c.replace(/\\/g, '/').endsWith('/runtime/node') && a.join(' ').includes("node:sqlite")));
   const bad = await verifyBundle(app, { version: '0.5.0', arch: 'arm64', protocol: 999, exec: f.exec, audit: () => ({ nativeFiles: 3 }) }); assert.equal(bad.ok, false); assert.match(bad.problems[0], /protocol/);
   const missing = await verifyBundle(app, { version: '0.5.0', arch: 'x64', exec: f.exec, audit: () => ({ nativeFiles: 3 }) }); assert.equal(missing.ok, false);
 });

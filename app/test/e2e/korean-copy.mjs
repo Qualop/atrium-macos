@@ -5,7 +5,7 @@ import { assertPickerFixture, assertPickerFits, favoriteFor, favoriteButton, pic
 
 export async function checkKoreanCopy({ page, app, client, dir }) {
   await assertPickerFixture({ app, client, dir });
-  const originalLanguage = (await client.call('settings.get')).settings.language;
+  const originalSettings = (await client.call('settings.get')).settings;
   const originalSize = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize());
   const originalPin = await page.evaluate(() => window.__mt.getState().bottomPin);
   const claude = await favoriteFor(client, 'claude');
@@ -14,7 +14,7 @@ export async function checkKoreanCopy({ page, app, client, dir }) {
   const fixtureName = '한국어 권한 검증';
   let fixtureId;
   try {
-    await client.call('settings.set', { language: 'ko' });
+    await client.call('settings.set', { language: 'ko', agentAutoApprove: false });
     await page.evaluate(() => window.__mt.pinBottom(true));
     await page.waitForFunction(() => document.querySelector('[data-role="review"]')?.textContent.includes('확인할 결과'));
     assert.match(await page.locator('[data-role="inbox"]').innerText(), /응답 필요/);
@@ -93,7 +93,7 @@ export async function checkKoreanCopy({ page, app, client, dir }) {
     fixtureId ||= data.launchers.find((l) => l.name === fixtureName)?.id;
     if (fixtureId) await client.call('launcher.delete', { id: fixtureId });
     assert.deepEqual((await client.call('launcher.list')).launchers.find((l) => l.id === claude.id), claude);
-    await client.call('settings.set', { language: originalLanguage });
+    await client.call('settings.set', { language: originalSettings.language, agentAutoApprove: originalSettings.agentAutoApprove });
     await page.evaluate((pin) => window.__mt.pinBottom(pin), originalPin);
     await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setSize(...size), originalSize);
   }

@@ -13,7 +13,7 @@
 
 Atrium은 AI 코딩 세션, 프로젝트, 메모와 위임한 일을 한 캔버스에 놓는 앱입니다. Claude Code, Codex, Gemini CLI, Antigravity와 셸은 herdr 터미널에서 실행되고, Atrium은 배치·연결·메시지 전달을 관리합니다.
 
-**0.4 소스 통합**은 원본 P111까지의 기능을 macOS 분기에 반영합니다. 휴대폰 화면, 선택적 패스키·푸시, Mac 앱 업데이트와 배치·절전 개선을 포함하며 native Codex/Gemini 연동과 워커 상한을 유지합니다. 통합·native 실행 환경·패키징 검증이 진행 중이며 릴리스 완료를 뜻하지 않습니다.
+**0.4.0**은 원본 P111까지의 기능을 macOS 분기에 반영합니다. 휴대폰 화면, 선택적 패스키·푸시, Mac 앱 업데이트와 배치·절전 개선을 포함합니다. 관리 에이전트의 도구 자동승인과 부모 권한 변환을 지원하며, 질문·로그인·신뢰는 응답 필요 안내와 알림에서 해당 터미널로 연결합니다.
 
 ![macOS의 Atrium: 한국어 화면과 Codex 모델 선택](docs/images/model-picker-macos.png)
 
@@ -21,9 +21,13 @@ Atrium은 AI 코딩 세션, 프로젝트, 메모와 위임한 일을 한 캔버�
 
 ## 다운로드와 빌드 상태
 
-게시된 패키지와 체크섬은 [Qualop/atrium-macos 릴리스](https://github.com/Qualop/atrium-macos/releases)에서 확인합니다. 0.4 배포 파일, 최종 검증 결과와 직접 다운로드 링크는 남은 통합·패키징 확인 후 확정합니다.
+Apple Silicon용 0.4.0을 제공합니다. DMG를 열어 Atrium.app을 Applications에 넣으세요.
 
-macOS 패키지는 macOS 13 이상을 대상으로 하며 Node와 herdr를 포함합니다. 에이전트 CLI 설치·로그인은 별도입니다. 로컬 패키지는 ad-hoc 서명을 사용하며 Apple 공증과는 다릅니다.
+- [DMG 다운로드](https://github.com/Qualop/atrium-macos/releases/download/v0.4.0/Atrium-0.4.0-macos-arm64.dmg)
+- [ZIP 다운로드](https://github.com/Qualop/atrium-macos/releases/download/v0.4.0/Atrium-0.4.0-macos-arm64.zip)
+- [SHA-256 체크섬](https://github.com/Qualop/atrium-macos/releases/download/v0.4.0/SHA256SUMS.txt) · [릴리스 노트](https://github.com/Qualop/atrium-macos/releases/tag/v0.4.0)
+
+macOS 패키지는 macOS 13 이상을 대상으로 하며 Node와 herdr를 포함합니다. 에이전트 CLI 설치·로그인은 별도입니다. 배포 패키지는 ad-hoc 서명을 사용하며 Apple 공증은 받지 않았습니다.
 
 ## macOS에서 시작하기
 
@@ -89,11 +93,11 @@ Gemini CLI는 별도 관리 프로필을 씁니다. Antigravity는 기존 hook�
 
 복사본도 원본과 같은 작업 폴더를 사용할 수 있습니다. 대화 복사는 프로젝트 파일이나 워크트리 복사를 뜻하지 않습니다. 개발용 가져오기는 명시적으로 분리한 기록 위치가 필요합니다. 기존 Claude의 판 밖 기록 색인과 다른 프로세스에 묶인 대화 검사는 별도 경로로 유지합니다.
 
-## 0.4 통합 기능
+## 0.4 기능
 
-| 영역 | 소스의 동작 |
+| 영역 | 기능 |
 |---|---|
-| 응답 필요 | `ResponseNotice`가 질문·신뢰·로그인·오류의 맥락을 보여줍니다. 안내와 OS 알림을 누르면 실제 터미널로 갑니다. PC 승인·답변 카드는 이 동선으로 바꿉니다. |
+| 응답 필요 | `ResponseNotice`가 질문·신뢰·로그인·오류의 맥락을 보여줍니다. 안내와 OS 알림을 누르면 실제 터미널로 갑니다. PC 승인·답변 카드를 이 동선으로 교체했습니다. |
 | 이름과 위임 | 한글 표시 이름을 바꿔도 에이전트 주소는 유지합니다. 하위 제공자에 맞게 부모 권한을 변환하며 기본 상한은 직접 자식 4개·깊이 3·보드 전체 하위 16개입니다. |
 | 배치와 그룹 | 같은 저장소의 여러 워크트리를 한 도킹에 묶고 워커를 열로 배치합니다. 안팎 폴더의 자동 그룹, 관계를 고려한 전체 정리·되돌리기와 틀 비율을 지키는 크기 조절을 지원합니다. |
 | 절전 범위(P111) | 관리 Claude 세션은 프로젝트가 바빠도 개별 절전할 수 있습니다. 프로젝트 깨우기는 개별 절전 세션을 남겨 두고, 해당 세션을 고르면 그것만 깨웁니다. 미사용 가져오기 사본도 잠든 채 유지합니다. |
@@ -115,7 +119,7 @@ Electron 창과 등록된 브라우저가 보드 상태를 공유합니다. 뷰�
 
 ## 앱 안에서 Mac 업데이트
 
-업데이트 저장소는 [Qualop/atrium-macos](https://github.com/Qualop/atrium-macos)이며 stable/dev 채널을 구분합니다. 완성된 앱 ZIP과 SHA-256 체크섬을 받아 번들·서명·CPU·실행 환경 호환성을 확인한 뒤 별도 helper로 설치 앱을 교체하고 다시 엽니다. 교체 실패에 대비해 이전 번들을 보관합니다. 릴리스 소스나 npm 설치·빌드를 실행해 체크아웃을 덮는 방식은 아닙니다. 0.4의 패키지·실패 복구 검증은 아직 진행 중입니다.
+업데이트 저장소는 [Qualop/atrium-macos](https://github.com/Qualop/atrium-macos)이며 stable/dev 채널을 구분합니다. 완성된 앱 ZIP과 SHA-256 체크섬을 받아 번들·서명·CPU·실행 환경 호환성을 확인한 뒤 별도 helper로 설치 앱을 교체하고 다시 엽니다. 교체 실패에 대비해 이전 번들을 보관합니다. 릴리스 소스나 npm 설치·빌드를 실행해 체크아웃을 덮는 방식은 아닙니다. 실제 배포 ZIP으로 앱 교체·native 창 재실행과 실패 시 자동 롤백을 검증했습니다. 각 시험에서 엔진 PID·터미널 패널·메모를 유지했습니다.
 
 ## Finder용 앱 만들기
 
@@ -152,7 +156,13 @@ npm --prefix app test
 npm --prefix app run build
 ```
 
-`cd app && npm run mac -- --dev`로 분리된 개발 보드를 엽니다. 격리 프로필과 Mac 통합 명령은 [시험 요령](docs/testing.md)을 따릅니다. 0.4의 최종 회귀·native 실행 환경·알림 클릭·업데이트 복구·설치 앱 검증은 진행 중이며 시험 수와 배포 링크는 확인 후 확정합니다. 시험은 새 임시 프로필과 합성 기록을 사용합니다. 기존 사용자 대화·Tailscale 설정·전역 CLI 설정은 시험 자료로 쓰지 않습니다. Node 지원 범위는 22.13+의 22.x, 24.x, 26.x이며 지원 범위가 버전별 검증 완료를 뜻하지는 않습니다.
+`cd app && npm run mac -- --dev`로 분리된 개발 보드를 엽니다. 격리 프로필과 Mac 통합 명령은 [시험 요령](docs/testing.md)을 따릅니다.
+
+- Node 22.13.0·22.23.4·24.0.0·24.22.2·26.0.0·26.13.0에서 백엔드 1,101개·앱 526개와 빌드를 통과했습니다. macOS·Windows CI도 12개 조합을 통과했습니다. [CI 결과](https://github.com/Qualop/atrium-macos/actions/runs/43043273359)
+- 배포 앱의 최소 PATH 실행, 실제 모델 목록, 한국어 UI·합성 IME, 터미널 9개·제어기 8개, 메모·칸반, 창 재열기, 백엔드 강제 종료 뒤 패널 복구, 앱 업데이트·실패 롤백을 확인했습니다.
+- 휴대폰·패스키·푸시의 계약·브라우저 시험을 수행했습니다. 실제 iPhone·Web Push 전달·OS 알림 직접 클릭과 다른 CPU·OS 조합은 추가 실기기 확인 대상입니다.
+
+시험은 새 임시 프로필과 합성 기록을 사용합니다. Node 지원 범위는 22.13+의 22.x, 24.x, 26.x입니다.
 
 [설계](docs/ARCH.md), [현재 결정](docs/BRIEF.md), [계획](docs/PLAN.md)을 함께 봅니다.
 

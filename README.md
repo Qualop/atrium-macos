@@ -13,7 +13,7 @@
 
 Atrium keeps AI coding sessions, project folders, notes and delegated work on one canvas. Claude Code, Codex, Gemini CLI, Antigravity and your shell run inside herdr terminals; Atrium manages their layout, connections and message delivery.
 
-The **0.4 source integration** brings upstream features through P111 to the macOS branch, including phone access, optional passkeys and push, native bundle updates, and finer layout and sleep controls. Native Codex/Gemini integrations and worker limits remain. Integration, native-runtime and packaging checks are still in progress; this is not a release-completion notice.
+**0.4.0** brings upstream features through P111 to the macOS branch, including phone access, optional passkeys and push, native bundle updates, and finer layout and sleep controls. Managed agents support automatic tool approval and provider-aware parent permission mapping. Response notices and notifications open the relevant terminal for questions, sign-in and trust prompts.
 
 ![Atrium on macOS: Korean UI and Codex model selection](docs/images/model-picker-macos.png)
 
@@ -21,9 +21,13 @@ The **0.4 source integration** brings upstream features through P111 to the macO
 
 ## Download and build status
 
-Published packages and checksums are listed in the [Qualop/atrium-macos releases](https://github.com/Qualop/atrium-macos/releases). The 0.4 release artifacts, final validation results and direct download links are pending the remaining integration and package checks.
+Version 0.4.0 is available for Apple Silicon. Open the DMG and drag Atrium.app into Applications.
 
-macOS packages target macOS 13 or later and include Node and herdr. Agent CLIs, credentials and sign-in remain separate. Local packages use an ad-hoc signature; this is not Apple notarization.
+- [Download DMG](https://github.com/Qualop/atrium-macos/releases/download/v0.4.0/Atrium-0.4.0-macos-arm64.dmg)
+- [Download ZIP](https://github.com/Qualop/atrium-macos/releases/download/v0.4.0/Atrium-0.4.0-macos-arm64.zip)
+- [SHA-256 checksums](https://github.com/Qualop/atrium-macos/releases/download/v0.4.0/SHA256SUMS.txt) · [Release notes](https://github.com/Qualop/atrium-macos/releases/tag/v0.4.0)
+
+macOS packages target macOS 13 or later and include Node and herdr. Agent CLIs, credentials and sign-in remain separate. Release packages are ad-hoc signed and have not received Apple notarization.
 
 ## Start on macOS
 
@@ -115,7 +119,7 @@ The phone interface supports board and mission navigation, terminals and sending
 
 ## In-app macOS updates
 
-The updater uses [Qualop/atrium-macos](https://github.com/Qualop/atrium-macos), with separate stable and dev channels. It downloads a complete app ZIP and matching SHA-256 checksums, validates the bundle, signature, CPU architecture and runtime compatibility, then uses a helper to replace and relaunch the installed app. A saved previous bundle supports recovery after a failed replacement. It does not run release source, npm installation or a build in the checkout. Package and recovery checks for 0.4 remain open.
+The updater uses [Qualop/atrium-macos](https://github.com/Qualop/atrium-macos), with separate stable and dev channels. It downloads a complete app ZIP and matching SHA-256 checksums, validates the bundle, signature, CPU architecture and runtime compatibility, then uses a helper to replace and relaunch the installed app. A saved previous bundle supports recovery after a failed replacement. It does not run release source, npm installation or a build in the checkout. The actual release ZIP passed native replacement, window relaunch and failed-health rollback tests. Engine PID, terminal pane and memo data survived both scenarios.
 
 ## Package for Finder
 
@@ -152,7 +156,13 @@ npm --prefix app test
 npm --prefix app run build
 ```
 
-Use `cd app && npm run mac -- --dev` for a separate development board. The [testing guide](docs/testing.md) describes isolated profiles and macOS integration commands. The 0.4 integration still requires final regression, native-runtime, notification-click, updater recovery and packaged-app checks. Test counts and release links will be filled in after those checks. Use fresh temporary profiles and synthetic histories; existing user conversations, Tailscale configuration and global CLI settings are not test fixtures. Node support remains 22.13+ (22.x), 24.x and 26.x; support does not stand in for a completed version matrix.
+Use `cd app && npm run mac -- --dev` for a separate development board. The [testing guide](docs/testing.md) describes isolated profiles and macOS integration commands.
+
+- All 1,101 backend tests, 526 app tests and builds passed on Node 22.13.0, 22.23.4, 24.0.0, 24.22.2, 26.0.0 and 26.13.0. macOS and Windows CI passed all 12 combinations. [CI results](https://github.com/Qualop/atrium-macos/actions/runs/43043273359)
+- Packaged-app checks covered minimal PATH launch, real model catalogs, Korean UI and synthetic IME, nine terminals and eight controllers, notes and kanban, window reopen, pane recovery after backend termination, native updates and automatic rollback.
+- Phone, passkey and push contracts and browser flows were exercised. Physical iPhone behavior, real Web Push delivery, direct OS notification clicks and other CPU/OS combinations still require device testing.
+
+Tests use fresh temporary profiles and synthetic histories. Supported Node lines are 22.13+ (22.x), 24.x and 26.x.
 
 See the [architecture](docs/ARCH.md), [current decisions](docs/BRIEF.md) and [plan](docs/PLAN.md).
 

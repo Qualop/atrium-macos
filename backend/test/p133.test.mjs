@@ -34,6 +34,7 @@ const C = {
   oldUser: (text, at = T(2)) => JSON.stringify({ timestamp: at, type: 'event_msg', payload: { type: 'user_message', message: text } }),
   oldAnswer: (text, at = T(5)) => JSON.stringify({ timestamp: at, type: 'event_msg', payload: { type: 'agent_message', message: text } }),
 };
+const NO_ZSTD = typeof zlib.zstdCompressSync !== 'function';
 function writeRollout(home, id, lines, { day = '2026/11/13', zst = false, child = null, mtime = null } = {}) {
   const dir = path.join(home, 'sessions', ...day.split('/'));
   fs.mkdirSync(dir, { recursive: true });
@@ -72,7 +73,7 @@ test('P133: 출처 → entrypoints(cli, codex exec는 sdk, Codex 앱, 편집기 
   assert.equal(sub.subagent, true); assert.equal(sub.prompts, 0);
 });
 
-test('P133: 큰 파일은 머리와 꼬리를 읽고(꼬리는 답이 나올 때까지 넓힌다), 눌린 파일(.jsonl.zst)은 머리만 풀어 읽는다(마지막 활동은 파일 시각)', async () => {
+test('P133: 큰 파일은 머리와 꼬리를 읽고(꼬리는 답이 나올 때까지 넓힌다), 눌린 파일(.jsonl.zst)은 머리만 풀어 읽는다(마지막 활동은 파일 시각)', { skip: NO_ZSTD && 'Node 22.15 전에는 zstd가 없다' }, async () => {
   const home = tmp(); const id = CID(2);
   const f = writeRollout(home, id, [C.meta(id, 'C:/w'), C.user('처음'), C.answer('처음 답', T(3)), C.big(HEAD_BYTES + 50000), C.user('끝 지시', T(20)), C.big(200 * 1024), C.answer('끝 답', T(40))]);
   const s = await readCodexSummary(f);
@@ -84,7 +85,7 @@ test('P133: 큰 파일은 머리와 꼬리를 읽고(꼬리는 답이 나올 때
   assert.equal(sz.lastAt, mt); // 머리의 시각보다 파일 시각이 늦다
 });
 
-test('P133: 파일 목록은 sessions/연/월/일의 rollout만(하위 에이전트 파일·보관함 빼고), 같은 대화가 눌린 것과 둘이면 안 눌린 것', async () => {
+test('P133: 파일 목록은 sessions/연/월/일의 rollout만(하위 에이전트 파일·보관함 빼고), 같은 대화가 눌린 것과 둘이면 안 눌린 것', { skip: NO_ZSTD && 'Node 22.15 전에는 zstd가 없다' }, async () => {
   const home = tmp();
   writeRollout(home, CID(1), [C.meta(CID(1), 'C:/w')]);
   writeRollout(home, CID(1), [C.meta(CID(1), 'C:/w')], { zst: true });

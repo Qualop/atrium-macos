@@ -213,7 +213,7 @@ test('다른 계정: 설정 폴더에 기본 계정의 CLAUDE.md·skills를 링�
   fs.writeFileSync(claudeJson, JSON.stringify({ oauthAccount: { emailAddress: 'x' }, mcpServers: { cua: { type: 'stdio', command: '/Applications/Cua Spaces.app/Contents/MacOS/cua', args: ['mcp'], junk: 1 } } }));
   assert.equal(writeUserMcpConfig({ claudeJson, file }), file);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { mcpServers: { cua: { type: 'stdio', command: '/Applications/Cua Spaces.app/Contents/MacOS/cua', args: ['mcp'] } } });
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600); // Windows에는 POSIX 권한 비트가 없다
   const a = buildStartArgs({ sessionId: 'S', settingsPath: '/s.json', permissionMode: 'auto', mcpConfig: file });
   assert.equal(a[a.indexOf('--mcp-config') + 1], file);
   assert.match(HARNESS_PROMPT, /cua MCP/);
@@ -270,13 +270,14 @@ test('hc: 터미널이 대화 ID를 모르면(라벨 없음) hook으로 대화 I
 
 test('하위 세션 기준 폴더: 부모가 하위 폴더로 cd해도 띄운 폴더, 사이에 워크트리(.git)가 있으면 그 최상위, 띄운 폴더 밖이면 지금 폴더', async () => {
   const { childBaseCwd } = await import('../src/branch.mjs');
+  const P = (x) => path.resolve(x); // 이 OS의 절대 경로(Windows에서는 드라이브와 역슬래시)
   const has = (set) => (p) => set.has(p);
-  const ex = has(new Set(['/w/StockA', '/w/StockA/reports/d/design_review', '/w/repo', '/w/repo/.claude/worktrees/x', '/w/repo/.claude/worktrees/x/.git', '/w/repo/.claude/worktrees/x/src', '/tmp/else']));
-  assert.equal(childBaseCwd('/w/StockA', '/w/StockA/reports/d/design_review', ex), '/w/StockA');
-  assert.equal(childBaseCwd('/w/repo', '/w/repo/.claude/worktrees/x/src', ex), '/w/repo/.claude/worktrees/x');
-  assert.equal(childBaseCwd('/w/repo', '/tmp/else', ex), '/tmp/else');
-  assert.equal(childBaseCwd('/w/StockA', null, ex), '/w/StockA');
-  assert.equal(childBaseCwd('/w/StockA', '/w/StockA', ex), '/w/StockA');
+  const ex = has(new Set(['/w/StockA', '/w/StockA/reports/d/design_review', '/w/repo', '/w/repo/.claude/worktrees/x', '/w/repo/.claude/worktrees/x/.git', '/w/repo/.claude/worktrees/x/src', '/tmp/else'].map(P)));
+  assert.equal(childBaseCwd(P('/w/StockA'), P('/w/StockA/reports/d/design_review'), ex), P('/w/StockA'));
+  assert.equal(childBaseCwd(P('/w/repo'), P('/w/repo/.claude/worktrees/x/src'), ex), P('/w/repo/.claude/worktrees/x'));
+  assert.equal(childBaseCwd(P('/w/repo'), P('/tmp/else'), ex), P('/tmp/else'));
+  assert.equal(childBaseCwd(P('/w/StockA'), null, ex), P('/w/StockA'));
+  assert.equal(childBaseCwd(P('/w/StockA'), P('/w/StockA'), ex), P('/w/StockA'));
 });
 
 test('자동 압축: 비율과 함께 창 크기(천 토큰)를 env로 준다. 0이면 빼서 모델의 창', async () => {

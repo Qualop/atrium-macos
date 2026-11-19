@@ -24,7 +24,7 @@ export function uploadsReadRule(dataDir) {
 export function tempReadRules({ tmpdir = os.tmpdir(), platform = process.platform } = {}) {
   if (platform === 'win32') return [];
   const dirs = new Set(['/tmp', '/private/tmp']);
-  const t = path.resolve(tmpdir).replace(/\/+$/, '');
+  const t = path.posix.resolve(String(tmpdir).replace(/\\/g, '/')).replace(/\/+$/, ''); // 규칙은 POSIX 경로다(시험은 다른 OS에서도 돈다)
   if (t && t !== '/') { dirs.add(t); if (t.startsWith('/private/')) dirs.add(t.slice('/private'.length)); else if (t.startsWith('/var/')) dirs.add(`/private${t}`); }
   return [...dirs].map((d) => `Read(/${d}/**)`);
 }

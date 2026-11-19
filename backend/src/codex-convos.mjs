@@ -114,6 +114,8 @@ export function parseCodexChunks(head, tail = '') {
 
 // 눌린 대화 기록(.jsonl.zst)의 앞 max바이트(푼 글)
 export function readZstHead(file, max = HEAD_BYTES) {
+  // Node 22.15 전에는 zstd가 없다. 그 Node에서는 눌린 대화의 머리를 읽지 않는다(목록에는 파일 시각으로 남는다)
+  if (typeof zlib.createZstdDecompress !== 'function') return Promise.resolve('');
   return new Promise((resolve, reject) => {
     const chunks = []; let n = 0; let done = false;
     const src = fs.createReadStream(file);

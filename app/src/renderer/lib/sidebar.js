@@ -21,6 +21,9 @@ const convoFields = (c) => [c.title, c.firstPrompt, c.lastPrompt, c.lastAnswer, 
 export function bindingText(b) {
   if (!b || !b.bound) return '';
   if (b.where === 'terminal' && b.pid) return t('binding.terminal', { pid: b.pid });
+  // P133: Codex 대화(잠금 파일로 본 열림, Codex 앱)
+  if (b.harness === 'codex' && b.where === 'codex') return t('codexConvo.open');
+  if (b.harness === 'codex' && b.where === 'desktop') return b.open ? t('codexConvo.appOpen') : t('codexConvo.app');
   if (b.where === 'desktop') return b.open ? t('binding.desktopOpen') : b.archived ? t('binding.desktopArchived') : t('binding.desktop');
   const tail = String(b.label || '').split(' · ').slice(1).join(' · ');
   if (tail === '출처 모름' || tail === translate('ko', 'binding.srcUnknown')) return t('binding.maybe', { why: t('binding.srcUnknown') });

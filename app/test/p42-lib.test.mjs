@@ -187,10 +187,10 @@ test('scrollUpSeq: 영역을 올려 밀려난 줄을 scrollback으로(커서는 
   assert.equal(scrollUpSeq(-2, 10, 30), '');
 });
 
-test('clearsSelection(P42): 휠·프레임으로는 지우지 않고, 복사·붙여넣기·입력·Esc·밖 누르기·크기 바뀜에서 지운다', () => {
-  for (const e of ['copy', 'paste', 'input', 'escape', 'outside', 'resize']) assert.equal(clearsSelection(e), true, e);
-  for (const e of ['wheel', 'frame', 'scroll']) assert.equal(clearsSelection(e), false, e);
-  assert.equal(clearsSelection('copy', { hasSelection: false }), false);
+test('clearsSelection(P42): 휠·프레임으로는 지우지 않고, 붙여넣기·입력·Esc·밖 누르기·크기 바뀜에서 지운다(P125: 복사로는 지우지 않는다)', () => {
+  for (const e of ['paste', 'input', 'escape', 'outside', 'resize']) assert.equal(clearsSelection(e), true, e);
+  for (const e of ['wheel', 'frame', 'scroll', 'copy']) assert.equal(clearsSelection(e), false, e);
+  assert.equal(clearsSelection('paste', { hasSelection: false }), false);
   assert.equal(copyText('a  \r\nb '), 'a\r\nb');
 });
 

@@ -57,8 +57,9 @@ test('PC: 실제 판 모양은 세로 한 줄이 아니다 — 혼자인 워크�
   assert.equal(packed.length, 10);
   const cols = new Set(packed.map((g) => g.x));
   assert.ok(cols.size >= 2, `기둥 ${cols.size}`);
-  const flowRight = Math.max(...bs.filter((b) => !b.loose).map((b) => b.x + b.w));
-  assert.ok(packed.every((g) => g.x > flowRight), '팀 흐름 오른쪽');
+  // P145: 팀 판과 혼자인 판은 서로 겹치지 않는다(빈 곳에 채운다)
+  const plates = lay.groups.map((g) => g.plate);
+  for (let i = 0; i < plates.length; i++) for (let j = i + 1; j < plates.length; j++) assert.ok(!hit(plates[i], plates[j]), `판 ${lay.groups[i].key} × ${lay.groups[j].key}`);
   assert.ok(lay.height < 860, `높이 ${lay.height}`);
   for (const g of lay.groups) for (const b of bs) assert.ok(!hit({ x: g.x, y: g.y, w: g.w, h: MISSION.wsHead - 4 }, b), `머리 글 ${g.key} × ${b.node.id}`);
   // 좁은 칸(700px): 오른쪽에 자리가 없으면 팀 아래에 기둥으로
@@ -76,8 +77,8 @@ test('PC: 팀 먼저(같은 워크스페이스의 연결 없는 세션은 아래
   const lay = missionLayout(g);
   const b = (id) => lay.boxes.get(`s:${id}`);
   assert.ok(b('loose').y > b('c7').y, '연결 없는 세션은 팀들 아래');
-  assert.equal(lay.edges.find((e) => e.from === 'human' && e.to === 's:lead').quiet, false);
-  assert.equal(lay.edges.find((e) => e.from === 'human' && e.to === 's:a').quiet, true, '리드가 아닌 세션으로 가는 나의 선');
+  assert.ok(!lay.edges.some((e) => e.from === 'human'), 'P145: 사람 선은 없다');
+  assert.deepEqual([...lay.human.keys()].sort(), ['s:a', 's:lead'], 'P145: 사람이 보낸 지시는 받는 세션의 표시로');
   const far = lay.edges.find((e) => e.from === 's:a' && e.to === 's:c7');
   assert.ok(!far.tree && far.quiet, '멀리 가는 나무 밖 선');
   assert.deepEqual(mapOrder(lay).slice(0, 4), ['s:lead', 's:a', 's:b', 's:lead2']);
@@ -100,5 +101,5 @@ test('휴대폰: 실제 판 모양은 두 기둥(세로 한 줄이 아님), 팀�
 
 test('사전: mmMap 열쇠가 두 언어에 모두 있다', () => {
   assert.deepEqual(Object.keys(ko.mmMap).sort(), Object.keys(en.mmMap).sort());
-  for (const k of ['ageNow', 'ageM', 'ageH', 'ageD', 'warnTurn', 'warnAlert', 'warnReview', 'warnClimb', 'dotsRest', 'you', 'sumTurn', 'sumWork', 'sumReview', 'sumRest', 'sumNow', 'sumFoot', 'hint', 'crossWs']) assert.ok(en.mmMap[k] && ko.mmMap[k], k);
+  for (const k of ['ageNow', 'ageM', 'ageH', 'ageD', 'warnTurn', 'warnAlert', 'warnReview', 'warnClimb', 'dotsRest', 'sumTurn', 'sumWork', 'sumReview', 'sumRest', 'sumNow', 'hint', 'crossWs']) assert.ok(en.mmMap[k] && ko.mmMap[k], k); // P145: you는 걷었다. P141: sumFoot은 mmFoot(수마다 복수형)으로 옮겼다
 });

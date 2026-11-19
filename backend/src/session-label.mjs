@@ -1,8 +1,8 @@
-// P66: 판의 이름(표시 이름). 세션마다 사람이 정한 이름(label)을 판 기록에 두고, 에이전트가 쓰는 주소(name, herdr 에이전트 이름)는 그대로 둔다.
+// P66: 판의 이름(표시 이름). 세션마다 사람이 정한 이름(label)을 판 기록에 두고, 에이전트가 쓰는 주소(name, 에이전트 이름)는 그대로 둔다.
 // - 보이는 이름은 label이 있으면 label, 없으면 name이다(shownName). 이름을 비우면 원래 이름(name)으로 돌아간다.
 // - 이름으로 부르기(@이름, CLI의 세션 지정)는 새 이름과 옛 주소를 둘 다 받는다(findSession). 주소가 먼저다: 일하던 에이전트의 명령이 깨지지 않게.
 // - 판 안에서 이름은 대소문자를 무시하고 겹치지 않는다(takenNames). 새로 짓는 이름(spawn, 하위 세션, 올리기, 다시 열기)도 남의 label을 피한다.
-// - herdr 이름이 바뀌는 동기화(backend.mjs renamed)는 name만 바꾸고 label은 덮지 않는다.
+// - 에이전트 이름이 바뀌는 동기화(backend.mjs renamed)는 name만 바꾸고 label은 덮지 않는다.
 import { keyed } from './msg.mjs';
 
 export const LABEL_RE = /^[\p{L}\p{N}][\p{L}\p{M}\p{N}_-]*$/u; // 표시 이름은 한글도 허용한다. 에이전트 주소의 ASCII 규칙은 그대로다.

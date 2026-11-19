@@ -107,7 +107,14 @@ test('bundle verifier checks signature before executing Node and requires matchi
   assert.equal((await verifyBundle(app, { version: '0.5.0', arch: 'arm64', protocol: 22, exec: f.exec, audit: () => ({ nativeFiles: 3 }) })).ok, true);
   assert.ok(f.calls.findIndex(([c]) => c.endsWith('/codesign')) < f.calls.findIndex(([c]) => c.replace(/\\/g, '/').endsWith('/runtime/node')));
   assert.ok(f.calls.find(([c, a]) => c.replace(/\\/g, '/').endsWith('/runtime/node') && a.join(' ').includes("node:sqlite")));
-  const bad = await verifyBundle(app, { version: '0.5.0', arch: 'arm64', protocol: 999, exec: f.exec, audit: () => ({ nativeFiles: 3 }) }); assert.equal(bad.ok, false); assert.match(bad.problems[0], /protocol/);
+  const bad = await verifyBundle(app, { version: '0.5.0', arch: 'arm64', protocol: 999, exec: f.exec, audit: () => ({ nativeFiles: 3 }) }); assert.equal(bad.ok, false); assert.match(bad.problems[0], /terminal server/); // 0.5: herdr 프로토콜과 hc 세대를 함께 본다
+  // P123(macOS 번들): hc 판(세대 1)은 새 번들의 hcGenerations로 통과하고, 번들에 든 고정 hc tar.gz는 SHA-256까지 맞아야 한다
+  const root = U.resourcesOf(app), manifest = path.join(root, 'runtime/update-manifest.json'), tgz = Buffer.from('fixture hc archive');
+  write(path.join(root, '.tools/hc/0.1.20-macos-aarch64.tar.gz'), tgz);
+  write(manifest, JSON.stringify({ ...JSON.parse(fs.readFileSync(manifest, 'utf8')), hc: '0.1.20', hcTarget: 'macos-aarch64', hcSha256: crypto.createHash('sha256').update(tgz).digest('hex'), hcGenerations: [1] }));
+  assert.equal((await verifyBundle(app, { version: '0.5.0', arch: 'arm64', protocol: 1, exec: f.exec, audit: () => ({ nativeFiles: 3 }) })).ok, true);
+  write(path.join(root, '.tools/hc/0.1.20-macos-aarch64.tar.gz'), 'tampered');
+  assert.match((await verifyBundle(app, { version: '0.5.0', arch: 'arm64', protocol: 1, exec: f.exec, audit: () => ({ nativeFiles: 3 }) })).problems[0], /herdr-core archive does not match/);
   const missing = await verifyBundle(app, { version: '0.5.0', arch: 'x64', exec: f.exec, audit: () => ({ nativeFiles: 3 }) }); assert.equal(missing.ok, false);
 });
 test('signature failure and signing-team change reject the release without running downloaded Node', async t => {

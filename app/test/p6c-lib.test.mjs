@@ -2,7 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMarkdown, inline, toggleTask, plainText } from '../src/renderer/lib/markdown.js';
-import { wsAt, loopBadge, loopsOfSession, dur, triggerText, stopText, missionLayout } from '../src/renderer/lib/items.js';
+import { wsAt, loopBadge, loopsOfSession, dur, triggerText, stopText } from '../src/renderer/lib/items.js';
+import { missionLayout } from '../src/renderer/lib/mission-layout.js'; // P32: 배치를 옮겼다(나무)
 import { setLanguage } from '../src/renderer/lib/i18n.js'; // P16: 한국어 글을 보는 시험은 언어를 정한다
 
 test('I1·I3: 마크다운 블록 — 제목, 문단, 코드 블록, 인용, 목록과 할 일, 표, 가로줄', () => {
@@ -69,27 +70,25 @@ test('I5: 루프 배지 — 돌고 있음·멈춤, 남은 횟수, 다음 시각.
   assert.equal(stopText({}), '직접 중지할 때까지');
 });
 
-test('I6: 미션 맵 배치 — 두 열(P22: 그룹 열 없음), 사람이 맨 위, 거르기, 선은 보이는 노드 사이만', () => {
+test('I6: 미션 맵 배치(P32 나무 → P95 → P145) — 지시하는 세션 → 받는 세션, 나는 없고 사람의 지시는 받는 세션 표시로', () => {
   const graph = {
     nodes: [
       { id: 'human', kind: 'human', column: 0 },
       { id: 's:L', kind: 'session', name: 'lead', category: 'working', column: 0 },
       { id: 's:A', kind: 'session', name: 'a', category: 'needs_you', column: 1 },
       { id: 's:B', kind: 'session', name: 'b', category: 'idle', column: 1 },
-      { id: 's:C', kind: 'session', name: 'c', category: 'idle' }, // 열이 없으면 세션 열
+      { id: 's:C', kind: 'session', name: 'c', category: 'idle' }, // 선이 없는 세션
     ],
-    edges: [{ id: 'e1', from: 'human', to: 's:A', kind: 'bar' }, { id: 'e3', from: 's:L', to: 's:A', kind: 'role' }, { id: 'e4', from: 's:L', to: 'human', kind: 'x' }],
+    edges: [{ id: 'e1', from: 'human', to: 's:A', kind: 'bar' }, { id: 'e3', from: 's:L', to: 's:A', kind: 'role' }, { id: 'e4', from: 's:L', to: 'human', kind: 'x' }, { id: 'e5', from: 's:L', to: 's:B', kind: 'prompt' }],
   };
   const lay = missionLayout(graph);
   const box = (id) => lay.boxes.get(id);
-  assert.ok(box('human').y < box('s:L').y, '사람이 맨 위');
-  assert.ok(box('s:L').x < box('s:A').x, '두 열');
-  assert.equal(box('s:C').x, box('s:B').x);
-  assert.ok(box('s:A').y < box('s:B').y, '내 차례가 먼저');
-  assert.equal(lay.edges.length, 3);
+  assert.ok(!box('human') && box('s:L').x < box('s:A').x, 'lead → a(P145: 나는 없다)');
+  assert.equal(box('s:A').x, box('s:B').x);
+  assert.ok(box('s:A').y < box('s:B').y, '이름 순');
+  assert.deepEqual(lay.loose, ['s:C']);
+  assert.equal(lay.edges.length, 2, 'lead → a, lead → b(사람 선과 세션 → 나 선은 그리지 않는다)');
   assert.match(lay.edges[0].d, /^M/);
-  assert.equal(lay.width, 24 * 2 + 2 * 260 + 140);
-  const f = missionLayout(graph, { filter: 'needs_you' });
-  assert.deepEqual([...f.boxes.keys()].sort(), ['human', 's:A']);
-  assert.deepEqual(f.edges.map((e) => e.id), ['e1'], '거른 노드의 선은 뺀다');
+  assert.ok(lay.human.has('s:A'), '사람이 보낸 지시는 받는 세션 표시로');
+  assert.ok(lay.edges.every((e) => lay.boxes.has(e.from) && lay.boxes.has(e.to)));
 });

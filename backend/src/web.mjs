@@ -23,6 +23,7 @@ import { RemoteLog, ConnectWatch, browserOf } from './remote-log.mjs'; // P58(S4
 import { Pusher } from './web-push.mjs'; // P88: 웹 푸시
 import { ACTIVE_MS } from './multiclient.mjs';
 import { UPDATE_REPO } from './update.mjs';
+import { UPLOAD_MAX_BYTES, uploadPath, cleanupUploads, uploadDirOf } from './uploads.mjs'; // P162: 업로드 자리와 정리(데스크톱 창 main과 같이 쓴다)
 
 export const PAIR_CODE_TTL_MS = 5 * 60_000;
 export const PAIR_REQUEST_TTL_MS = 2 * 60_000;
@@ -32,9 +33,7 @@ export const PAIR_FAIL_GLOBAL = 20; // 10분에 모두 합쳐 틀릴 수 있는 
 export const PAIR_CODE_MAX_FAILS = 5; // 지금 코드가 이만큼 틀리면 그 코드를 버린다
 export const PAIR_REQUESTS_PENDING_MAX = 3;
 export const PAIR_REQUESTS_PER_WINDOW = 10;
-export const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
-export const UPLOAD_MAX_AGE_MS = 7 * 24 * 3600_000;
-export const UPLOAD_MAX_TOTAL = 500 * 1024 * 1024;
+export { UPLOAD_MAX_BYTES, UPLOAD_MAX_AGE_MS, UPLOAD_MAX_TOTAL, safeUploadName, uploadPath, cleanupUploads } from './uploads.mjs'; // P162
 export const LIST_MAX = 1000;
 const DEVICES_KEY = 'webDevices';
 const REMOTE_KEY = 'remoteEnabled';
@@ -332,33 +331,7 @@ export function listDirs(p, { max = LIST_MAX } = {}) {
 }
 
 // ---------- 업로드 ----------
-export function safeUploadName(name, contentType = '') {
-  let base = path.basename(String(name || '').replace(/\\/g, '/')).normalize('NFC');
-  base = base.replace(/[^\p{L}\p{N}._\- ()]/gu, '_').replace(/\s+/g, ' ').replace(/^[.\s]+/, '').trim();
-  if (!base) {
-    const ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'text/plain': '.txt', 'application/pdf': '.pdf' }[String(contentType).split(';')[0].trim()] || '.bin';
-    base = `pasted${ext}`;
-  }
-  if (base.length > 80) { const ext = path.extname(base).slice(0, 12); base = base.slice(0, 80 - ext.length) + ext; }
-  return base;
-}
-export function uploadPath(dir, name, contentType, now = new Date()) {
-  const p2 = (n) => String(n).padStart(2, '0');
-  const stamp = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}-${p2(now.getHours())}${p2(now.getMinutes())}${p2(now.getSeconds())}`;
-  return path.join(dir, `${stamp}-${crypto.randomBytes(3).toString('hex')}-${safeUploadName(name, contentType)}`);
-}
-// 오래된 것과 총량이 넘친 만큼(오래된 것부터) 지운다
-export function cleanupUploads(dir, { maxAgeMs = UPLOAD_MAX_AGE_MS, maxTotal = UPLOAD_MAX_TOTAL, now = Date.now(), keep = null } = {}) {
-  let files;
-  try { files = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => { const f = path.join(dir, e.name); const st = fs.statSync(f); return { f, size: st.size, mtime: st.mtimeMs }; }); } catch { return { removed: 0 }; }
-  files.sort((a, b) => a.mtime - b.mtime);
-  let total = files.reduce((n, x) => n + x.size, 0), removed = 0;
-  for (const x of files) {
-    if (x.f === keep) continue;
-    if (now - x.mtime > maxAgeMs || total > maxTotal) { try { fs.rmSync(x.f, { force: true }); total -= x.size; removed++; } catch {} }
-  }
-  return { removed, total };
-}
+// P162: 이름·자리·정리 함수는 uploads.mjs로 옮겼다(데스크톱 창 main도 붙여 넣은 그림을 같은 자리에 같은 규칙으로 둔다)
 
 // ---------- 묶음: 백엔드에 붙인다 ----------
 export class WebServer {
@@ -372,7 +345,7 @@ export class WebServer {
     this.auth = new WebAuth({ store, devices: this.devices, now, log, connected: (h) => !!this.api && [...this.api.clients].some((c) => c.auth && c.auth.session === h), limits: (s) => this.sessionLimits(s) });
     this.pairing = new Pairing({ devices: this.devices, grants: this.auth.grants, now, onChange: () => this.broadcastLocal() });
     this.files = new StaticFiles(WEB_DIST());
-    this.uploadDir = path.join(cfg.dataDir, 'uploads');
+    this.uploadDir = uploadDirOf(cfg.dataDir);
     try { cleanupUploads(this.uploadDir); } catch {}
     this.sweepTimer = setInterval(() => { this.pairing.sweep(); this.sweepSessions(); }, 15_000); this.sweepTimer.unref();
     // P58: 연결 기록과 새로 붙음 알림. 끊기 고리(onDisconnectDevice)는 기기의 다른 상태(P56 세션 등)를 함께 끝낸다
@@ -553,7 +526,7 @@ export class WebServer {
   status() { return { enabled: this.remoteEnabled(), locked: this.cfg.remoteExplicit === true, accepting: this.accepting(), url: this.url(), built: this.files.built(), devices: this.devices.all().length, hosts: [...this.hosts] }; }
   boot(device) {
     const dev = this.cfg.profile === 'dev';
-    return { device, platform: process.platform, port: this.cfg.port, profile: this.cfg.profile, herdrSession: this.cfg.herdrSession, defaultCwd: dev ? path.join(BACKEND_ROOT, '.dev', 'proj') : os.homedir(), defaultModel: dev ? 'haiku' : '' };
+    return { device, platform: process.platform, port: this.cfg.port, profile: this.cfg.profile, terminalSession: this.cfg.terminalSession, defaultCwd: dev ? path.join(BACKEND_ROOT, '.dev', 'proj') : os.homedir(), defaultModel: dev ? 'haiku' : '' };
   }
   // 판 API 토큰 클라이언트(PC 창, CLI)에만: 기기 목록과 허락 요청
   // P62: needsPasskey = 패스키 켬인데 패스키 없이 짝 맺은 기기(다음 접속 때 "패스키 등록" 화면을 본다)

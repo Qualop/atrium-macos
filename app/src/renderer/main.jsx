@@ -1,5 +1,5 @@
 // 창 화면의 시작점: 위쪽 내 차례 줄, 판, 아래쪽 명령 바(ARCH 7.1 고정 요소)
-// P3: 경고 띠(D3, herdr 꺼짐), 복귀 요약(A3), OS 알림(A1), 판 오류 경계(E5 2.5)
+// P3: 경고 띠(터미널 서버 꺼짐, 옛 판 옮기기), 복귀 요약(A3), OS 알림(A1), 판 오류 경계(E5 2.5)
 // P5: 리포 열기·닫기 대화상자
 // P6a: 캔버스 하나. 명령 바 위에 워크스페이스 단추(누르면 그 영역으로), 검색(Ctrl+F), 고른 노드 막대(크기, 배치). P5의 워크스페이스 줄과 세션 줄은 뺐다.
 // P22: 그룹·묶음 대화상자와 떠날 때 메모 줄을 뺐다. 세션 노드를 고르고 Delete를 누르면 닫기 확인(보관·삭제·취소)을 연다
@@ -19,6 +19,7 @@ import { PairRequestBanner } from './WebDevices.jsx';
 import { PhoneApp, usePhoneLayout, useScreenFix, LightBanner, LevelBadge, phoneScreen } from './Phone.jsx'; // P74: 휴대폰 세로 화면. P86: LevelBadge(가벼운 보드 단계)
 // P87: 휴대폰은 늘 세션 목록(Phone.jsx)이다. P76의 휴대폰 보드(목록 단추, 탭한 세션의 전체 보기 PhoneFull.jsx)는 휴대폰에 그리지 않는다
 import { startRemoteNotice, remoteNotices } from './remote-notice.js'; // P58
+import { watchPerfTrace } from './perf-trace.js'; // P146
 import { startPushClient } from './push.js'; // P88: 웹 푸시
 import '@xyflow/react/dist/style.css';
 import '@xterm/xterm/css/xterm.css';
@@ -44,7 +45,7 @@ import { OpenRepoDialog, CloseWsDialog } from './Workspaces.jsx';
 import { DesktopImportDialog } from './DesktopImport.jsx'; // P34
 import { Sidebar } from './Sidebar.jsx'; // P7(J5): 평소에 닫힌 왼쪽 사이드바
 import { SearchBox, SelectionBar } from './Search.jsx';
-import { keyToData, closeKeyTargets, boardArrowKey, stepWorkspace, spaceHoldReady, spaceHoldStep, SPACE_HOLD_MS } from './lib/keys.js';
+import { keyToData, closeKeyTargets, boardArrowKey, boardShortcut, stepWorkspace, spaceHoldReady, spaceHoldStep, SPACE_HOLD_MS } from './lib/keys.js';
 import { wsTabs, tabKeys } from './lib/ws-tabs.js'; // P98
 import { renameKeyTarget } from './lib/session-name.js'; // P66: F2로 고른 노드의 이름 바꾸기
 import { ReturnSummary, useReturnSummary } from './ReturnSummary.jsx';
@@ -64,7 +65,7 @@ function Dialogs() {
   const d = useStore((st) => st.dialog);
   if (!d) return null;
   const close = () => openDialog(null);
-  if (d.kind === 'spawn') return <SpawnDialog cwd={d.cwd} agentKind={d.agentKind} launcher={d.launcher} onClose={close} />;
+  if (d.kind === 'spawn') return <SpawnDialog cwd={d.cwd} agentKind={d.agentKind} launcher={d.launcher} account={d.account ?? null} onClose={close} />;
   if (d.kind === 'close') return <CloseDialog ids={d.ids || []} onClose={close} />;
   if (d.kind === 'role') return <RoleDialog from={d.from} to={d.to} onClose={close} />;
   if (d.kind === 'link') return <LinkPanel linkId={d.linkId} onClose={close} />;
@@ -125,9 +126,9 @@ function App() {
   useEffect(() => {
     // H4: 노드를 눌러 들어간 직후 터미널이 붙기 전에 친 키(입력칸 밖)는 모아 둔다. 터미널에 초점이 가면 그만 모은다
     const onKeyCapture = (e) => {
-      // Ctrl+F는 판의 검색이다. 터미널에 초점이 있어도 터미널보다 먼저 받는다(H2)
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); e.stopPropagation(); setSearchOpen(true); return; }
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); e.stopPropagation(); cmd.current?.focus(); return; }
+      // Ctrl+F는 판의 검색, Ctrl+K는 명령 바다. 터미널에 초점이 있어도 터미널보다 먼저 받는다(H2, P140 #13: ^K가 터미널로 가고 이어 친 글이 그 터미널에 들어갔다)
+      const short = boardShortcut(e);
+      if (short) { e.preventDefault(); e.stopPropagation(); if (short === 'command') { if (cmd.current) cmd.current.focus(); } else setSearchOpen(true); return; }
       const st = getState();
       const p = st.pendingInput && pendingFor(st.pendingInput.id);
       // P43: 판에 초점이 있을 때의 방향키(lib/keys.js boardArrowKey). 노드에 들어가 터미널을 기다리는 동안(p)은 터미널 몫이다.
@@ -137,7 +138,7 @@ function App() {
         e.preventDefault(); e.stopPropagation();
         if (arrow === 'command') cmd.current && cmd.current.focus();
         else if (arrow === 'search') { if (st.searchOpen) { const el = document.querySelector('[data-field="search"]'); if (el) el.select(); } else setSearchOpen(true); }
-        else if (arrow === 'prevWs' || arrow === 'nextWs') { const k = stepWorkspace(tabKeys(wsTabs(st.workspaces, st.groups)), st.currentWs, arrow === 'prevWs' ? -1 : 1); if (k) selectWorkspace(k); } // 탭을 누른 것과 같다(고르고 그 영역으로 화면을 맞춘다). P98: 위 바 칩 순서(묶음은 그 자리에서 구성 순서로 편다)
+        else if (arrow === 'prevWs' || arrow === 'nextWs') { const k = stepWorkspace(tabKeys(wsTabs(st.workspaces, st.groups)), st.viewWs || st.currentWs, arrow === 'prevWs' ? -1 : 1); if (k) selectWorkspace(k); } // 탭을 누른 것과 같다(고르고 그 영역으로 화면을 맞춘다). P98: 위 바 칩 순서(묶음은 그 자리에서 구성 순서로 편다)
         return;
       }
       if (!p || st.dialog || st.searchOpen || st.missionOpen || st.outputView || st.killAsk) return;
@@ -150,14 +151,15 @@ function App() {
     };
     window.addEventListener('keydown', onKeyCapture, true);
     const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); cmd.current && cmd.current.focus(); return; }
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); setSearchOpen(true); return; }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); setSearchOpen(true); return; } // Ctrl+Shift+F(잡기 단계는 Shift 없는 것만 받는다)
       if (editable(e.target) || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (getState().missionOpen && document.querySelector('[data-style="territories"]')) return; // P153: 세션 맵의 키는 MissionLineage.jsx가 받는다(친 글자는 명령줄로)
       // P22: 고른 세션 노드를 Delete로 닫는다(X와 같은 확인). 터미널·입력 칸·메모 편집 중에는 위의 editable에서 그대로 글자를 지운다
       const close = closeKeyTargets(e, getState());
       if (close) { e.preventDefault(); if (close.one) setKillAsk(close.one); else openDialog({ kind: 'close', ids: close.many }); return; }
       const ren = !e.defaultPrevented && renameKeyTarget(e, getState()); // P66: 사이드바 목록의 F2는 그 줄이 먼저 받는다
       if (ren) { e.preventDefault(); setRenaming(ren, 'node'); return; }
+      // P153: 세션 맵이 열린 동안 친 글자는 명령줄로 간다(MissionLineage.jsx). M은 열기만, 닫기는 Esc·닫기 단추. 옛 지도(classic)는 M으로 닫는다
       if ((e.key === 'm' || e.key === 'M') && !getState().dialog) { e.preventDefault(); setMissionOpen(!getState().missionOpen); return; }
       if (e.key === 'n' || e.key === 'N') {
         // N: 내 차례(그다음 문제)를 차례로. 노드를 옮기지 않고 화면만 간다(BRIEF 4절)
@@ -271,6 +273,7 @@ function boot() {
   fontsReady.then(() => root.render(<ReactFlowProvider><App /></ReactFlowProvider>));
   api.connect();
   startNotifier();
+  watchPerfTrace(); // P146: 성능 기록(판 설정 perfTrace를 켠 동안만 모은다)
   if (!isWeb) startRemoteNotice(); // P58: 원격 기기가 붙으면 PC 창에 알린다
   if (isWeb) startPushClient(); // P88: 보이는 상태 알리기(보는 기기에는 푸시를 보내지 않는다), 알림을 누르면 그 세션으로
   startViewingReport(); // P21(D4): 초점 노드는 저절로 잠재우지 않는다

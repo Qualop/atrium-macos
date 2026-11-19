@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { repoSleepPlan, sleepTarget, sessionActivity, idleSince, convoOf, wakeArgs, Sleeper, draftAfterInput } from '../src/sleep.mjs';
-import { newRuntime, deriveState, flags, applyHerdrStatus, applyAgentDetected, applyAgentReleased, applyHerdrDisconnected } from '../src/state.mjs';
+import { newRuntime, deriveState, flags, applyTermStatus, applyAgentDetected, applyAgentReleased, applyTermDisconnected } from '../src/state.mjs';
 import { blockReason, DeliveryQueue } from '../src/delivery.mjs';
 import { decideTarget } from '../src/loops.mjs';
 import { transcriptPathFor } from '../src/launch.mjs';
@@ -69,10 +69,10 @@ test('D4 쉬기 시작한 때: 마지막 활동, 턴 끝, 손댄 때, 깬 때 �
 
 test('D4 상태: 잠듦은 sleeping이고 내 차례·오류가 아니다. 안 본 답은 검토 대기로 남는다. 전달은 sleeping으로 기다린다', () => {
   const rt = newRuntime();
-  applyAgentDetected(rt); applyHerdrStatus(rt, 'idle');
+  applyAgentDetected(rt); applyTermStatus(rt, 'idle');
   rt.turn = { startedAt: 1, endedAt: 2 };
   rt.sleep = { at: 3, by: 'auto', memMB: 480 };
-  rt.herdr = { status: null, launchPending: false, agentSessionId: null, present: false, at: 3 };
+  rt.term = { status: null, launchPending: false, agentSessionId: null, present: false, at: 3 };
   assert.equal(deriveState(rt).state, 'sleeping');
   rt.exit = { kind: 'normal' };
   assert.equal(deriveState(rt).state, 'sleeping', '잠듦이 끝남(exited)보다 먼저다');
@@ -80,12 +80,12 @@ test('D4 상태: 잠듦은 sleeping이고 내 차례·오류가 아니다. 안 �
   assert.equal(flags(rt, { seenAt: 1 }).unseen, true);
   assert.equal(flags(rt, { seenAt: 5 }).unseen, false);
   // herdr가 꺼져도 잠듦 그대로(끊긴 턴을 남기지 않는다)
-  applyHerdrDisconnected(rt);
+  applyTermDisconnected(rt);
   assert.equal(deriveState(rt).state, 'sleeping');
   assert.equal(rt.interruptedTurn, null);
-  const view = { state: 'sleeping', agentPresent: false, herdrConnected: true, closed: false };
+  const view = { state: 'sleeping', agentPresent: false, termConnected: true, closed: false };
   assert.equal(blockReason(view, Date.now(), { inputQuietMs: 3000 }), 'sleeping');
-  assert.equal(blockReason({ ...view, herdrConnected: false }, Date.now(), { inputQuietMs: 3000 }), 'herdr_down', 'herdr가 없으면 깨울 수 없다');
+  assert.equal(blockReason({ ...view, termConnected: false }, Date.now(), { inputQuietMs: 3000 }), 'terminal_down', 'herdr가 없으면 깨울 수 없다');
 });
 
 test('D4 루프: 잠든 세션도 쉴 때 루프의 대상이고, 주기 루프는 보내서 깨운다', () => {
@@ -139,12 +139,11 @@ function fakeBoard({ withTranscript = true, wakeFails = null } = {}) {
     cfg: { claudeProjects: root, killWaitMs: 2000 }, sessions, store, queue, killing: new Set(), log: (...a) => log.push(a.join(' ')),
     hooked: (s) => s.rt.hooked !== false, relay: { stats: () => [], detach: () => calls.push(['detach']) },
     features: { loops: { activeCount: () => 0 }, settings: { get: () => ({ sleepAfterMin: 30 }) } },
-    requireHerdr: () => { if (!b.adapter.connected) throw Object.assign(new Error('herdr down'), { code: 'herdr_down' }); },
+    requireTerminal: () => { if (!b.adapter.connected) throw Object.assign(new Error('herdr down'), { code: 'terminal_down' }); },
     resolve: (ref) => sessions.get(ref) || [...sessions.values()].find((s) => s.name === ref),
     broadcastSession: (s, o) => calls.push(['broadcast', s.name, deriveState(s.rt).state, o && o.cause]),
     withNewPane: async (create, register) => { const r = await create(); await register(r); return r; },
     launchOf: (s) => ({ sessionId: s.sessionId, settingsPath: s.settingsPath, permissionMode: 'manual', model: 'haiku', effort: null, pluginDir: 'C:/p', systemPromptFile: 'C:/p.md' }),
-    registerResume: () => calls.push(['registerResume']),
     adapter: {
       connected: true,
       processInfo: async () => ({ shell_pid: 9001, foreground_processes: [{ pid: 9002, name: 'claude.exe' }] }),
@@ -159,15 +158,15 @@ function fakeBoard({ withTranscript = true, wakeFails = null } = {}) {
       startAgent: async ({ name, paneId, args }) => {
         calls.push(['startAgent', name, paneId, args.join(' ')]);
         const s = [...sessions.values()].find((x) => x.paneId === paneId);
-        setTimeout(() => { if (wakeFails === 'exit') { applyAgentDetected(s.rt); applyAgentReleased(s.rt); } else { applyAgentDetected(s.rt); applyHerdrStatus(s.rt, 'idle'); } }, 30);
+        setTimeout(() => { if (wakeFails === 'exit') { applyAgentDetected(s.rt); applyAgentReleased(s.rt); } else { applyAgentDetected(s.rt); applyTermStatus(s.rt, 'idle'); } }, 30);
         return { agent: { launchPending: true }, argv: ['claude', ...args] };
       },
     },
   };
   const rt = newRuntime({ kind: 'claude', hooked: true });
-  applyAgentDetected(rt); applyHerdrStatus(rt, 'idle');
+  applyAgentDetected(rt); applyTermStatus(rt, 'idle');
   rt.lastPrompt = '안녕'; rt.lastAnswer = '안녕하세요'; rt.lastActivityAt = Date.now() - 40 * MIN; rt.launchedAt = Date.now() - 60 * MIN;
-  const s = { sessionId: ID(5), name: 'a1', cwd, kind: 'claude', origin: 'board', paneId: 'w1:p1', herdrWorkspaceId: 'w1', agentName: 'a1', settingsPath: 'C:/d/sessions/a1.json', rt, touchedAt: Date.now() - 40 * MIN };
+  const s = { sessionId: ID(5), name: 'a1', cwd, kind: 'claude', origin: 'board', paneId: 'w1:p1', termWorkspaceId: 'w1', agentName: 'a1', settingsPath: 'C:/d/sessions/a1.json', rt, touchedAt: Date.now() - 40 * MIN };
   sessions.set(s.sessionId, s);
   if (withTranscript) { const f = transcriptPathFor(root, cwd, s.sessionId); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, '{}\n'); }
   const readTable = async () => ({ procs: new Map([[9001, { pid: 9001, ppid: 1, ws: 87 * 1048576, name: 'powershell.exe' }], [9002, { pid: 9002, ppid: 9001, ws: 310 * 1048576, name: 'claude.exe' }], [9003, { pid: 9003, ppid: 9002, ws: 85 * 1048576, name: 'aside.exe' }]]) });
@@ -184,8 +183,8 @@ test('D4 잠재우기: /exit 뒤 작업 공간을 닫고 패널 없이 sleeping�
   assert.equal(out.memMB, 482);
   assert.deepEqual(out.procs.sort(), ['aside.exe', 'claude.exe', 'powershell.exe']);
   assert.ok(calls.some((c) => c[0] === 'sendText' && c[2] === '/exit'));
-  assert.ok(calls.some((c) => c[0] === 'closePane' && c[1] === 'w1:p1'));
-  assert.equal(s.paneId, null); assert.equal(s.herdrWorkspaceId, null);
+  assert.ok(calls.some((c) => c[0] === 'closePane' && c[1] === 'w1:p1')); // macOS 판(ARCH D2): 작업 공간이 아니라 그 패널만
+  assert.equal(s.paneId, null); assert.equal(s.termWorkspaceId, null);
   assert.equal(deriveState(s.rt).state, 'sleeping');
   assert.equal(s.rt.exit, null, '닫힘(exited)이 아니다');
   assert.equal(s.rt.lastAnswer, '안녕하세요', '요약 얼굴에 보일 마지막 답은 그대로');
@@ -213,7 +212,7 @@ test('audit: sleep closePane failure retains its pane and reports failure', asyn
   b.adapter.closePane = async () => { throw Object.assign(new Error('fixture unavailable'), { code: 'unreachable' }); };
   await assert.rejects(sl.sleep(s, { by: 'hand' }), { code: 'unreachable' });
   assert.equal(s.paneId, 'w1:p1');
-  assert.equal(s.herdrWorkspaceId, 'w1');
+  assert.equal(s.termWorkspaceId, 'w1');
   assert.equal(s.rt.sleep, null);
   assert.equal(s.rt.exitRequested, false);
   assert.equal(events.some((e) => e.kind === 'slept'), false);
@@ -226,7 +225,7 @@ test('audit: failed wake cleanup keeps its new pane tracked when close fails', a
   b.adapter.closePane = async () => { throw Object.assign(new Error('cleanup unreachable'), { code: 'unreachable' }); };
   await assert.rejects(sl.wake(s, 'hand'), { code: 'wake_failed' });
   assert.equal(s.paneId, 'w9:p1');
-  assert.equal(s.herdrWorkspaceId, 'w9');
+  assert.equal(s.termWorkspaceId, 'w9');
   assert.equal(s.rt.sleep, null, 'must not create another pane on the next wake');
   assert.ok(events.some((e) => e.kind === 'wake_failed' && e.data.error.cleanup));
 });
@@ -253,7 +252,6 @@ test('D4 깨우기: 같은 대화 ID로 새 작업 공간에서 판의 인자로
   assert.equal(st[1], 'a1', '같은 herdr 이름');
   assert.match(st[3], new RegExp(`^--resume ${ID(5)} `));
   assert.match(st[3], /--settings C:\/d\/sessions\/a1\.json/);
-  assert.ok(calls.some((c) => c[0] === 'registerResume'));
   assert.equal(s.rt.sleep, null); assert.equal(s.waking, null);
   assert.ok(s.wokeAt > 0);
   assert.ok(events.some((e) => e.kind === 'woke'));
@@ -276,9 +274,9 @@ test('D4 깨우기 실패: 이어 가자마자 끝나면 패널을 닫고 까닭
 
 test('D4 잠재우기 막힘: 재는 동안 일이 들어오면 그만두고, 손으로 잠재울 때 까닭을 돌려준다', async () => {
   const { s, sl, b } = fakeBoard();
-  s.rt.herdr.status = 'working';
+  s.rt.term.status = 'working';
   await assert.rejects(sl.sleepRepoHand({ session: 'a1' }), (e) => e.code === 'sleep_working' && e.key === 'repoSleepRefused' && e.vars.name === '@a1');
-  s.rt.herdr.status = 'idle';
+  s.rt.term.status = 'idle';
   b.queue.items.push({ sessionId: s.sessionId, status: 'queued' });
   await assert.rejects(sl.sleep(s, { by: 'hand' }), (e) => e.code === 'sleep_delivering');
   assert.equal(deriveState(s.rt).state, 'ready', '그대로 깨어 있다');
@@ -287,15 +285,15 @@ test('D4 잠재우기 막힘: 재는 동안 일이 들어오면 그만두고, �
 
 test('D4 판정: 부모가 일하는 하위 세션, 일하는 하위 세션이 있는 부모, 보는 노드의 리포는 쉬어도 잠재우지 않는다', () => {
   const { s, sl, b } = fakeBoard();
-  const kidRt = newRuntime(); applyAgentDetected(kidRt); applyHerdrStatus(kidRt, 'working');
+  const kidRt = newRuntime(); applyAgentDetected(kidRt); applyTermStatus(kidRt, 'working');
   const kid = { sessionId: ID(6), name: 'k1', kind: 'claude', parentSessionId: s.sessionId, paneId: 'w2:p1', rt: kidRt, workspaceKey: 'other' }; // 하위 세션은 다른 리포에서 일한다
   { const f = transcriptPathFor(b.cfg.claudeProjects, s.cwd, ID(6)); fs.writeFileSync(f, '{}\n'); kid.cwd = s.cwd; }
   b.sessions.set(kid.sessionId, kid);
   assert.equal(sl.plan('', 'auto').why, 'child_busy', '다른 리포에서 일하는 하위 세션이 있는 부모');
-  kidRt.herdr.status = 'idle'; kidRt.lastActivityAt = 0; kidRt.launchedAt = 0;
-  s.rt.herdr.status = 'working';
+  kidRt.term.status = 'idle'; kidRt.lastActivityAt = 0; kidRt.launchedAt = 0;
+  s.rt.term.status = 'working';
   assert.equal(sl.plan('other', 'bulk').why, 'parent_busy');
-  s.rt.herdr.status = 'idle';
+  s.rt.term.status = 'idle';
   b.relay.stats = () => [{ sessionId: s.sessionId }];
   assert.equal(sl.plan('', 'auto').why, 'viewing', '가까이 얼굴로 터미널이 붙은 노드');
   b.relay.stats = () => [];
@@ -311,7 +309,7 @@ test('D4 판정: 부모가 일하는 하위 세션, 일하는 하위 세션이 �
 test('D4 대기열: 잠든 세션에 넣은 글은 sleeping으로 기다리고 그 이벤트가 깨우기를 부른다', async () => {
   const events = [];
   const store = { activeDeliveries: () => [], insertDelivery: () => {}, updateDelivery: () => {} };
-  const q = new DeliveryQueue({ store, cfg: { inputQuietMs: 3000, deliveryMaxWaitMs: 60000, submitConfirmMs: 30000 }, view: () => ({ state: 'sleeping', agentPresent: false, herdrConnected: true, closed: false }), send: async () => { throw new Error('보내면 안 된다'); } });
+  const q = new DeliveryQueue({ store, cfg: { inputQuietMs: 3000, deliveryMaxWaitMs: 60000, submitConfirmMs: 30000 }, view: () => ({ state: 'sleeping', agentPresent: false, termConnected: true, closed: false }), send: async () => { throw new Error('보내면 안 된다'); } });
   q.on('delivery', (d) => events.push(`${d.status}:${d.reason}`));
   q.enqueue('a', '깨어나');
   await sleepMs(10);
@@ -348,13 +346,13 @@ test('D4 복구: 잠재우던 중에 백엔드가 꺼졌으면 패널이 남은 
 
 test('D4 끄기: 잠든 세션은 herdr 없이 닫는다(보관·삭제는 그 뒤 P15 그대로)', async () => {
   const rt = newRuntime(); rt.sleep = { at: 1, by: 'hand' };
-  const s = { sessionId: ID(9), name: 'z2', kind: 'claude', paneId: null, herdrWorkspaceId: null, rt };
+  const s = { sessionId: ID(9), name: 'z2', kind: 'claude', paneId: null, termWorkspaceId: null, rt };
   const closed = [], archived = [];
   const fake = {
     sessions: new Map([[s.sessionId, s]]), currentSession: Backend.prototype.currentSession, killSession: Backend.prototype.killSession,
     resolve: () => s, adapter: { workspacePanes: async () => { throw new Error('no ws'); } },
     sleeper: { wakes: new Map(), going: new Map() },
-    requireHerdr: () => { throw new Error('herdr를 부르면 안 된다'); },
+    requireTerminal: () => { throw new Error('herdr를 부르면 안 된다'); },
     closeSession: (x, why) => closed.push([x.name, why]),
     recall: { markArchive: (p) => archived.push(p.session) },
   };
@@ -368,7 +366,7 @@ test('D4 끄기: 잠든 세션은 herdr 없이 닫는다(보관·삭제는 그 �
 });
 
 test('D4 전달: 잠재우는 중에는 sleeping, 깨우는 중에는 준비된 뒤에도 잠깐 starting으로 기다린다(입력 칸이 Enter를 받기 전)', () => {
-  const rt = newRuntime(); applyAgentDetected(rt); applyHerdrStatus(rt, 'idle');
+  const rt = newRuntime(); applyAgentDetected(rt); applyTermStatus(rt, 'idle');
   const s = { sessionId: 'a', rt };
   const fake = { hooked: () => true, sessions: new Map([['a', s]]), sleeper: { going: new Map() }, adapter: { connected: true } };
   const view = () => Backend.prototype.deliveryView.call(fake, 'a', null).state;

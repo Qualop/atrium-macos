@@ -50,8 +50,8 @@ export async function connect(cfg) {
   const c = new ApiClient(info); await c.open(); return c;
 }
 
-// 백엔드가 없으면 띄운다. 백엔드는 herdr 서버가 없으면 띄운다(ARCH 1절 백엔드 수명).
-// nodePath: 백엔드를 돌릴 지원 Node 런타임. Electron main에서는 process.execPath가 electron.exe라서 따로 준다.
+// 백엔드가 없으면 띄운다. 백엔드는 터미널 서버가 없으면 띄운다(ARCH 1절 백엔드 수명).
+// nodePath: 백엔드를 돌릴 Node(22.13 이상, node:sqlite). Electron main에서는 process.execPath가 electron.exe라서 따로 준다.
 export async function startBackend(cfg, { nodePath = process.execPath } = {}) {
   assertRestartAllowedSync(cfg, { allowPermit: false });
   const info = backendInfo(cfg);
@@ -67,14 +67,14 @@ export async function startBackend(cfg, { nodePath = process.execPath } = {}) {
   p.unref();
   fs.closeSync(log);
   const t0 = Date.now();
-  while (Date.now() - t0 < 60000) { // P18: 처음 뜰 때 옛 판 옮기기(옛 백엔드·herdr 끄기)가 몇십 초 걸릴 수 있다
+  while (Date.now() - t0 < 60000) { // P18: 처음 뜰 때 옛 판 옮기기(옛 백엔드 끄기)가 몇십 초 걸릴 수 있다
     await sleep(200);
     if (spawnError) throw new Error(`백엔드 Node 실행 실패 (${nodePath}): ${spawnError.message}`);
     const b = backendInfo(cfg);
     if (b && b.pid === p.pid && (await health(b.port))) {
       const c = new ApiClient(b); await c.open();
-      for (let i = 0; i < 50; i++) { const st = await c.call('backend.status'); if (st.herdr.connected || (st.herdr.compat && !st.herdr.compat.ok)) { c.close(); return { started: true, pid: p.pid, port: b.port, ms: Date.now() - t0, herdr: st.herdr }; } await sleep(200); }
-      c.close(); return { started: true, pid: p.pid, port: b.port, herdr: 'not connected yet' };
+      for (let i = 0; i < 50; i++) { const st = await c.call('backend.status'); const t = st.terminal || {}; if (t.connected || (t.compat && !t.compat.ok)) { c.close(); return { started: true, pid: p.pid, port: b.port, ms: Date.now() - t0, terminal: st.terminal }; } await sleep(200); }
+      c.close(); return { started: true, pid: p.pid, port: b.port, terminal: 'not connected yet' };
     }
     if (p.exitCode !== null) break;
   }

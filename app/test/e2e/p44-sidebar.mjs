@@ -131,7 +131,7 @@ try {
   step('사이드바: 보통 줄은 한 줄(28px), 응답 필요·오류 줄은 질문 한 줄을 더(44px)', s1.rows.filter((r) => r.sb === 'session' && !['waiting', 'trust_wait', 'error'].includes(r.state)).every((r) => r.h === 28) && attnRows.length > 0 && attnRows.every((r) => r.h === 44), { attn: attnRows.map((r) => [r.name, r.h]) });
   await shot('01-sidebar-42');
   // 워크스페이스 b, c를 접어도 응답 필요 세션은 남는다
-  for (const k of ['b', 'c']) await click(`[data-sb="ws"][data-ws="${wsKey[k]}"]`);
+  for (const k of ['b', 'c']) await click(`[data-sb="ws"][data-ws="${wsKey[k]}"] [data-action="fold"]`); // P153 r9: 접기는 화살표로만
   const s1b = await sb();
   const pinned = s1b.rows.filter((r) => r.pinned).map((r) => r.name);
   step('사이드바: 접힌 워크스페이스 아래에도 응답 필요 세션이 줄로 남는다', pinned.includes('p44-b-2') && pinned.includes('p44-c-5') && !s1b.rows.some((r) => r.name === 'p44-b-1'), { pinned });
@@ -156,7 +156,7 @@ try {
   const act = await page.evaluate(() => { const a = document.activeElement; const t = a && a.closest && a.closest('.mt-term'); return { xterm: !!(a && a.closest && a.closest('.xterm')), session: t ? t.dataset.session : null }; });
   step('키보드: 찾기 칸에서 ↓로 목록에 들어가 ↑↓로 옮기고 Enter로 그 세션 터미널에 들어간다', cur && cur.session && act.xterm && act.session === cur.session, { cur, act });
   await page.fill('[data-role="sidebar-filter"]', '');
-  for (const k of ['b', 'c']) await click(`[data-sb="ws"][data-ws="${wsKey[k]}"]`);
+  for (const k of ['b', 'c']) await click(`[data-sb="ws"][data-ws="${wsKey[k]}"] [data-action="fold"]`); // P153 r9: 접기는 화살표로만
 
   // ---------- 2. 가상 그룹: 만들기, 이름, 넣기(메뉴·끌어 놓기), 판 전체 정리 ----------
   await click('[data-action="group-new"]');

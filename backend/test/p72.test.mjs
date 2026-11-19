@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Launchers, VERSION, META_KEY, HARNESSES, describeHarnesses, modelWarning } from '../src/launchers.mjs';
+import { Launchers, VERSION, META_KEY, LEGACY_META_KEY, HARNESSES, describeHarnesses, modelWarning } from '../src/launchers.mjs';
 import { CodexModels, parseCodexCache, unlistedModel, codexHomeOf, CACHE_FILE } from '../src/codex-cache.mjs';
 import { buildCatalog, resolveModel } from '../src/models.mjs';
 import { Branch } from '../src/branch.mjs';
@@ -28,12 +28,12 @@ const CACHE = {
 };
 const writeCache = (home, v) => { fs.mkdirSync(home, { recursive: true }); fs.writeFileSync(path.join(home, CACHE_FILE), typeof v === 'string' ? v : JSON.stringify(v)); };
 
-test('P72 새 판: 호출자는 Claude Code(manual), Codex, 셸 셋이고 모두 레일에 있다', () => {
+test('P72·P122 새 판: 호출자는 Claude Code(manual), Codex 둘이고 모두 레일에 있다', () => {
   const dir = tmp();
   try {
     const store = new Store(path.join(dir, 'board.db'));
     const ls = new Launchers({ store, gateway: { healthUrl: 'http://127.0.0.1:1/healthz' } });
-    assert.deepEqual(ls.migrated, { oldBoard: false, favorites: ['claude', 'codex', 'gemini', 'shell'] });
+    assert.deepEqual([ls.migrated.oldBoard, ls.migrated.favorites], [false, ['claude', 'codex', 'gemini', 'shell']]);
     const l = ls.list();
     assert.deepEqual(l.launchers.map((x) => [x.id, x.harness, x.favorite]), [['claude', 'claude', true], ['codex', 'codex', true], ['gemini', 'agy', true], ['shell', 'shell', true]]);
     assert.equal(l.launchers[0].preview.line, 'claude --permission-mode manual');
@@ -57,12 +57,12 @@ test('P72 옛 판: 판 기록에 있는 호출자 목록(DeepSeek, bypassPermiss
       ],
       favorites: ['claude', 'codex', 'deepseek', 'shell'],
     };
-    store.setMeta(META_KEY, saved);
+    store.setMeta(LEGACY_META_KEY, saved); // P115: 옛 목록은 옛 키(launchers)에 있고 새 키(launchers.v2)로 옮긴다
     const ls = new Launchers({ store });
     assert.ok(ls.migrated, '옛 목록에는 Gemini 단추를 한 번만 더한다');
+    assert.deepEqual(store.getMeta(LEGACY_META_KEY), saved, '옛 키는 그대로(옛 코드로 돌아가도 뜬다)');
     const migrated = store.getMeta(META_KEY);
-    assert.equal(migrated.v, VERSION);
-    assert.deepEqual(migrated.items.filter((l) => l.id !== 'gemini'), saved.items);
+    assert.deepEqual(migrated.items.filter((l) => l.id !== 'gemini').map((l) => l.id), saved.items.map((l) => l.id));
     assert.deepEqual(migrated.favorites, ['claude', 'codex', 'gemini', 'deepseek', 'shell']);
     assert.equal(new Launchers({ store }).migrated, null);
     assert.equal(ls.get('deepseek').permissionMode, 'bypassPermissions');
@@ -135,7 +135,7 @@ test('P72 목록에 없는 Codex 모델: 경고만 하고 막지 않는다(Claud
     assert.deepEqual(pv({ name: 'x', harness: 'codex', model: '' }).warn, undefined, '빈 이름은 하네스 기본');
     const w = pv({ name: 'x', harness: 'codex', model: 'gpt-6.1-sool' });
     assert.deepEqual(w.warn, { key: 'launcherModels.unlisted', vars: { harness: 'Codex', model: 'gpt-6.1-sool' } });
-    assert.equal(w.line, 'codex --model gpt-6.1-sool', '미리보기는 그대로');
+    assert.equal(w.line, 'codex -m gpt-6.1-sool', '미리보기는 그대로'); // P115: 하네스 어댑터가 실제로 붙이는 -m
     assert.equal(pv({ name: 'x', harness: 'claude', model: 'claude-opus-4-1' }).warn, undefined, 'Claude Code는 경고하지 않는다');
     // 저장도 막지 않는다
     const c = ls.create({ launcher: { name: 'Typo', harness: 'codex', model: 'gpt-6.1-sool' } });
@@ -162,21 +162,16 @@ test('P72 atrium models: Codex 줄은 Codex 캐시의 목록이고 그 이름으
     writeCache(home, CACHE);
     const store = new Store(path.join(dir, 'board.db'));
     const launchers = new Launchers({ store, codexModels: new CodexModels({ home }) });
-    const br = new Branch({ cfg: { ocxHealthUrl: 'http://127.0.0.1:9/healthz', ocxConfigured: false }, features: { launchers }, ...BOARD }, { fetchModels: async () => { throw new Error('새 판은 게이트웨이를 묻지 않는다'); } });
+    const br = new Branch({ cfg: {}, features: { launchers }, ...BOARD }, { fetchModels: async () => { throw new Error('새 판은 게이트웨이를 묻지 않는다'); } });
     const c = await br.catalog();
     assert.deepEqual(c.entries.filter((e) => e.source === 'harness' && e.harness === 'codex').map((e) => e.model), ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']);
-    assert.deepEqual(c.gateways, [], '새 판은 opencodex를 보지 않는다');
+    assert.deepEqual(c.gateways, [], '새 판에는 연결을 쓰는 런처가 없다');
     store.close();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('P72 opencodex 기본 주소: 직접 줬거나 DeepSeek 호출자가 있는 판만 본다', () => {
-  const cfg = (o) => ({ ocxHealthUrl: 'http://127.0.0.1:10100/healthz', ocxBaseUrl: null, ...o });
-  const br = (c, items) => new Branch({ cfg: c, features: { launchers: { data: () => ({ items }) } }, ...BOARD });
-  assert.equal(br(cfg({ ocxConfigured: false }), []).defaultGateway(), null);
-  assert.equal(br(cfg({ ocxConfigured: true }), []).defaultGateway().url, 'http://127.0.0.1:10100');
-  assert.equal(br(cfg({ ocxConfigured: false }), [{ id: 'deepseek', harness: 'command', icon: 'deepseek' }]).defaultGateway().url, 'http://127.0.0.1:10100', '옛 판(직접 명령 DeepSeek)');
-  assert.equal(br(cfg({}), []).defaultGateway().url, 'http://127.0.0.1:10100', 'ocxConfigured를 모르는 판(시험)은 예전처럼');
-  assert.equal(loadConfig({ argv: ['--dev'], env: {} }).ocxConfigured, false);
-  assert.equal(loadConfig({ argv: ['--dev'], env: { ATRIUM_OCX_HEALTH: 'http://127.0.0.1:2/healthz' } }).ocxConfigured, true);
+test('P72·P115 옛 게이트웨이 환경 변수: 판 설정의 가상 게이트웨이는 없다. 설정은 그 값만 읽는다(옮기기가 연결로 옮긴다)', () => {
+  assert.equal(typeof new Branch({ cfg: {}, features: {}, ...BOARD }).defaultGateway, 'undefined');
+  assert.deepEqual(loadConfig({ argv: ['--dev'], env: {} }).legacyGateway, { healthUrl: null, baseUrl: null });
+  assert.deepEqual(loadConfig({ argv: ['--dev'], env: { ATRIUM_OCX_HEALTH: 'http://127.0.0.1:2/healthz' } }).legacyGateway, { healthUrl: 'http://127.0.0.1:2/healthz', baseUrl: null });
 });

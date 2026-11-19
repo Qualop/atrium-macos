@@ -1,7 +1,7 @@
 // P47(원격 R1): 한 백엔드에 창(클라이언트)이 여럿 붙을 때의 상태 바꾸기. 모두 순수 함수다(단위 시험 p47.test.mjs).
 // - 클라이언트 알아보기: 연결 주소의 client(오래 가는 ID)·name(기기 이름)·kind(desktop|web|tray|cli). client.hello로 나중에 바꿀 수도 있다.
 // - 화면 위치(viewport): 클라이언트마다 meta `viewport:<client>`. 없으면 보드 값(meta `viewport`, 옛 판 값)에서 시작한다.
-// - 터미널 나눠 보내기: herdr는 패널 하나에 클라이언트 하나만 받는다(--takeover 없이 붙으면 거부, P47 실험). 그래서 제어기는 패널마다 하나이고
+// - 터미널 나눠 보내기: 제어기는 패널마다 하나이고(P47: 그때 터미널이 패널 하나에 클라이언트 하나만 받았다)
 //   백엔드가 프레임을 붙은 클라이언트 모두에게 보낸다. 새로 붙은 클라이언트는 full 프레임부터 받는다(그 전 변경 프레임은 버린다).
 // - 크기 정하는 기기: 마지막으로 입력했거나 초점을 준 클라이언트(tmux latest). 떠나면 남은 쪽 중 가장 최근에 쓴 쪽.
 // - 알림 받을 클라이언트: 최근(ACTIVE_MS 안)에 입력이 있었던 클라이언트. 없으면 PC 창(desktop), 그것도 없으면 트레이.
@@ -68,14 +68,15 @@ export function shareJoin(st, { key, clientId = null, name = null, cols, rows, n
   const prev = st.subs.find((s) => s.key === key);
   const sub = { key, clientId, name, cols, rows, joinedAt: prev ? prev.joinedAt : now, activeAt: prev ? prev.activeAt : 0, needFull: true };
   const subs = [...st.subs.filter((s) => s.key !== key), sub];
-  return { subs, owner: st.owner && subs.some((s) => s.key === st.owner) ? st.owner : key };
+  return { subs, owner: st.owner && subs.some((s) => s.key === st.owner) ? st.owner : key, ...keepExternal(st) };
 }
 export function shareLeave(st, key) {
   const subs = st.subs.filter((s) => s.key !== key);
-  if (st.owner !== key) return { subs, owner: st.owner };
+  if (st.owner !== key) return { subs, owner: st.owner, ...keepExternal(st) };
   const b = bestRemaining(subs);
-  return { subs, owner: b ? b.key : null };
+  return { subs, owner: b ? b.key : null, ...keepExternal(st) };
 }
+const keepExternal = (st) => (st.external ? { external: st.external } : {}); // P114(hc): 들어오고 나가도 판 밖 크기 주인은 그대로
 // 입력이나 초점: 그 클라이언트가 크기를 가져간다
 export function shareActive(st, key, now) {
   if (!st.subs.some((s) => s.key === key)) return st;
@@ -97,6 +98,17 @@ export function shareFrame(st, full) {
 // full 프레임을 기다리는 클라이언트가 있는가(있으면 같은 크기 resize로 full을 받는다. P47 실험: 같은 크기 resize는 바로 full 프레임을 준다)
 export const shareNeedsFull = (st) => st.subs.some((s) => s.needFull);
 export function shareOwnerView(st) {
+  if (st.external) return { clientId: EXTERNAL_OWNER, name: null, cols: st.external.cols, rows: st.external.rows }; // P114
   const o = st.subs.find((s) => s.key === st.owner);
   return o ? { clientId: o.clientId, name: o.name, cols: o.cols, rows: o.rows } : null;
+}
+
+// P114(hc): 판 밖의 활성 보는 이(`hc attach` 등)가 터미널 크기를 가져갔다. hc는 마지막 활성 보는 이가 크기를 정한다.
+// 판 클라이언트는 모두 크기 주인이 아닌 쪽처럼 그 크기를 비율로 그린다. 판 클라이언트가 치거나 초점을 주면 hc가 판 스트림의 크기로 되돌리고(size 이벤트) external이 풀린다.
+// 이 이벤트가 없는 터미널에서는 늘 null이다
+export const EXTERNAL_OWNER = 'external';
+export function shareExternal(st, size) {
+  const ext = size && size.cols && size.rows ? { cols: size.cols, rows: size.rows } : null;
+  if (!ext && !st.external) return st;
+  return { ...st, external: ext };
 }

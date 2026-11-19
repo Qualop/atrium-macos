@@ -1,5 +1,5 @@
 // 창(renderer)에 넘기는 것: 백엔드 주소와 토큰, Electron 프로세스 측정값(E5), 로그 한 줄,
-// OS 알림 띄우기와 알림을 눌렀을 때 갈 세션(A1, P3), 폴더 고르기(P5), 화면 배율(P45)
+// OS 알림 띄우기와 알림을 눌렀을 때 갈 세션(A1, P3), 폴더 고르기(P5), 화면 배율(P45), 파일·그림 붙여 넣기(P162)
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 // P45: 화면 배율(창 전체 UI). 값은 창의 localStorage mt.uiScale(renderer lib/scale.js와 같은 범위 70~150%). 판을 그리기 전에 맞춘다
@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('mt', {
   log: (line) => ipcRenderer.send('mt:log', line),
   notify: (n) => ipcRenderer.invoke('mt:notify', n),
   pickFolder: () => ipcRenderer.invoke('mt:pickFolder'), // P5: 리포 열기
+  clipPaste: () => ipcRenderer.invoke('mt:clipPaste'), // P162: 탐색기에서 복사한 파일 경로, 캡처한 그림 저장(main.mjs)
   setZoom: (f) => webFrame.setZoomFactor(clampZoom(f)), // P45: 화면 배율
   zoomFactor: () => webFrame.getZoomFactor(),
   onNavigate: (fn) => { const h = (_e, id) => fn(id); ipcRenderer.on('mt:navigate', h); return () => ipcRenderer.removeListener('mt:navigate', h); },

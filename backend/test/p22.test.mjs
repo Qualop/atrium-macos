@@ -72,10 +72,10 @@ test('P22 옮기기: 새 판에는 그룹·묶음 항목·한 줄 메모 표가 
 
 test('P22: 전달 대기열에는 그룹 상한(batch_limit)이 없다', async () => {
   const cfg = { inputQuietMs: 0, deliveryMaxWaitMs: 60000, submitConfirmMs: 30000 };
-  assert.equal(blockReason({ state: 'ready', agentPresent: true, herdrConnected: true, closed: false, batchFull: true }, 0, cfg), null, '옛 batchFull 값은 보지 않는다');
+  assert.equal(blockReason({ state: 'ready', agentPresent: true, termConnected: true, closed: false, batchFull: true }, 0, cfg), null, '옛 batchFull 값은 보지 않는다');
   const store = new Store(path.join(tmp(), 'b.db'));
   const sent = [];
-  const q = new DeliveryQueue({ store, cfg, view: () => ({ state: 'ready', agentPresent: true, herdrConnected: true, closed: false }), send: async (sid, text) => sent.push([sid, text]) });
+  const q = new DeliveryQueue({ store, cfg, view: () => ({ state: 'ready', agentPresent: true, termConnected: true, closed: false }), send: async (sid, text) => sent.push([sid, text]) });
   const d = q.enqueue('x', 'job', { groupId: 'g1' }); // 옛 호출 모양이 와도 그룹을 남기지 않는다
   q.pump(); await new Promise((r) => setTimeout(r, 10));
   assert.deepEqual(sent, [['x', 'job']]);

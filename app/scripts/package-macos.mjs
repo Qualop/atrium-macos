@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { HERDR_VERSION, HERDR_PROTOCOLS } from '../../backend/src/config.mjs';
+import { HC_PIN } from '../../backend/src/hc/pin.mjs';
+import crypto from 'node:crypto';
 
 if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch)) throw new Error('macOS Apple Silicon 또는 Intel이 필요합니다.');
 requireSupportedNode();
@@ -40,6 +42,11 @@ try {
   const nodeLicense = path.resolve(path.dirname(process.execPath), '../LICENSE');
   if (fs.existsSync(nodeLicense)) copy(nodeLicense, path.join(resources, 'runtime/LICENSE.node'));
   copy(path.join(root, '.tools/herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr'), path.join(resources, '.tools/herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr'));
+  // herdr-core(hc): 고정 tar.gz를 자료로 싣는다(앱 서명이 그 안의 Developer ID 서명을 바꾸지 않게 풀지 않는다). 보드가 데이터 폴더에 풀고 서명을 확인한다
+  const hcArchive = path.join(root, '.tools/hc', `${HC_PIN.version}-${HC_PIN.target}.tar.gz`);
+  if (!fs.existsSync(hcArchive) || crypto.createHash('sha256').update(fs.readFileSync(hcArchive)).digest('hex') !== HC_PIN.sha256) throw new Error('herdr-core 고정 tar.gz가 없거나 체크섬이 다릅니다. npm run setup:mac을 먼저 실행하세요.');
+  copy(hcArchive, path.join(resources, '.tools/hc', path.basename(hcArchive)));
+  copy(path.join(appRoot, 'licenses/herdr-core-LICENSE'), path.join(resources, 'licenses/herdr-core-LICENSE'));
   // Homebrew builds can depend on Cellar dylibs. Relocate those libraries
   // before signing, and fail if their redistribution licenses are missing.
   const copiedLibraries = new Map();
@@ -61,7 +68,7 @@ try {
   for (const [binary, source] of [[path.join(resources, 'runtime/node'), process.execPath], [path.join(resources, '.tools/herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr'), path.join(root, '.tools/herdr', `${HERDR_VERSION}-${process.arch}`, 'herdr')]]) {
     bundleNativeBinary(binary, path.join(resources, 'runtime/lib'), { source, copied: copiedLibraries, onLibrary: collectLicense });
   }
-  fs.writeFileSync(path.join(resources, 'runtime/update-manifest.json'), JSON.stringify({ format: 1, repository: 'Qualop/atrium-macos', bundleId: 'dev.atrium.desktop.local', version, baseVersion: nativeVersion.baseVersion, bundleVersion: nativeVersion.bundleVersion, arch: process.arch, node: process.versions.node, herdr: HERDR_VERSION, herdrProtocols: HERDR_PROTOCOLS }, null, 2));
+  fs.writeFileSync(path.join(resources, 'runtime/update-manifest.json'), JSON.stringify({ format: 1, repository: 'Qualop/atrium-macos', bundleId: 'dev.atrium.desktop.local', version, baseVersion: nativeVersion.baseVersion, bundleVersion: nativeVersion.bundleVersion, arch: process.arch, node: process.versions.node, herdr: HERDR_VERSION, herdrProtocols: HERDR_PROTOCOLS, hc: HC_PIN.version, hcTarget: HC_PIN.target, hcSha256: HC_PIN.sha256, hcGenerations: [HC_PIN.generation] }, null, 2));
   const dirs = ['/opt/homebrew/bin', '/usr/local/bin'];
   fs.writeFileSync(path.join(resources, 'runtime/cli-paths.json'), JSON.stringify(dirs, null, 2));
   // Resolve the bundled runtime after installation, including when the app was

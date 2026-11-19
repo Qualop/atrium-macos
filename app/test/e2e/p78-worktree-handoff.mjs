@@ -163,10 +163,10 @@ try {
   const m2 = await measure('arranged');
   step('정리 뒤: 한 열, 띄운 순서, 겹침 없음, 리드 오른쪽', lineOk(m2) && m2.rightOfLead, { clicked, xs: m2.xs, ordered: m2.ordered, overlaps: m2.overlaps, right: m2.rightOfLead });
 
-  // ---------- 3. 인계: herdr agent prompt로 넷에게 일을 넘긴다 ----------
-  // 리드가 칠 명령과 같은 herdr agent prompt를 시험이 직접 친다(이 판의 herdr 세션). 리드(haiku)에게 시키면 herdr 말고 다른 명령도 쳐서
+  // ---------- 3. 인계: 판 전달(atrium send)로 넷에게 일을 넘긴다 ----------
+  // P129: 터미널 CLI 대신 판의 session.send로 같은 글을 보낸다. 리드(haiku)에게 시키면 다른 명령도 쳐서
   // 권한 질문에서 멈출 때가 있다(1회 기록 experiments/p78/run1)
-  for (const n of WORKERS) log(`herdr agent prompt ${n}`, execFileSync('herdr', ['--session', ENV.ATRIUM_HERDR_SESSION, 'agent', 'prompt', n, ASK], { encoding: 'utf8', env, timeout: 60000 }).trim().slice(0, 160));
+  for (const n of WORKERS) log(`send ${n}`, atrium('send', `@${n}`, ASK).trim().slice(0, 160));
   // 넘긴 일이 넷에 닿을 때까지(hook이 워커의 폴더를 워크트리로 알린다, 최대 4분). 그 전에 재면 인계 뒤가 아니다
   const gitWt = () => page.evaluate((ns) => ns.map((n) => { const s = [...window.__mt.getState().sessions.values()].find((x) => x.name === n); return !!(s && s.git && s.git.isWorktree); }), WORKERS);
   const handed = await until(async () => (await gitWt()).every(Boolean), 4 * 60000, 2000);

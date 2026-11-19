@@ -159,7 +159,7 @@ export class Updater {
   async runUpdate(release) {
     try {
       const prepared = await this.prepare({ dir: this.dir, release, apiUrl: this.apiUrl, arch: this.arch, currentBundle: this.running.bundle,
-        protocol: this.b.herdrCompat?.ok ? this.b.herdrCompat.protocol : null,
+        protocol: this.b.termCompat?.ok ? this.b.termCompat.protocol : null,
         step: (step, detail) => this.setJob({ step, bytes: null, ...(detail || {}) }), log: line => this.log(line) });
       if (this.stopped) throw U.fail('backend_stopped', 'Backend stopped during update preparation.');
       this.setJob({ verification: prepared.verification });
@@ -189,7 +189,7 @@ export class Updater {
       from: { tag: this.running.tag, version: this.running.version }, to,
       waitPids: [process.pid, ...this.leaving.map(x => x.pid)], oldBackendPid: process.pid,
       relaunch: true, healthMs: this.healthMs, arch: this.arch,
-      protocol: this.b.herdrCompat?.ok ? this.b.herdrCompat.protocol : null, herdrServerPid: this.b.adapter?.serverPid?.() || null,
+      protocol: this.b.termCompat?.ok ? this.b.termCompat.protocol : null, herdrServerPid: this.b.adapter?.serverPid?.() || null,
       cfg: { profile: cfg.profile, dataDir: cfg.dataDir, port: cfg.port, herdrSession: cfg.herdrSession, backendFile: cfg.backendFile || path.join(cfg.dataDir, 'backend.json') },
       profileEnv, helperDir, logFile: this.logFile };
     const file = path.join(helperDir, U.JOB_FILE);

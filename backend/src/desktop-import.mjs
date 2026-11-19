@@ -402,12 +402,12 @@ export class DesktopImport {
     const now = Date.now();
     const rt = newRuntime({ kind: provider, hooked: provider === 'claude' });
     rt.sleep = { at: now, by: 'import', convId };
-    rt.herdr = { status: null, launchPending: false, agentSessionId: null, present: false, at: now };
+    rt.term = { status: null, launchPending: false, agentSessionId: null, present: false, at: now };
     Object.assign(rt, { launcherEnv: {}, extraArgs: args });
     if (provider === 'codex') Object.assign(rt, { codexSessionId: convId, codexImportedFrom: sourceId, codexManaged: true, codexIntegration: true, codexContext: codexCollaboration(b, id).context, codexBriefed: false });
     else Object.assign(rt, { claudeSessionId: convId, transcriptPath: transcriptPathFor(cfg.claudeProjects, cwd, convId) });
     if (summary) { rt.lastPrompt = summary.lastPrompt || null; rt.lastPromptAt = summary.lastPromptAt || null; rt.lastAnswer = summary.lastAnswer || null; rt.lastAnswerAt = summary.lastAnswerAt || null; rt.lastActivityAt = summary.lastAt || summary.lastActivityAt || null; }
-    const s = { sessionId: id, name, cwd, paneId: null, herdrWorkspaceId: null, agentName: name, model, effort, permissionMode, settingsPath, hookToken, resumeArgv, resumeVerified: false, createdAt: now, closedAt: null, seenAt: now, touchedAt: now, rt, lastState: null, kind: provider, origin: 'board', parentSessionId: null, workspaceKey: ws.key, flavor: null, extraArgs: [] };
+    const s = { sessionId: id, name, cwd, paneId: null, termWorkspaceId: null, agentName: name, model, effort, permissionMode, settingsPath, hookToken, resumeArgv, resumeVerified: false, createdAt: now, closedAt: null, seenAt: now, touchedAt: now, rt, lastState: null, kind: provider, origin: 'board', parentSessionId: null, workspaceKey: ws.key, flavor: null, extraArgs: [] };
     this.store.insertSession({ ...s, runtime: rt });
     const area = b.worktrees ? b.worktrees.areaOf(ws.key, cwd) : '';
     const slot = slotFor(b, { wsKey: ws.key, size: NODE, area });

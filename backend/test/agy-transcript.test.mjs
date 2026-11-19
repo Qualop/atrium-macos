@@ -10,7 +10,7 @@ test('native Antigravity answer excludes prompt, thoughts, old turns and partial
  assert.equal(readAgyAnswer(file),null);
 });
 test('fully idle native Stop plus composer overrides stale herdr working; menus stay waiting',()=>{
- const rt=newRuntime({kind:'agy',hooked:false});Object.assign(rt,{agyStoppedAt:1,agyTurnActive:false,agyComposer:'ready'});rt.herdr.status='working';
+ const rt=newRuntime({kind:'agy',hooked:false});Object.assign(rt,{agyStoppedAt:1,agyTurnActive:false,agyComposer:'ready'});rt.term.status='working';
  assert.equal(deriveState(rt).state,'ready');rt.agyComposer='waiting';assert.equal(deriveState(rt).state,'waiting');
  rt.agyComposer='ready';rt.agyTurnActive=true;assert.equal(deriveState(rt).state,'working');
 });

@@ -8,7 +8,7 @@ import { markInteracted } from './touch.js';
 import { responseNeeded } from './lib/response-needed.js';
 import { openResponseTerminal } from './response-needed.js';
 
-// C3: herdr 재시작으로 끊긴 턴. 그때의 상태와 지시, 지금의 대화 기록 꼬리를 보여준다.
+// C3: 터미널 서버 재시작으로 끊긴 턴. 그때의 상태와 지시, 지금의 대화 기록 꼬리를 보여준다.
 // P6c: 셸은 "끊긴 명령"이다(P6b I8: 그때 돌던 명령이 prompt에 있다). 셸에는 대화 기록이 없어 꼬리를 읽지 않는다
 export function InterruptedBanner({ s }) {
   const t = useT();
@@ -57,6 +57,7 @@ export function ResponseNotice({ s }) {
       <div className="mt-response-copy" role="status" aria-live="polite">
         <strong>{notice.title}</strong>
         <span className="mt-response-context" title={notice.context}>{notice.context || notice.hint}</span>
+        {notice.choices && <span className="mt-response-choices" data-role="response-choices" title={t('response.choicesTitle')}>{notice.choices}</span>}
       </div>
       <button type="button" className="mt-btn small" data-action="response-terminal" title={notice.hint} onClick={() => openResponseTerminal(s.sessionId)}>{t('response.open')}</button>
     </div>

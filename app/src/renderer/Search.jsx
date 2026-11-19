@@ -13,7 +13,7 @@ import { STATE_LABEL } from './lib/labels.js';
 import { dt, presetText } from './lib/dock-text.js'; // P17
 import { presetTree, presetsFor, layout as layoutTree } from '../../../backend/src/dock-tree.mjs'; // P23: 배치 틀 그림. P26: 세션 수마다 틀
 import { bbox } from '../../../backend/src/canvas.mjs';
-import { SIZE_DIRS, SIZE_LEVELS, ASPECT_KEYS, COMPACT_LEVELS, aspectLabel, blockState, dockState, dockLevelSize, litOf, levelSize, showBar, showLayouts, presetGlyph, sizeTargets, layoutCount, placeBar } from './lib/selbar.js'; // P26. P73: 방향 × 비율 × 단계, 혼자인 세션도
+import { SIZE_DIRS, SIZE_LEVELS, ASPECT_KEYS, COMPACT_LEVELS, aspectLabel, blockState, dockState, dockLevelSize, litOf, levelSize, showBar, showLayouts, presetGlyph, sizeTargets, layoutCount, placeBar, headClearance } from './lib/selbar.js'; // P26. P73: 방향 × 비율 × 단계, 혼자인 세션도
 import { useT, errText, tOr } from './lib/i18n.js';
 import { Icon } from './lib/icons.jsx';
 import { SEARCH_LEAVE_MS, kindIcon, markRanges, showField, showSnip, movePick } from './lib/search-ui.js'; // P61: 찾기 창 다시 그리기
@@ -177,6 +177,29 @@ function useBarPlace(barRef, key) {
   return place;
 }
 
+// P141(#16): 막대가 고른 노드의 머리줄(이름·모델·상태 알약)을 덮으면 판을 그만큼 아래로 옮긴다(노드는 그대로).
+// 고름이 바뀌고 막대 자리가 정해진 뒤 한 번 본다. 누르고 있는 동안(끌기)에는 손을 뗀 뒤에 본다
+function useClearHeads(barRef, place, selected, on) {
+  const key = on && place ? `${place.row}|${place.x}|${place.w}|${selected.join(',')}` : '';
+  useEffect(() => {
+    if (!key) return undefined;
+    let raf = 0;
+    const check = () => {
+      raf = requestAnimationFrame(() => {
+        const bar = barRef.current, st = getState();
+        if (!bar || !st.panBy) return;
+        const heads = selected.map((id) => document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"] .mt-node-head`)).filter(Boolean).map((e) => e.getBoundingClientRect());
+        const dy = headClearance(bar.getBoundingClientRect(), heads);
+        if (dy > 0) st.panBy(0, dy);
+      });
+    };
+    // 고른 직후 노드를 끌고 있으면 손을 뗄 때 본다
+    const up = () => { window.removeEventListener('pointerup', up, true); check(); };
+    const t = setTimeout(() => { if (document.querySelector('.react-flow__node.dragging')) window.addEventListener('pointerup', up, true); else check(); }, 120);
+    return () => { clearTimeout(t); cancelAnimationFrame(raf); window.removeEventListener('pointerup', up, true); };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
 export function SelectionBar() {
   const t = useT();
   const selected = useStore((st) => st.selected);
@@ -201,8 +224,10 @@ export function SelectionBar() {
   const layouts = showLayouts(selected, dockList);
   const presets = layouts ? presetsFor(n) : [];
   useEffect(() => { setLayoutOpen(false); }, [selected]);
-  const place = useBarPlace(barRef, `${show}|${list.length}|${n}|${lit.dir}|${layouts}|${dockUnit}|${list.map((s) => s.name).join(',')}`);
-  if (!show || !list.length) return null;
+  const mission = useStore((st) => st.missionOpen); // P141(#16): 미션 맵을 여는 동안은 막대를 숨긴다(미션 맵 탭을 가렸다)
+  const place = useBarPlace(barRef, `${show}|${list.length}|${n}|${lit.dir}|${layouts}|${dockUnit}|${mission}|${list.map((s) => s.name).join(',')}`);
+  useClearHeads(barRef, place, selected, show && !mission);
+  if (!show || !list.length || mission) return null;
   const ws = new Set(list.map((s) => s.workspaceKey || null));
   const call = async (method, p, ok) => { try { const r = await api.call(method, p); if (ok) toast(ok(r)); } catch (e) { toast(errText(e), 'error'); } };
   const clear = () => getState().clearSelection && getState().clearSelection();

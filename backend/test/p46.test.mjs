@@ -18,5 +18,5 @@ test('P46: 스킬 글 — 이름은 맡긴 일·역할을 말하고, 번호 이�
   assert.match(s, /영문 소문자로 시작, 소문자·숫자·-·_ 만, 32자까지, 판 전체에서 하나/);
   assert.match(s, /`name_taken`\)이 오면 다른 이름으로 다시 짓는다/);
   assert.equal(delegateSkill().split('\n---\n')[1], s.split('\n---\n')[1], '옛 이름 스킬도 같은 글');
-  assert.ok(Buffer.byteLength(s) < 7000, `스킬 글 ${Buffer.byteLength(s)}바이트`);
+  assert.ok(Buffer.byteLength(s) < 7300 + 450 + 600 + 200 + 2000 + 1000, `스킬 글 ${Buffer.byteLength(s)}바이트`); // P156: 관계 고르기 절. macOS 판: 워커 상한·자동 승인·명령 추적 문구(+450), 하위 세션 기본 모델·추론과 토큰 절(+600), 일하는 워커에 다시 보내지 않기(+200), 반복·검토·조사 절(+2000, 2026-11-19 실측), 디자인 언어·이어 쓰기(+1000, 실험 C)
 });

@@ -53,7 +53,7 @@ export async function shot(page, name, log = console.log) {
 }
 
 // 창 안의 상태 읽기
-export const sessionsOf = (page) => page.evaluate(() => [...window.__mt.getState().sessions.values()].map((s) => ({ id: s.sessionId, name: s.name, state: s.state, unseen: s.unseen, herdr: s.herdrStatus, ask: s.ask, estimate: s.estimate, delivering: s.delivering, lastAnswer: s.lastAnswer })));
+export const sessionsOf = (page) => page.evaluate(() => [...window.__mt.getState().sessions.values()].map((s) => ({ id: s.sessionId, name: s.name, state: s.state, unseen: s.unseen, term: s.termStatus, ask: s.ask, estimate: s.estimate, delivering: s.delivering, lastAnswer: s.lastAnswer })));
 export async function waitState(page, name, states, timeout = 90000) {
   const want = [].concat(states);
   await page.waitForFunction(([n, w]) => [...window.__mt.getState().sessions.values()].some((s) => s.name === n && w.includes(s.state)), [name, want], { timeout, polling: 200 });

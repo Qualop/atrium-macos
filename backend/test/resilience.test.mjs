@@ -17,7 +17,7 @@ const line = (text) => JSON.stringify({ type: 'user', timestamp: new Date().toIS
 function queue(send) {
   const rows = new Map();
   const store = { activeDeliveries: () => [], insertDelivery: (d) => rows.set(d.deliveryId, { ...d }), updateDelivery: (id, patch) => Object.assign(rows.get(id), patch) };
-  const q = new DeliveryQueue({ store, cfg: { submitConfirmMs: 30000, deliveryMaxWaitMs: 60000 }, view: () => ({ state: 'ready', agentPresent: true, herdrConnected: true }), send });
+  const q = new DeliveryQueue({ store, cfg: { submitConfirmMs: 30000, deliveryMaxWaitMs: 60000 }, view: () => ({ state: 'ready', agentPresent: true, termConnected: true }), send });
   return { q, rows };
 }
 
@@ -72,7 +72,7 @@ test('도구 호출이 500개를 넘어도 복구에 필요한 사용자 지시�
 
 test('동시에 요청된 같은 세션 이름은 하나만 생성 단계에 들어간다', { timeout: 5000 }, async () => {
   const dir = tmp(), gate = defer(), entered = defer();
-  const b = new Backend({ logDir: dir }); b.herdrOk = true;
+  const b = new Backend({ logDir: dir }); b.termOk = true;
   b.ensureWorkspace = () => {};
   b.adapter = { connected: true, createWorkspace: async () => { entered.resolve(); await gate.promise; throw new Error('fixture stop'); } };
   b.withNewPane = (create) => create();

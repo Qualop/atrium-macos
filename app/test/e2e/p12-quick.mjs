@@ -28,6 +28,8 @@ const log = logger('p12-quick');
 const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_EFFORT|CLAUDE_PID|CLAUDE_AGENT_SDK|ELECTRON_RUN_AS_NODE)/.test(k)));
 const atrium = (...a) => execFileSync(process.execPath, [path.join(REPO, 'backend', 'bin', 'atrium.mjs'), '--dev', ...a], { encoding: 'utf8', env: { ...cleanEnv(), ...ENV } });
 const call = (page, m, p = {}) => page.evaluate(([mm, pp]) => window.__mt.api.call(mm, pp), [m, p]);
+// P122: 새 판에는 셸 런처가 없다. 셸 단추를 누르는 시험은 사람이 "+"로 만들듯 하나 만들어 레일에 둔다
+const shellLauncher = async (page) => { const d = await call(page, 'launcher.list'); const l = d.launchers.find((x) => x.harness === 'shell'); return l ? l.id : (await call(page, 'launcher.create', { launcher: { name: 'Shell', harness: 'shell' }, favorite: true })).launcher.id; };
 const sessions = (page) => page.evaluate(() => [...window.__mt.getState().sessions.values()].map((s) => ({ id: s.sessionId, name: s.name, kind: s.kind, state: s.state, ws: s.workspaceKey, model: s.model, permissionMode: s.permissionMode })));
 // 초점이 그 세션 노드의 터미널 입력칸에 있는지
 const focusIn = (page, id) => page.evaluate((sid) => { const a = document.activeElement; const node = a && a.closest('.react-flow__node'); return { focusId: window.__mt.getState().focusId, inNode: !!(node && node.getAttribute('data-id') === sid), xterm: !!(a && a.classList.contains('xterm-helper-textarea')) }; }, id);
@@ -64,7 +66,9 @@ try {
 
   // 2. 셸 단추
   const before2 = new Set((await sessions(page)).map((s) => s.id));
-  await page.click('[data-role="rail-left"] [data-action="spawn-shell"]');
+  const shId = await shellLauncher(page);
+  await page.waitForSelector(`[data-role="rail-left"] [data-launcher="${shId}"]`);
+  await page.click(`[data-role="rail-left"] [data-launcher="${shId}"]`);
   const sh = await until(async () => (await sessions(page)).find((s) => !before2.has(s.id) && s.kind === 'shell'), 30000);
   const sf = await until(async () => { const f = await focusIn(page, sh.id); return f.focusId === sh.id && f.inNode && f.xterm ? f : null; }, 20000).catch(() => null);
   step('셸 단추도 바로 뜨고 그 터미널로 들어간다', sf, sf || (await focusIn(page, sh.id)));

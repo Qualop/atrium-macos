@@ -197,7 +197,7 @@ test('managed Codex reopen uses exact copy ID, private runtime env/args and pres
   const s = f.b.sessions.get(sid); Object.assign(s.rt, { launcherEnv: { PRIVATE: 'runtime-value' }, extraArgs: ['--sandbox', 'read-only'], codexBriefed: true });
   f.store.updateSession(sid, { closedAt: 200, runtime: s.rt }); f.b.sessions.delete(sid);
   const calls = [];
-  Object.assign(f.b, { bus: new EventEmitter(), log() {}, requireHerdr() {}, probeGit() {}, hooked: () => false,
+  Object.assign(f.b, { bus: new EventEmitter(), log() {}, requireTerminal() {}, probeGit() {}, hooked: () => false,
     withNewPane: async (make, register) => { const r = await make(); await register(r); return r; },
     adapter: { createWorkspace: async (o) => { calls.push(['create', o]); return { paneId: 'reopened-pane', workspaceId: 'reopened-ws' }; }, refreshSubscription: async () => {}, waitShellReady: async () => true,
       startAgent: async (o) => { calls.push(['start', o]); return { agent: { launchPending: true } }; } } });
@@ -217,7 +217,7 @@ for (const action of ['reopen', 'wake']) test(`board auto approval on Codex ${ac
   f.store.setMeta('settings', { agentAutoApprove: true });
   f.store.saveRuntime(s.sessionId, s.rt);
   const calls = [];
-  Object.assign(f.b, { bus: new EventEmitter(), log() {}, requireHerdr() {}, probeGit() {}, hooked: () => false,
+  Object.assign(f.b, { bus: new EventEmitter(), log() {}, requireTerminal() {}, probeGit() {}, hooked: () => false,
     withNewPane: async (make, register) => { const result = await make(); await register(result); return result; },
     adapter: { createWorkspace: async (options) => { assert.equal(options.env.PRIVATE, 'synthetic-env'); return { paneId: 'copy-pane', workspaceId: 'copy-ws' }; }, refreshSubscription: async () => {}, waitShellReady: async () => true,
       startAgent: async (options) => { calls.push(options); return { agent: { launchPending: true } }; }, closePane: async () => {} } });
@@ -238,7 +238,7 @@ for (const action of ['reopen', 'wake']) test(`board auto approval on Codex ${ac
 test('a late Codex verification never overwrites a replacement runtime', async (t) => {
   const f = fixture(t), imported = (await f.imp.importMany(pick('codex', id(1)))).imported[0], s = f.b.sessions.get(imported.sessionId);
   const replacement = { ...s.rt, sleep: { at: 99, convId: id(2) }, sentinel: 'replacement' };
-  f.b.requireHerdr = () => {};
+  f.b.requireTerminal = () => {};
   f.imp.codex.read = async () => { s.rt = replacement; return nativeThread(f.repo, 2); };
   f.b.adapter = { createWorkspace: async () => assert.fail('stale wake cannot create a pane') };
   await assert.rejects(wakeCodexSession(f.b, s), { code: 'closed' });
@@ -256,7 +256,7 @@ for (const paginated of [false, true]) test(`history adapter reads ${paginated ?
 for (const cleanupFails of [false, true]) test(`Codex wake failure retains native identity and pane tracking when cleanup fails=${cleanupFails}`, async (t) => {
   const f = fixture(t), result = await f.imp.importMany(pick('codex', id(1))), s = f.b.sessions.get(result.imported[0].sessionId);
   s.rt.launcherEnv = { PRIVATE: 'synthetic-value' }; const calls = [];
-  f.b.requireHerdr = () => {};
+  f.b.requireTerminal = () => {};
   f.b.withNewPane = async (make, register) => { const r = await make(); await register(r); return r; };
   f.b.adapter = { createWorkspace: async (o) => { calls.push(o); return { paneId: 'fixture-pane', workspaceId: 'fixture-workspace' }; }, refreshSubscription: async () => {}, waitShellReady: async () => true,
     startAgent: async (o) => { assert.equal(o.kind, 'codex'); assert.deepEqual(o.args, ['resume', id(2), '--model', 'fixture-model']); throw new Error('launch failed'); },
@@ -269,7 +269,7 @@ for (const cleanupFails of [false, true]) test(`Codex wake failure retains nativ
 
 test('concurrent Codex wakes create one pane and closing during verification prevents a launch', async (t) => {
   const f = fixture(t), result = await f.imp.importMany(pick('codex', id(1))), s = f.b.sessions.get(result.imported[0].sessionId);
-  const calls = []; f.b.requireHerdr = () => {};
+  const calls = []; f.b.requireTerminal = () => {};
   f.b.withNewPane = async (make, register) => { const r = await make(); await register(r); return r; };
   f.b.adapter = { createWorkspace: async () => { calls.push('create'); return { paneId: 'p', workspaceId: 'w' }; }, refreshSubscription: async () => {}, waitShellReady: async () => true,
     startAgent: async (o) => { calls.push(o.args); return { agent: { launchPending: true } }; }, closePane: async () => {} };

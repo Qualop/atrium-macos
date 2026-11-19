@@ -103,7 +103,7 @@ test('worktree lookup expands native filesystem aliases at the backend boundary'
 });
 
 test('a late worktree-exit screen cannot type into a replacement pane', async () => {
-  const s = { sessionId: 'synthetic', paneId: 'old-pane', rt: { herdr: { agentSessionId: 'old-agent' } } };
+  const s = { sessionId: 'synthetic', paneId: 'old-pane', rt: { term: { agentSessionId: 'old-agent' } } };
   const b = { sessions: new Map([[s.sessionId, s]]), adapter: {
     readScreen: async () => { s.paneId = 'replacement-pane'; return 'Exiting worktree session\n❯ 1. Keep worktree\n  2. Remove worktree'; },
     paneKeys: async () => assert.fail('stale exit prompt must not receive keys'),

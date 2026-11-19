@@ -165,7 +165,7 @@ export function pushKindOf(sum, from) {
   if (to === 'ready' && from === 'working') return 'done';
   if (to === 'waiting' || to === 'trust_wait') return 'need';
   if (to === 'error') return 'error';
-  if (to === 'exited' && sum.exit && sum.exit.kind === 'other') return 'exit'; // 사람이 끄거나 판이 끈 것(normal, herdr_stopped)은 알리지 않는다
+  if (to === 'exited' && sum.exit && sum.exit.kind === 'other') return 'exit'; // 사람이 끄거나 판이 끈 것(normal, terminal_stopped)은 알리지 않는다
   return null;
 }
 export const prefKind = (k) => (k === 'exit' ? 'error' : k);
@@ -309,7 +309,7 @@ export class Pusher {
     try { nodes = this.tree ? this.tree() || [] : [...this.seen.values()]; } catch (e) { this.log(`push tree error: ${e.message}`); }
     if (sum) {
       const i = nodes.findIndex((n) => n.sessionId === sum.sessionId);
-      const base = i >= 0 ? nodes[i] : { parentSessionId: sum.parentSessionId || null, delivering: sum.delivering || 0, loops: sum.loops || 0, bg: null };
+      const base = i >= 0 ? nodes[i] : { parentSessionId: (sum.branch && sum.branch.workParentSessionId !== undefined ? sum.branch.workParentSessionId : sum.parentSessionId) || null, /* P159: 일 부모 */ delivering: sum.delivering || 0, loops: sum.loops || 0, bg: null };
       const mine = { ...base, sessionId: sum.sessionId, name: sum.name, kind: sum.kind, state: sum.state, workspaceKey: sum.workspaceKey };
       nodes = i >= 0 ? nodes.map((n, j) => (j === i ? mine : n)) : [...nodes, mine];
       if (!this.tree) { this.seen.delete(sum.sessionId); this.seen.set(sum.sessionId, mine); if (this.seen.size > 500) this.seen.delete(this.seen.keys().next().value); } // tree가 없으면(시험) 받은 요약을 모아 둔다

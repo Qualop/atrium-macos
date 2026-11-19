@@ -12,9 +12,11 @@ import { fileURLToPath } from 'node:url';
 import { Store } from '../src/store.mjs';
 import { Backend } from '../src/backend.mjs';
 import { Launchers, initialLaunchers } from '../src/launchers.mjs';
+import { Connections } from '../src/connections.mjs'; // P115: 게이트웨이는 연결이다
+import { migrateLaunchers } from '../src/launcher-migrate.mjs';
 import { DEFAULTS } from '../src/settings.mjs';
-import { Branch, BRANCH_ALLOW, boardSkill } from '../src/branch.mjs';
-import { buildCatalog, resolveModel, parseGatewayModel, parseOcx, variantsOf, gatewaysOf } from '../src/models.mjs';
+import { Branch, ATRIUM_ALLOW, boardSkill } from '../src/branch.mjs';
+import { buildCatalog, resolveModel, parseGatewayModel, variantsOf, gatewaysOf } from '../src/models.mjs';
 import { newRuntime, applyHook, deriveState, isModelError } from '../src/state.mjs';
 import { BOARD_SYSTEM_PROMPT } from '../src/launch.mjs';
 
@@ -34,16 +36,16 @@ const GW_MODELS = [
   { id: 'claude-opus-5-5', display_name: 'claude-opus-5-5 (anthropic)' },
 ];
 const BASE = 'http://127.0.0.1:10100';
-function catalogOf({ ok = true, launchers } = {}) {
-  const ls = launchers || initialLaunchers({ oldBoard: true, gateway: { healthUrl: `${BASE}/healthz` } }).items;
-  return buildCatalog({ providers: { codex: { models: [{ id: 'gpt-6-astra', name: 'GPT Astra' }] } }, launchers: ls, gateways: gatewaysOf(ls).map((g) => ({ ...g, ok, models: ok ? GW_MODELS : [], why: ok ? null : 'ECONNREFUSED' })) });
+function catalogOf({ ok = true } = {}) {
+  // 옛 판(P33 전)의 DeepSeek 호출자 → P115 옮기기로 연결을 쓰는 보통 claude 런처
+  const m = migrateLaunchers(initialLaunchers({ oldBoard: true, gateway: { healthUrl: `${BASE}/healthz` } }));
+  const ls = m.list.items;
+  return buildCatalog({ providers: { codex: { models: [{ id: 'gpt-6-astra', name: 'GPT Astra' }] } }, launchers: ls, gateways: gatewaysOf(ls, m.connections, m.list.favorites).map((g) => ({ ...g, ok, models: ok ? GW_MODELS : [], why: ok ? null : 'ECONNREFUSED' })) });
 }
 
-test('P41 모양 읽기: 게이트웨이 표시 이름, opencodex 모양 이름, 변형 말', () => {
+test('P41 모양 읽기: 게이트웨이 표시 이름, <제공자>/<모델> 이름, 변형 말', () => {
   assert.deepEqual(parseGatewayModel(GW_MODELS[1]), { id: 'claude-fable-5-p088[1m]', label: 'deepseek-flash (deepseek) · 1M', base: 'deepseek-flash', provider: 'deepseek', variants: ['1m'] });
   assert.deepEqual(parseGatewayModel({ id: 'deepseek/deepseek-flash' }), { id: 'deepseek/deepseek-flash', label: 'deepseek/deepseek-flash', base: 'deepseek-flash', provider: 'deepseek', variants: [] });
-  assert.deepEqual(parseOcx('ocx-claude-native--gpt-6.1-sol--fast[1m]'), { provider: 'native', base: 'gpt-6.1-sol', variants: ['1m', 'fast'] });
-  assert.equal(parseOcx('claude-opus-5-5'), null);
   assert.deepEqual(variantsOf('gpt 6.1 sol fast 1m'), ['1m', 'fast']);
   assert.deepEqual(variantsOf('deepseek flash'), []);
 });
@@ -61,13 +63,14 @@ test('P41 이름 풀기: 정확한 ID와 호출자 이름', () => {
   assert.deepEqual([r('claude-fable-5-p08e').entry.source, r('claude-fable-5-p08e').entry.gateway], ['gateway', BASE]);
 });
 
-test('P41 이름 풀기: 별칭(fable, 게이트웨이 모델 이름, opencodex 모양)', () => {
+test('P41 이름 풀기: 별칭(fable, 게이트웨이 모델 이름)', () => {
   const cat = catalogOf();
   const r = (q) => resolveModel(q, cat);
   assert.deepEqual([r('fable').how, r('fable').entry.model], ['alias', 'claude-fable-5-1']);
   assert.deepEqual([r('gpt-6.1-sol').how, r('gpt-6.1-sol').entry.model], ['alias', 'claude-fable-5-p08e'], '변형 없는 줄');
-  assert.equal(r('ocx-claude-native--gpt-6.1-sol[1m]').entry.model, 'claude-fable-5-p08e[1m]');
-  assert.equal(r('deepseek-flash').entry.launcher, 'DeepSeek', '같은 모델이면 호출자가 먼저');
+  assert.equal(r('native/gpt-6.1-sol').entry.model, 'claude-fable-5-p08e', 'P115: <제공자>/<모델> 별칭');
+  // P115: 옛 모델 이름 모양(별칭)은 없앴다. 연결이 알려 준 모델 이름으로 풀고, 그 연결을 쓰는 런처로 띄운다
+  assert.deepEqual([r('deepseek-flash').entry.source, r('deepseek-flash').entry.host, r('deepseek-flash').entry.model], ['gateway', 'DeepSeek', 'claude-fable-5-p088']);
 });
 
 test('P41 이름 풀기: 느슨한 맞춤(대소문자, 띄어쓰기·하이픈, 낱말)', () => {
@@ -75,7 +78,7 @@ test('P41 이름 풀기: 느슨한 맞춤(대소문자, 띄어쓰기·하이픈,
   const r = (q) => resolveModel(q, cat);
   for (const q of ['deepseek flash', 'DeepSeek Flash', 'deepseek_flash', 'Deepseek-Flash']) {
     const x = r(q);
-    assert.equal(x.ok, true, q); assert.equal(x.entry.launcher, 'DeepSeek', q);
+    assert.equal(x.ok, true, q); assert.equal(x.entry.host, 'DeepSeek', q); assert.equal(x.entry.model, 'claude-fable-5-p088', q);
   }
   assert.equal(r('deepseek flash').how, 'loose');
   assert.equal(r('gpt 6.1 sol').entry.model, 'claude-fable-5-p08e');
@@ -103,7 +106,7 @@ test('P41 이름 풀기: 여럿이면 띄우지 않고 후보와 명령, 없으�
   const down = catalogOf({ ok: false });
   assert.equal(resolveModel('gpt-6.1-sol', down).ok, false);
   assert.equal(resolveModel('deepseek flash', down).entry.launcher, 'DeepSeek');
-  assert.deepEqual(down.gateways, [{ url: BASE, host: 'DeepSeek', ok: false, why: 'ECONNREFUSED', count: 0 }]);
+  assert.deepEqual(down.gateways, [{ url: BASE, connection: 'DeepSeek', protocol: 'anthropic-messages', host: 'DeepSeek', ok: false, why: 'ECONNREFUSED', count: 0 }]);
 });
 
 // ---------- 판에서: Backend.spawn(가짜 herdr)과 Branch ----------
@@ -118,16 +121,17 @@ const gatewayServer = () => server((req, res) => {
 });
 async function board({ gatewayUrl }) {
   const dir = tmp();
-  const b = new Backend({ quietMs: 600000, port: 0, logDir: dir, sessionsDir: path.join(dir, 'sessions'), claudeJson: path.join(dir, 'none.json'), claudeCommand: 'claude', hookTimeoutSec: 2, ocxHealthUrl: `${gatewayUrl}/healthz`, herdrSession: 'atrium-dev-p41test', profile: 'dev', dataDir: dir });
+  const b = new Backend({ quietMs: 600000, port: 0, logDir: dir, sessionsDir: path.join(dir, 'sessions'), claudeJson: path.join(dir, 'none.json'), claudeCommand: 'claude', hookTimeoutSec: 2, terminalSession: 'atrium-dev-p41test', profile: 'dev', dataDir: dir });
   b.store = new Store(path.join(dir, 'board.db'));
-  b.sessions = new Map(); b.herdrOk = true; b.hookUrl = 'http://127.0.0.1:1/hook'; b.plugin = {}; b.apiToken = 'board-api-token';
+  b.sessions = new Map(); b.termOk = true; b.hookUrl = 'http://127.0.0.1:1/hook'; b.plugin = {}; b.apiToken = 'board-api-token';
   b.agentModels = async ({ kind }) => ({ models: kind === 'codex' ? [{ id: 'gpt-6-astra', name: 'GPT Astra' }] : [] });
-  b.store.setMeta('settings', { branchMaxChildren: 16 });
-  b.features = { settings: { get: () => ({ ...DEFAULTS }) }, launchers: null };
-  b.features.launchers = new Launchers({ store: b.store, gateway: { healthUrl: `${gatewayUrl}/healthz` } });
+  b.features = { settings: { get: () => ({ ...DEFAULTS, childModelClaude: '', childModelCodex: '', childEffort: '' }) }, launchers: null, connections: null }; // macOS 판: 이 시험은 물려받기를 본다(하위 세션 기본값은 account-failover와 child-defaults 시험)
+  b.store.setMeta('settings', { branchMaxChildren: 16 }); // DeepSeek 호출자가 있는 옛 판. P115: 그 호출자는 연결(게이트웨이 주소)을 쓰는 claude 런처로 옮겨진다
+  b.features.connections = new Connections({ store: b.store, inUse: (id) => b.features.launchers.usersOf(id) });
+  b.features.launchers = new Launchers({ store: b.store, gateway: { healthUrl: `${gatewayUrl}/healthz` }, connections: b.features.connections });
   b.queue = { enqueue: () => ({ deliveryId: 'd1', status: 'queued' }), pending: () => 0 };
   b.api = { broadcast() {} };
-  b.broadcastSession = () => {}; b.broadcastWorkspaces = () => {}; b.probeGit = () => {}; b.registerResume = () => {};
+  b.broadcastSession = () => {}; b.broadcastWorkspaces = () => {}; b.probeGit = () => {};
   b.ensureLink = (from, to, patch) => ({ linkId: 'l1', from, to, ...patch }); b.linkEvent = () => ({});
   b.summary = (s) => ({ state: deriveState(s.rt).state, ask: null, error: deriveState(s.rt).error || s.rt.lastError || null });
   b.branch = new Branch(b, { readyWaitMs: 30, submitWaitMs: 10 });
@@ -140,7 +144,7 @@ async function board({ gatewayUrl }) {
     startAgent: async (o) => { calls.push(['startAgent', o]); return { agent: null, argv: [o.kind, ...o.args] }; },
     sendText: async () => {}, paneKeys: async () => {},
   };
-  b.requireHerdr = () => {};
+  b.requireTerminal = () => {};
   // 판이 띄운 부모 세션(haiku, 노력 low, acceptEdits)
   const lead = await b.spawn({ cwd: dir, name: 'lead', kind: 'claude', model: 'haiku', effort: 'low', permissionMode: 'acceptEdits' });
   const startOf = (name) => calls.filter((c) => c[0] === 'startAgent' && c[1].name === name).at(-1)[1].args;
@@ -174,7 +178,8 @@ test('P41 atrium child --launcher: 호출자의 하네스·모델·옵션·게�
     // codex 호출자: 하네스 codex, -m 모델
     b.features.launchers.update({ id: 'codex', patch: { model: 'gpt-6-astra' } });
     const cx = await b.branch.spawnChild(lead, { name: 'cx1', launcher: 'Codex', wait: false });
-    assert.equal(cx.kind, 'codex'); assert.deepEqual(startOf('cx1'), ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', '--model', 'gpt-6-astra']);
+    // P96: 부모(acceptEdits)의 권한을 Codex 승인 인자로 옮긴다
+    assert.equal(cx.kind, 'codex'); assert.deepEqual(startOf('cx1'), ['-c', 'check_for_update_on_startup=false', '-m', 'gpt-6-astra', '--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']);
     b.store.close();
   } finally { await gw.close(); }
 });
@@ -183,10 +188,10 @@ test('P41 atrium child --model <말>: 풀어서 띄우고 무엇으로 풀었는
   const gw = await gatewayServer();
   try {
     const { b, lead, calls, startOf, arg, settingsOf } = await board({ gatewayUrl: gw.url });
-    // "deepseek flash" → 호출자 DeepSeek(게이트웨이 env)
+    // "deepseek flash" → 연결 DeepSeek의 모델(그 연결을 쓰는 런처 DeepSeek로)
     const ds = await b.branch.spawnChild(lead, { name: 'ds1', model: 'deepseek flash', wait: false });
-    assert.equal(ds.resolved.how, 'loose'); assert.equal(ds.resolved.source, 'launcher'); assert.equal(ds.resolved.launcher, 'DeepSeek');
-    assert.match(ds.resolved.to, /런처 DeepSeek/);
+    assert.equal(ds.resolved.how, 'loose'); assert.equal(ds.resolved.source, 'gateway'); assert.equal(ds.model, 'claude-fable-5-p088');
+    assert.match(ds.resolved.to, /런처 DeepSeek로 띄운다/);
     assert.equal(settingsOf(ds).env.ANTHROPIC_BASE_URL, gw.url);
     // "haiku" → 하네스 모델(게이트웨이 env 없음), 부모의 노력 수준·권한 모드
     const hk = await b.branch.spawnChild(lead, { name: 'hk1', model: 'haiku', wait: false });
@@ -200,9 +205,9 @@ test('P41 atrium child --model <말>: 풀어서 띄우고 무엇으로 풀었는
     assert.equal(arg(ga, '--model'), 'claude-fable-5-p08e'); assert.equal(arg(ga, '--permission-mode'), 'acceptEdits'); assert.equal(arg(ga, '--effort'), 'low');
     assert.deepEqual([settingsOf(gp).env.ANTHROPIC_BASE_URL, settingsOf(gp).env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY], [gw.url, '1']);
     assert.equal(b.sessions.get(gp.sessionId).flavor, null);
-    // 게이트웨이의 DeepSeek 모델은 DeepSeek 로고로 보인다
+    // P115: 연결 모델은 그 연결을 쓰는 런처로 띄운다(제공자 이름으로 로고를 바꾸는 특별 취급은 없앴다. 로고는 그 런처의 아이콘)
     const dg = await b.branch.spawnChild(lead, { name: 'dsg', model: 'claude-fable-5-p088', wait: false });
-    assert.equal(dg.resolved.source, 'gateway'); assert.equal(b.sessions.get(dg.sessionId).flavor, 'deepseek');
+    assert.equal(dg.resolved.source, 'gateway'); assert.equal(b.sessions.get(dg.sessionId).flavor, null);
     assert.ok(b.store.events({ sessionId: lead.sessionId }).some((e) => e.kind === 'branch_child' && e.data.child === 'gpt' && e.data.resolved.source === 'gateway'));
     // 여럿·없음: 띄우지 않고 후보와 atrium models
     const n0 = calls.length;
@@ -218,7 +223,7 @@ test('P41 게이트웨이가 닿지 않으면: 게이트웨이 모델은 목록�
   const down = gw.url; await gw.close(); // 닫힌 주소
   const { b, lead, calls } = await board({ gatewayUrl: down });
   const n0 = calls.length;
-  await assert.rejects(b.branch.spawnChild(lead, { name: 'gpt', model: 'gpt-6.1-sol', wait: false }), (e) => e.code === 'model_unknown' && /게이트웨이가 닿지 않아/.test(e.message) && e.message.includes(down));
+  await assert.rejects(b.branch.spawnChild(lead, { name: 'gpt', model: 'gpt-6.1-sol', wait: false }), (e) => e.code === 'model_unknown' && /연결이 닿지 않아/.test(e.message) && e.message.includes(down));
   await assert.rejects(b.branch.spawnChild(lead, { name: 'ds1', model: 'deepseek flash', wait: false }), (e) => ['deepseek_proxy_down', 'gateway_down'].includes(e.code) && e.message.includes(down));
   await assert.rejects(b.branch.spawnChild(lead, { name: 'ds2', launcher: 'DeepSeek', wait: false }), (e) => ['deepseek_proxy_down', 'gateway_down'].includes(e.code));
   assert.equal(calls.length, n0, '패널을 만들지 않았다');
@@ -235,7 +240,7 @@ test('P41 물려받기: 게이트웨이 세션의 하위 세션은 --model 없�
     const dsS = b.sessions.get(ds.sessionId);
     const kid = await b.branch.spawnChild(dsS, { name: 'ds1-w1', wait: false });
     assert.equal(kid.inheritedGateway, gw.url);
-    assert.equal(arg(startOf('ds1-w1'), '--model'), 'ocx-claude-deepseek--deepseek-flash[1m]');
+    assert.equal(arg(startOf('ds1-w1'), '--model'), 'claude-fable-5-p088');
     assert.equal(settingsOf(kid).env.ANTHROPIC_BASE_URL, gw.url);
     // 게이트웨이 아닌 부모는 지금처럼(env 없음)
     const plain = await b.branch.spawnChild(lead, { name: 'p1', wait: false });
@@ -267,8 +272,8 @@ test('P41 atrium models: 호출자, 하네스 모델·별칭, 게이트웨이 �
     const env = b.branch.envFor(lead.sessionId);
     const out = await runChild(['models'], env);
     assert.equal(out.code, 0, out.stderr);
-    assert.match(out.stdout, /런처 DeepSeek .*게이트웨이 경유/); assert.match(out.stdout, /atrium child <이름> --model haiku/);
-    assert.match(out.stdout, /게이트웨이 http:\/\/127\.0\.0\.1:\d+\(런처 DeepSeek의 env로 띄운다\)의 모델 \d+개/);
+    assert.match(out.stdout, /런처 DeepSeek .*연결 DeepSeek\(http/); assert.match(out.stdout, /atrium child <이름> --model haiku/);
+    assert.match(out.stdout, /연결 DeepSeek\(http:\/\/127\.0\.0\.1:\d+, anthropic-messages\)의 모델 \d+개\(런처 DeepSeek로 띄운다\)/);
     const bad = await runChild(['child', 'x9', '--model', 'gpt-99', '--no-wait'], env);
     assert.notEqual(bad.code, 0); assert.match(bad.stderr, /model_unknown/); assert.match(bad.stderr, /atrium models/);
     const words = await runChild(['child', 'x9', '--model', 'deepseek', 'flash'], env);
@@ -278,7 +283,7 @@ test('P41 atrium models: 호출자, 하네스 모델·별칭, 게이트웨이 �
     const typo = await runChild(['child', 'x9', '--launchre', 'DeepSeek'], env);
     assert.equal(typo.code, 2); assert.match(typo.stderr, /모르는 옵션/);
     const ok = await runChild(['child', 'ds9', '--model', 'deepseek flash', '--no-wait'], env);
-    assert.equal(ok.code, 0, ok.stderr); assert.match(ok.stdout, /모델 "deepseek flash" → 런처 DeepSeek/);
+    assert.equal(ok.code, 0, ok.stderr); assert.match(ok.stdout, /모델 "deepseek flash" → 연결 DeepSeek의 모델 deepseek-flash .*런처 DeepSeek로 띄운다/);
     const named = await runChild(['child', 'effort-worker', '--launcher=Claude Code', '--effort=high', '--no-wait', '--json'], env);
     assert.equal(named.code, 0, named.stderr); assert.equal(JSON.parse(named.stdout).effort, 'high');
     b.store.close();
@@ -301,10 +306,10 @@ function allowed(rules, tool, cmd) {
   });
 }
 test('P41 승인 규칙: atrium models는 묻지 않는다(옛 이름 mtask도)', () => {
-  for (const c of ['atrium models', 'atrium models --json', 'mtask models']) assert.ok(allowed(BRANCH_ALLOW, 'Bash', c), c);
-  assert.ok(allowed(BRANCH_ALLOW, 'PowerShell', 'atrium models'));
-  assert.ok(allowed(BRANCH_ALLOW, 'Bash', 'atrium child ds1 --model "deepseek flash"'));
-  assert.ok(!allowed(BRANCH_ALLOW, 'Bash', 'atrium launchers'), '판 CLI의 다른 명령은 그대로 묻는다');
+  for (const c of ['atrium models', 'atrium models --json', 'mtask models']) assert.ok(allowed(ATRIUM_ALLOW, 'Bash', c), c);
+  assert.ok(allowed(ATRIUM_ALLOW, 'PowerShell', 'atrium models'));
+  assert.ok(allowed(ATRIUM_ALLOW, 'Bash', 'atrium child ds1 --model "deepseek flash"'));
+  assert.ok(!allowed(ATRIUM_ALLOW, 'Bash', 'atrium launchers'), '판 CLI의 다른 명령은 그대로 묻는다');
 });
 
 test('P41 스킬 글과 짧은 안내: 말로 한 모델은 atrium models로 골라 띄우고, ID를 묻지 않고, 내부 하위 에이전트로 우회하지 않는다', () => {
@@ -324,7 +329,7 @@ test('P41 모델 오류: 같은 밀리초에 연달아 난 두 오류도 각각 
   const b = { store: { branchRows: () => [], addEvent: (sid, kind, data) => added.push([sid, kind, data]) }, bus: { on() {} }, log() {} };
   const br = new Branch(b);
   const rt = newRuntime({ kind: 'claude', hooked: true });
-  rt.herdr.status = 'idle'; rt.herdr.present = true; rt.phase = 'running';
+  rt.term.status = 'idle'; rt.term.present = true; rt.phase = 'running';
   const s = { sessionId: 'k1', name: 'w1', model: 'haiku', rt };
   applyHook(rt, { hook_event_name: 'UserPromptSubmit', prompt: '1+1' });
   applyHook(rt, { hook_event_name: 'StopFailure', error: 'model_not_found', message: 'first' });
@@ -338,7 +343,7 @@ test('P41 모델 오류: 같은 밀리초에 연달아 난 두 오류도 각각 
 
 test('P41 모델 오류: StopFailure model_not_found나 Claude Code의 오류 글로 끝난 턴은 error, 인용한 답은 아니다. 판 이벤트와 atrium children', async () => {
   const rt = newRuntime({ kind: 'claude', hooked: true });
-  rt.herdr.status = 'idle'; rt.herdr.present = true; rt.phase = 'running';
+  rt.term.status = 'idle'; rt.term.present = true; rt.phase = 'running';
   applyHook(rt, { hook_event_name: 'UserPromptSubmit', prompt: '1+1' });
   applyHook(rt, { hook_event_name: 'Stop', last_assistant_message: "There's an issue with the selected model (deepseek-flash). It may not exist or you may not have access to it. Run /model to pick a different model." });
   assert.equal(deriveState(rt).state, 'error'); assert.equal(deriveState(rt).error.type, 'model_not_found');
@@ -355,7 +360,7 @@ test('P41 모델 오류: StopFailure model_not_found나 Claude Code의 오류 �
     const { b, lead } = await board({ gatewayUrl: gw.url });
     const k = await b.branch.spawnChild(lead, { name: 'w1', model: 'haiku', wait: false });
     const ks = b.sessions.get(k.sessionId);
-    ks.rt.herdr.status = 'idle'; ks.rt.herdr.present = true; ks.rt.phase = 'running';
+    ks.rt.term.status = 'idle'; ks.rt.term.present = true; ks.rt.phase = 'running';
     applyHook(ks.rt, { hook_event_name: 'UserPromptSubmit', prompt: '1+1' });
     applyHook(ks.rt, { hook_event_name: 'StopFailure', error: 'model_not_found', message: "There's an issue with the selected model (haiku)." });
     b.bus.emit('session', ks, b.summary(ks)); b.bus.emit('session', ks, b.summary(ks));

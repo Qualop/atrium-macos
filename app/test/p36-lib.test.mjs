@@ -15,7 +15,7 @@ test('미션 맵: 하위 세션 32개와 8단계 사슬이 겹치지 않고, 단
   for (let d = 2; d <= 8; d++) { nodes.push({ id: `d${d}`, kind: 'session', name: `zz${d}`, parentId: p, role: '워커', depth: d }); p = `d${d}`; }
   const L = missionLayout({ nodes, edges });
   const boxes = [...L.boxes.values()].filter((b) => b.kind !== 'dots');
-  assert.equal(boxes.length, nodes.length);
+  assert.equal(boxes.length, nodes.length - 1, '세션마다 상자(동그라미도) 하나(P145: 나는 없다)');
   for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) assert.ok(!ov(boxes[i], boxes[j]), `${boxes[i].node.id} ${boxes[j].node.id}`);
   const col = (id) => L.boxes.get(id).depth;
   assert.equal(col('lead'), 1); assert.equal(col('w1'), 2); assert.equal(col('d8'), 8);

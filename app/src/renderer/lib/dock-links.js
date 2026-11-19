@@ -6,6 +6,7 @@
 //    괄호와 둘레 길은 지하철 노선처럼 차선(lane)을 나눠 겹치지 않게 한다(짧은 길이 안쪽 차선).
 // 4. 둘레에 닿지 않는 칸(3 × 3 가운데처럼)이 낀 연결: 선 대신 그 칸 머리줄의 작은 칩.
 
+import { shownRole } from './roles.js'; // P141(#17): 기본 역할은 지금 언어로
 export const centerOf = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
 const EPS = 1; // 판 px. 칸 경계는 정수 좌표라 1px 안이면 같은 선으로 본다
 export const SIDES = ['right', 'bottom', 'left', 'top']; // 같은 길이면 이 차례로 고른다
@@ -205,7 +206,7 @@ export function labelSpot(points) {
 // 글의 낱말들. names: 칸 id → 세션 이름, words: { spawned, directed }(사전의 말, Links.jsx 선 글과 같다)
 // → { role(사용자가 붙인 역할, 없으면 띄움·작업 요청), dir('@a → @b'), spawnTag(역할도 있고 띄우기도 했는가) }
 export function dockLabelParts(link, names, words) {
-  const role = link.role || (link.spawned && !link.observed ? words.spawned : words.directed);
+  const role = shownRole(link.role) || (link.spawned && !link.observed ? words.spawned : words.directed);
   return { role, dir: `@${names[link.from] || '?'} → @${names[link.to] || '?'}`, spawnTag: !!(link.role && link.spawned) };
 }
 

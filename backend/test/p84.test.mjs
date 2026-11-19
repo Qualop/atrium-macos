@@ -58,7 +58,7 @@ test('web.boot: 기기 연결 하나에 한 번, crashed가 아니면 남기지 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p84-'));
   const store = new Store(path.join(dir, 'board.db'));
   const tailscale = { status: () => null, on: () => {}, off: () => {}, stop: () => {} };
-  const web = new WebServer({ cfg: { remoteEnabled: true, port: 1, dataDir: dir, profile: 'dev', herdrSession: 'atrium-dev-test' }, store, api: null, tailscale, settings: () => ({ remoteAccess: true }) });
+  const web = new WebServer({ cfg: { remoteEnabled: true, port: 1, dataDir: dir, profile: 'dev', terminalSession: 'atrium-dev-test' }, store, api: null, tailscale, settings: () => ({ remoteAccess: true }) });
   try {
     const h = web.handlers()['web.boot'];
     const dev = { auth: { kind: 'device', device: { id: 'dev-1', name: 'iPhone' }, meta: { remote: true, addr: '100.64.0.2', browser: 'Safari 18 · iOS', login: 'user@example.com' }, tsNode: { id: 'n1', name: 'phone-a' } } };

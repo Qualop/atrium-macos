@@ -1,6 +1,6 @@
 // 붙여 묶기의 분할 나무(ARCH 4절 H5, P17). 순수 함수만 둔다. 창(renderer)도 이 파일을 그대로 묶어 쓴다(node 모듈을 부르지 않는다).
 //
-// - 덩어리 하나는 tmux·herdr 창 분할처럼 분할 나무다. 잎은 세션 ID(글자열), 마디는 { dir: 'row' | 'col', kids: [...], ratios: [...] }.
+// - 덩어리 하나는 tmux 창 분할처럼 분할 나무다. 잎은 세션 ID(글자열), 마디는 { dir: 'row' | 'col', kids: [...], ratios: [...] }.
 //   row는 왼쪽|오른쪽, col은 위/아래로 나눈다. ratios는 자식마다의 몫(합 1).
 // - 나무는 덩어리의 바깥 직사각형 안을 틈 없이 채운다(layout). 잎마다 최소 크기(LEAF_MIN)를 지키고, 모자라면 바깥이 커진다.
 // - 정리(normalize): 빈 마디와 자식 하나만 남은 마디를 없애고, 같은 방향으로 겹친 마디를 하나로 편다(비율은 곱한다).
@@ -136,7 +136,7 @@ export function remove(t, id) {
 }
 
 // 잎을 뺀 뒤의 나무와 바깥. 뿌리 마디의 바로 아래 잎이면 바깥이 그만큼 줄고(남은 것의 크기는 그대로, 왼쪽 위 자리는 그대로: 옛 한 줄 덩어리와 같다),
-// 더 안쪽 잎이면 바깥은 그대로 두고 같은 마디의 이웃이 그 자리를 나눠 채운다(tmux·herdr 분할과 같다)
+// 더 안쪽 잎이면 바깥은 그대로 두고 같은 마디의 이웃이 그 자리를 나눠 채운다(tmux 분할과 같다)
 export function removeWithOuter(t, outer, id, min = LEAF_MIN) {
   const tree = remove(t, id);
   if (!tree || isLeaf(t) || !t.kids.includes(id)) return { tree, outer: { ...outer } };

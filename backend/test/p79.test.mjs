@@ -17,7 +17,7 @@ const ASK = 'Reply with the single word ok-w1 and do nothing else.';
 function rig(t, { look = () => ({ box: 'ours', seen: false }), view = {} } = {}) {
   t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
   const log = { sent: [], enter: 0, inspect: 0, recover: [] };
-  const v = { state: 'ready', agentPresent: true, herdrConnected: true, closed: false, lastUserInputAt: 0, ...view };
+  const v = { state: 'ready', agentPresent: true, termConnected: true, closed: false, lastUserInputAt: 0, ...view };
   const q = new DeliveryQueue({
     store: fakeStore(), cfg, view: () => v,
     send: async (sid, text) => { log.sent.push(text); },
@@ -124,7 +124,7 @@ test('P79 일하는 중이면(working) 손대지 않고 확인을 기다린다. 
   t.mock.timers.reset();
   t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
   const sent = [];
-  const plain = new DeliveryQueue({ store: fakeStore(), cfg, view: () => ({ state: 'ready', agentPresent: true, herdrConnected: true, closed: false }), send: async (s, x) => sent.push(x) });
+  const plain = new DeliveryQueue({ store: fakeStore(), cfg, view: () => ({ state: 'ready', agentPresent: true, termConnected: true, closed: false }), send: async (s, x) => sent.push(x) });
   const d = plain.enqueue('s', ASK);
   await tick();
   t.mock.timers.tick(30500); plain.pump();
@@ -159,8 +159,9 @@ test('P79 부모에게 알리기: 첫 요청이 unconfirmed·failed로 끝나면
   assert.equal(events.filter((e) => e.kind === 'first_prompt_lost').length, 1);
   assert.equal(enq.length, 1);
   assert.equal(enq[0].sid, 'lead');
-  assert.match(enq[0].text, /@w1에게 보낸 첫 요청이 들어가지 않았다\(unconfirmed/);
-  assert.match(enq[0].text, /herdr agent prompt w1 "<할 일>"/);
+  assert.match(enq[0].text, /@w1에게 보낸 첫 요청이 들어가지 않았을 수 있다\(unconfirmed/);
+  assert.match(enq[0].text, /atrium prompt w1 "<할 일>"/); // P116
+  assert.match(enq[0].text, /atrium read w1 --lines 40/);
   assert.equal(linkEv[0].data.why, 'first prompt lost');
   assert.equal(br.lost.get('w1').status, 'unconfirmed', 'atrium children에 보인다');
   br.onDeliveryEnd({ deliveryId: 'd1', status: 'unconfirmed', reason: 'x' });

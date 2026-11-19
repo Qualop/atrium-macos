@@ -26,7 +26,7 @@ const NEED = new Set(['waiting', 'trust_wait']);
 const BUSY = new Set(['working', 'starting']);
 export const needsYou = (s) => !!s && NEED.has(s.state);
 export const isBusy = (s) => !!s && (BUSY.has(s.state) || !!s.waking || (s.kind === 'shell' && s.shell && s.shell.atPrompt === false && s.state !== 'exited' && s.state !== 'sleeping'));
-const askSince = (s) => (s.ask && s.ask.since) || s.lastActivityAt || s.createdAt || 0;
+const askSince = (s) => s.waitingSince || (s.ask && s.ask.since) || s.lastActivityAt || s.createdAt || 0;
 // P90: 시작한 지 오래된 것부터(세션을 띄운 시각). 같으면 이름, 그다음 ID 순으로 늘 같은 자리
 const byStart = (a, b) => (a.createdAt || 0) - (b.createdAt || 0) || String(a.name).localeCompare(String(b.name)) || String(a.sessionId).localeCompare(String(b.sessionId));
 // 나머지 안에서는 살아 있는 세션 먼저, 끝났거나 잠든 세션은 아래로
@@ -105,9 +105,9 @@ export function keyBytes(key, { appCursor = false } = {}) {
 }
 
 // P104: 키 패드(응답 키). 판은 답을 고르지 않고 누른 키를 그 세션 패널에 그대로 보낸다(백엔드 session.keys, 받는 키는 keys.mjs KEY_NAMES).
-// 그래서 Claude Code, Codex, 셸 어디서나 같다. 두 줄 일곱 칸: 위 [Esc 1 2 3 4 ↑ Tab], 아래 [닫기 Space Enter(두 칸) ← ↓ →]
+// 그래서 Claude Code, Codex, 셸 어디서나 같다. 두 줄 일곱 칸: 위 [Esc 1 2 3 4 ↑ ⌫], 아래 [닫기 Tab Space Enter ← ↓ →](2026-11-15 사용자: 백스페이스 추가)
 // 숫자는 1~4: Claude Code의 권한 질문(3개까지)·계획 승인(4개까지)·AskUserQuestion(선택지 2~4개)의 번호. 그 밖의 줄과 다른 하네스는 화살표와 Enter로 고른다
-export const PAD_KEYS = ['esc', '1', '2', '3', '4', 'up', 'tab', 'space', 'enter', 'left', 'down', 'right'];
+export const PAD_KEYS = ['esc', '1', '2', '3', '4', 'up', 'backspace', 'tab', 'space', 'enter', 'left', 'down', 'right'];
 export const PAD_MAX = 32; // 요청 하나에 담는 키(keys.mjs KEYS_MAX)
 
 // 누른 키를 차례로 보낸다. 앞 요청이 돌아오기 전에 누른 키는 모아 다음 요청 하나로 보낸다(빠지지 않고 차례가 섞이지 않는다).

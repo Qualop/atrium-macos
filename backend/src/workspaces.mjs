@@ -1,6 +1,6 @@
 // 리포지토리 워크스페이스(ARCH 4절 G, P5). 순수 함수만 둔다. 창(renderer)도 이 파일을 그대로 묶어 쓴다(node 모듈을 부르지 않는다).
 //
-// 판의 "워크스페이스"는 리포지토리 하나다. herdr의 "작업 공간"(workspace_id, 코드에서는 herdrWorkspaceId)과 다르다.
+// 판의 "워크스페이스"는 리포지토리 하나다. 터미널의 "작업 공간"(workspace_id, 코드에서는 termWorkspaceId)과 다르다.
 // 코드에서 워크스페이스는 키(workspaceKey)로 가리킨다.
 // - git 저장소 안에서 시작한 세션: 시작 폴더의 git 공통 폴더(`rev-parse --git-common-dir`)를 절대 경로, 슬래시, 소문자로. 워크트리도 본 저장소와 같은 키다.
 // - git 저장소가 아닌 폴더: 그 폴더 자체를 같은 방식으로.
@@ -60,6 +60,25 @@ export function workspaceCounts(sessions, key) {
     if (s.unseen) c.review++;
   }
   return c;
+}
+
+// P120: 판이 스스로 치울 워크스페이스. 폴더(뿌리)가 디스크에 없고 세션(살아 있는 것, 잠든 것, 다시 열 수 있는 닫힌 기록)이 하나도 없는 것만이다.
+// 폴더가 잠깐 안 보이는 때(드라이브 연결, 이름 바꾸기 중)에 지우지 않게, 처음 없다고 본 뒤 graceMs가 지나도 없을 때만 고른다.
+// workspaces: [{ key, root }], exists(root) → bool, busyKeys: 세션(열린 것·닫힌 기록)이 든 워크스페이스 키, missingSince: Map 키 → 처음 없다고 본 시각(고쳐 쓴다).
+// 순수 함수(exists만 부른다) → 지울 키 목록
+export const GONE_GRACE_MS = 60000;
+export function goneWorkspaces(workspaces, { exists, busyKeys = new Set(), missingSince = new Map(), now = Date.now(), graceMs = GONE_GRACE_MS } = {}) {
+  const out = [];
+  const seen = new Set();
+  for (const w of workspaces || []) {
+    seen.add(w.key);
+    if (!w.root || exists(w.root)) { missingSince.delete(w.key); continue; }
+    if (!missingSince.has(w.key)) missingSince.set(w.key, now);
+    if (busyKeys.has(w.key)) continue;
+    if (now - missingSince.get(w.key) >= graceMs) out.push(w.key);
+  }
+  for (const k of [...missingSince.keys()]) if (!seen.has(k)) missingSince.delete(k);
+  return out;
 }
 
 // 세션이 지금 자기 워크스페이스 밖(다른 저장소, 저장소 밖 폴더)에서 일하는가. 노드에 표시만 하고 워크스페이스는 옮기지 않는다(G1)

@@ -57,8 +57,11 @@ function removePermissions(kind, args) {
   }
   return out;
 }
+// macOS 판: Claude는 자동 권한 검토(--permission-mode auto)로 띄운다. bypassPermissions는 실행마다 "Bypass Permissions mode" 확인 화면을 띄우고
+// 도구를 검토 없이 돌린다. auto는 Claude Code가 도구 실행을 스스로 검토해 위험한 것만 막는다(사용자 결정, 2026-11-18)
+export const CLAUDE_AUTO_MODE = 'auto';
 const FULL_AUTO = {
-  claude: ['--permission-mode', 'bypassPermissions'],
+  claude: ['--permission-mode', CLAUDE_AUTO_MODE],
   codex: ['--dangerously-bypass-approvals-and-sandbox'],
   gemini: ['--approval-mode', 'yolo'],
   agy: ['--dangerously-skip-permissions'],
@@ -80,7 +83,7 @@ export function providerPermissionArgs(kind, value = [], permissionMode = 'manua
 // Claude uses the plan field; the other providers consume plan.args.
 export function applyAgentAutoApprove(plan, settings = {}) {
   if (settings.agentAutoApprove !== true || !Object.hasOwn(FULL_AUTO, plan.kind)) return plan;
-  return { ...plan, permissionMode: 'bypassPermissions',
+  return { ...plan, permissionMode: plan.kind === 'claude' ? CLAUDE_AUTO_MODE : 'bypassPermissions',
     ...(plan.kind === 'claude' ? { extraArgs: removePermissions('claude', splitArgs(plan.extraArgs)) }
       : { args: providerPermissionArgs(plan.kind, plan.args, plan.permissionMode, { autoApprove: true }) }) };
 }

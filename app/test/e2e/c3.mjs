@@ -9,7 +9,7 @@ const { app, page } = await launch({ log });
 const call = (m, p) => page.evaluate(([mm, pp]) => window.__mt.api.call(mm, pp), [m, p]);
 const S = async (name) => (await sessionsOf(page)).find((s) => s.name === name);
 const full = (name) => page.evaluate((n) => [...window.__mt.getState().sessions.values()].find((s) => s.name === n), name);
-const killHerdr = async () => { const st = await call('herdr.status'); execFileSync('taskkill', ['/PID', String(st.serverPid), '/F']); return st.serverPid; };
+const killHerdr = async () => { const st = await call('terminal.status'); execFileSync('taskkill', ['/PID', String(st.serverPid), '/F']); return st.serverPid; };
 const view = async (names) => {
   const ns = await page.evaluate(() => [...window.__mt.getState().nodes.entries()].map(([id, r]) => ({ id, ...r })));
   const ids = new Set((await sessionsOf(page)).filter((s) => names.includes(s.name)).map((s) => s.id));
@@ -30,12 +30,12 @@ await sleep(1500);
 log('끄기 전', (await sessionsOf(page)).map((s) => `${s.name}:${s.state}`).join(' '));
 const pid = await killHerdr();
 log('강제 종료한 herdr 서버 pid(개발용 atrium-dev)', pid);
-await until(() => page.evaluate(() => window.__mt.getState().herdr.connected === false), 10000);
+await until(() => page.evaluate(() => window.__mt.getState().terminal.connected === false), 10000);
 await sleep(1500);
 log('끈 뒤', (await sessionsOf(page)).map((s) => `${s.name}:${s.state}`).join(' '), (await full('c')).interruptedTurn);
 await shot(page, 'c3-1-herdr-down', log);
 // 창의 "herdr 켜기"로 다시 띄운다
-await page.click('[data-action="herdr-start"]');
+await page.click('[data-action="terminal-start"]');
 await until(async () => { const ss = await sessionsOf(page); return ss.filter((s) => ['a', 'b', 'c', 'd'].includes(s.name)).every((s) => s.state === 'ready'); }, 90000);
 await sleep(3000);
 const b = await full('b'), c = await full('c');
@@ -63,9 +63,9 @@ const t0 = Date.now();
 while (!reg && Date.now() - t0 < 60000) { const e = await call('session.events', { session: 'k2', limit: 60 }); reg = e.find((x) => x.kind === 'resume_registered'); if (!reg) await sleep(40); }
 const pid2 = await killHerdr();
 log('k2 등록', reg && new Date(reg.t).toISOString().slice(11, 23), '→ 곧바로 herdr 강제 종료 pid', pid2, `(등록 뒤 ${Date.now() - reg.t}ms)`);
-await until(() => page.evaluate(() => window.__mt.getState().herdr.connected === false), 10000);
+await until(() => page.evaluate(() => window.__mt.getState().terminal.connected === false), 10000);
 await sleep(1200);
-await page.click('[data-action="herdr-start"]');
+await page.click('[data-action="terminal-start"]');
 await until(async () => { const k = await S('k2'); return k && k.state === 'ready'; }, 120000);
 await sleep(3000);
 const kev = await call('session.events', { session: 'k2', limit: 80 });

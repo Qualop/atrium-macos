@@ -237,7 +237,7 @@ test('판 세션인 대화(CLI에서 시작해 앱이 가져간 대화)는 건�
   const f = fixture();
   f.app('adopted', { cliSessionId: ID(1), cwd: f.repo, adoptedFromOtherSurface: true, title: 'Adopted' });
   f.convo(f.repo, ID(1), [['a', 'b']]);
-  f.store.insertSession({ sessionId: ID(1), name: 'cli1', cwd: f.repo, paneId: null, herdrWorkspaceId: null, agentName: 'cli1', model: null, effort: null, permissionMode: 'manual', settingsPath: 'x', hookToken: 'x', resumeArgv: null, createdAt: 1, touchedAt: 1, runtime: {}, kind: 'claude', origin: 'board', parentSessionId: null, workspaceKey: null, flavor: null, extraArgs: [] });
+  f.store.insertSession({ sessionId: ID(1), name: 'cli1', cwd: f.repo, paneId: null, termWorkspaceId: null, agentName: 'cli1', model: null, effort: null, permissionMode: 'manual', settingsPath: 'x', hookToken: 'x', resumeArgv: null, createdAt: 1, touchedAt: 1, runtime: {}, kind: 'claude', origin: 'board', parentSessionId: null, workspaceKey: null, flavor: null, extraArgs: [] });
   const c = byId(await f.imp.list()).local_adopted;
   assert.equal(c.status, 'onBoard'); assert.equal(c.adopted, true); assert.equal(c.pick, false);
   const r = await f.imp.importMany({ ids: ['local_adopted', 'local_none'] });

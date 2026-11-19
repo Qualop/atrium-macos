@@ -1,6 +1,7 @@
 // P33 단위 시험: 호출자(launchers.mjs). 하네스별 풀기와 명령 미리보기, 옛 설정 옮기기와 새 판 기본값(두 번 돌려도 같음),
 // 검사(이름 겹침, 잘못된 모델 글자, 줄바꿈 든 명령, 환경 변수 이름, 판이 정하는 인자), 즐겨찾기·순서, session.spawn { launcher }(가짜 herdr)
 import test from 'node:test';
+import { migrateLaunchers } from '../src/launcher-migrate.mjs'; // P115
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,27 +15,29 @@ import { DEFAULTS } from '../src/settings.mjs';
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p33-'));
 const L = (o) => normalizeLauncher({ name: 'x', ...o });
 
-test('P33 풀기: claude는 모델·노력 수준·권한 모드·herdr 자동 승인·추가 인자·환경 변수, 함께 준 값이 덮는다', () => {
-  const l = L({ harness: 'claude', model: 'haiku', effort: 'low', permissionMode: 'acceptEdits', allowHerdr: true, args: '--verbose', env: 'FOO=bar\nANTHROPIC_BASE_URL=http://127.0.0.1:9' });
+test('P33 풀기: claude는 모델·노력 수준·권한 모드·추가 인자·환경 변수, 함께 준 값이 덮는다', () => {
+  const l = L({ harness: 'claude', model: 'haiku', effort: 'low', permissionMode: 'acceptEdits', args: '--verbose', env: 'FOO=bar\nANTHROPIC_BASE_URL=http://127.0.0.1:9' });
   const r = resolveLauncher(l);
-  assert.equal(r.kind, 'claude'); assert.equal(r.model, 'haiku'); assert.equal(r.effort, 'low'); assert.equal(r.permissionMode, 'acceptEdits'); assert.equal(r.allowHerdr, true);
+  assert.equal(r.kind, 'claude'); assert.equal(r.model, 'haiku'); assert.equal(r.effort, 'low'); assert.equal(r.permissionMode, 'acceptEdits'); assert.equal('allowHerdr' in r, false);
   assert.deepEqual(r.extraArgs, ['--verbose']);
   assert.deepEqual(r.env, { FOO: 'bar', ANTHROPIC_BASE_URL: 'http://127.0.0.1:9' });
   assert.deepEqual(r.gateway, { url: 'http://127.0.0.1:9', health: false }, 'ANTHROPIC_BASE_URL이 있으면 닿는지 본다');
   assert.equal(r.flavor, null);
-  const o = resolveLauncher(l, { model: 'opus', effort: 'high', permissionMode: 'plan', allowHerdr: false });
-  assert.deepEqual([o.model, o.effort, o.permissionMode, o.allowHerdr], ['opus', 'high', 'plan', false]);
+  const o = resolveLauncher(l, { model: 'opus', effort: 'high', permissionMode: 'plan' });
+  assert.deepEqual([o.model, o.effort, o.permissionMode], ['opus', 'high', 'plan']);
   assert.equal(resolveLauncher(l, { model: '' }).model, 'haiku', '빈 값은 덮지 않는다');
   assert.throws(() => resolveLauncher(l, { model: 'a b' }), (e) => e.key === 'launchers.err.model');
 });
 
-test('P33 풀기: codex는 -m 모델과 추가 인자, 다른 종류는 추가 인자만, 셸, 직접 명령(플랫폼에 맞는 환경 변수)', () => {
+test('P33 풀기: codex는 -m 모델과 추가 인자, 다른 종류는 추가 인자만, 셸, 직접 명령(환경 변수는 PowerShell 앞머리)', () => {
+  // P115: 모델과 추가 인자를 따로 준다(하네스 어댑터가 -m·--model·설정의 model로 바꾼다)
   const cx = resolveLauncher(L({ harness: 'codex', model: 'gpt-6-astra', args: '-c model_reasoning_effort=low' }));
-  assert.equal(cx.kind, 'codex'); assert.deepEqual(cx.args, ['-c', 'model_reasoning_effort=low', '--model', 'gpt-6-astra']);
-  assert.deepEqual(resolveLauncher(L({ harness: 'codex', model: 'gpt-6-astra' }), { model: 'o9' }).args, ['--model', 'o9']);
-  const pi = L({ harness: 'pi', model: 'ignored', args: '--x 1' });
-  assert.equal(pi.model, '', '다른 종류는 모델 칸이 없다');
-  assert.deepEqual(resolveLauncher(pi), { kind: 'pi', flavor: null, launcher: 'x', launcherId: null, args: ['--x', '1'], command: '' });
+  assert.equal(cx.kind, 'codex'); assert.equal(cx.model, 'gpt-6-astra'); assert.deepEqual(cx.args, ['-c', 'model_reasoning_effort=low']);
+  assert.equal(resolveLauncher(L({ harness: 'codex', model: 'gpt-6-astra' }), { model: 'o9' }).model, 'o9');
+  const gk = L({ harness: 'grok', model: 'ignored', args: '--x 1' });
+  assert.equal(gk.model, '', '표에 없는 종류는 모델 칸이 없다');
+  assert.deepEqual(resolveLauncher(gk), { kind: 'grok', flavor: null, launcher: 'x', launcherId: null, model: null, args: ['--x', '1'], command: '', startCommand: '', connectionId: null, gateway: null });
+  assert.equal(L({ harness: 'pi', model: 'p/m' }).model, 'p/m', 'P115: pi는 모델 칸이 있다');
   assert.deepEqual(resolveLauncher(L({ harness: 'shell' })), { kind: 'shell', flavor: null, launcher: 'x', launcherId: null, command: '' });
   const cmd = resolveLauncher(L({ harness: 'command', command: 'echo hi', env: { A: "it's" }, icon: 'grok' }));
   assert.equal(cmd.kind, 'shell'); assert.equal(cmd.command, 'echo hi'); assert.equal(cmd.flavor, 'grok');
@@ -44,7 +47,7 @@ test('P33 풀기: codex는 -m 모델과 추가 인자, 다른 종류는 추가 �
 
 test('P33 미리보기: 하네스별 명령줄. claude는 판이 덧붙이는 값을 빼고, 환경 변수는 이름만', () => {
   assert.deepEqual(previewLauncher(L({ harness: 'claude', model: 'haiku', effort: 'low', args: '--verbose', env: { K: 'secret' } })), { line: 'claude --permission-mode manual --model haiku --effort low --verbose', env: ['K'], board: true });
-  assert.equal(previewLauncher(L({ harness: 'codex', model: 'gpt-6-astra' })).line, 'codex --model gpt-6-astra');
+  assert.equal(previewLauncher(L({ harness: 'codex', model: 'gpt-6-astra' })).line, 'codex -m gpt-6-astra'); // P115: 하네스 어댑터가 붙이는 -m
   assert.equal(previewLauncher(L({ harness: 'pi', args: '--y' })).line, 'pi --y');
   assert.equal(previewLauncher(L({ harness: 'shell' })).shell, true);
   assert.deepEqual(previewLauncher(L({ harness: 'command', command: 'claude --model haiku; exit' })), { line: 'claude --model haiku; exit', env: [], board: false, typed: true });
@@ -65,15 +68,20 @@ test('P33 검사: 이름(빈 값, 겹침은 대소문자 무시), 모델 글자,
   assert.throws(() => L({ harness: 'claude', permissionMode: 'yolo' }), (e) => e.key === 'launchers.err.permissionMode');
   assert.throws(() => L({ harness: 'claude', env: '1BAD=x' }), (e) => e.key === 'launchers.err.envName');
   assert.throws(() => L({ harness: 'claude', env: 'novalue' }), (e) => e.key === 'launchers.err.envLine');
-  assert.throws(() => L({ harness: 'claude', env: { HERDR_SESSION: 'x' } }), (e) => e.key === 'launchers.err.envReserved');
+  assert.throws(() => L({ harness: 'claude', env: { ATRIUM_PORT: 'x' } }), (e) => e.key === 'launchers.err.envReserved');
   assert.throws(() => L({ harness: 'claude', env: { A: 'a\nb' } }), (e) => e.key === 'launchers.err.envValue');
   assert.throws(() => L({ harness: 'claude', args: '--settings x.json' }), (e) => e.key === 'launchers.err.argsReserved');
   assert.throws(() => L({ harness: 'claude', args: '--model=opus' }), (e) => e.key === 'launchers.err.argsReserved');
-  assert.throws(() => L({ harness: 'claude', checkUrl: 'file:///x' }), (e) => e.key === 'launchers.err.checkUrl');
+  // P115: 확인 주소는 연결의 health 주소로 옮겼다. 연결 참조는 있는 연결이어야 하고 그 하네스의 프로토콜이어야 한다
+  const conns = [{ id: 'ca', protocol: 'anthropic-messages' }, { id: 'co', protocol: 'openai-responses' }];
+  assert.throws(() => normalizeLauncher({ name: 'c', harness: 'claude', connection: 'nope' }, { connections: conns }), (e) => e.key === 'launchers.err.connectionMissing');
+  assert.throws(() => normalizeLauncher({ name: 'c', harness: 'codex', connection: 'ca' }, { connections: conns }), (e) => e.key === 'launchers.err.connectionProtocol');
+  assert.equal(normalizeLauncher({ name: 'c', harness: 'claude', connection: 'ca' }, { connections: conns }).connection, 'ca');
+  assert.equal('checkUrl' in normalizeLauncher({ name: 'c', harness: 'claude', checkUrl: 'http://x' }), false);
   assert.throws(() => L({ harness: 'claude', icon: 'Bad Icon' }), (e) => e.key === 'launchers.err.icon');
   assert.throws(() => L({ harness: 'Bad Kind' }), (e) => e.key === 'launchers.err.harness');
-  // 하네스가 받지 않는 칸은 비운다(codex는 환경 변수를 받고 셸은 받지 않는다)
-  assert.deepEqual(L({ harness: 'codex', env: { A: '1' }, effort: 'high', command: 'x' }).env, { A: '1' });
+  // 하네스가 받지 않는 칸은 비운다(P115: codex 런처는 환경 변수 칸이 없다. 인증은 연결의 환경 변수 이름으로. 셸도 받지 않는다)
+  assert.deepEqual(L({ harness: 'codex', env: { A: '1' }, effort: 'high', command: 'x' }).env, {});
   const sh = L({ harness: 'shell', model: 'm', args: 'a', command: 'c' });
   assert.deepEqual([sh.model, sh.args, sh.command, sh.permissionMode], ['', '', '', '']);
 });
@@ -83,7 +91,7 @@ test('P33 옮기기: 옛 설정 → 호출자, 레일 네 단추 순서로 즐�
   const v = initialLaunchers({ oldSettings: old, oldBoard: true });
   assert.deepEqual(v.favorites, ['claude', 'codex', 'gemini', 'deepseek', 'shell']);
   const by = Object.fromEntries(v.items.map((l) => [l.id, l]));
-  assert.deepEqual([by.claude.model, by.claude.effort, by.claude.permissionMode, by.claude.allowHerdr], ['opus', 'high', 'acceptEdits', true]);
+  assert.deepEqual([by.claude.model, by.claude.effort, by.claude.permissionMode, 'allowHerdr' in by.claude], ['opus', 'high', 'acceptEdits', false]); // P129: 옛 herdr 자동 승인은 옮기지 않는다
   assert.equal(by.codex.args, '-m gpt-6-astra');
   assert.equal(by.deepseek.harness, 'claude'); assert.equal(by.deepseek.model, 'ds-x[1m]'); assert.equal(by.deepseek.icon, 'deepseek');
   assert.equal(by.deepseek.permissionMode, 'acceptEdits', '옛 DeepSeek도 Claude 권한 모드를 썼다');
@@ -93,12 +101,14 @@ test('P33 옮기기: 옛 설정 → 호출자, 레일 네 단추 순서로 즐�
   // 옛 직접 명령이 있으면 DeepSeek는 명령 호출자
   const c = initialLaunchers({ oldSettings: { deepseekCommand: 'ocx claude' }, oldBoard: true }).items.find((l) => l.id === 'deepseek');
   assert.deepEqual([c.harness, c.command, c.icon], ['command', 'ocx claude', 'deepseek']);
-  // 모든 기본 호출자는 검사를 지난다
-  for (const l of v.items) assert.deepEqual(normalizeLauncher(l, { others: v.items }), l, l.id);
+  // P115: 옮긴 목록(v2)의 호출자는 검사를 지난다(DeepSeek는 연결을 쓰는 보통 claude 런처)
+  const m = migrateLaunchers(v);
+  for (const l of m.list.items) assert.deepEqual(normalizeLauncher(l, { others: m.list.items, connections: m.connections }), l, l.id);
+  assert.equal(m.list.items.find((l) => l.id === 'deepseek').connection, m.connections[0].id);
   assert.deepEqual(LEGACY_KEYS.sort(), Object.keys(old).sort());
 });
 
-test('P33 옮기기: 새 판은 Claude Code, Codex, 셸이 즐겨찾기이고 DeepSeek는 즐겨찾기 밖 예시', () => {
+test('P33 옮기기(macOS 판): 새 판은 Claude Code, Codex, Gemini(agy), 셸이 즐겨찾기다. DeepSeek 예시는 없다', () => {
   const v = initialLaunchers({});
   assert.deepEqual(v.favorites, ['claude', 'codex', 'gemini', 'shell']);
   assert.ok(!v.items.some((l) => l.id === 'deepseek'), '새 판은 별도 게이트웨이를 만들지 않는다');
@@ -111,7 +121,8 @@ test('P33 옮기기: 판 기록에서 한 번만. 옛 설정이 있으면 옛 �
     const store = new Store(path.join(dir, 'board.db'));
     store.setMeta('settings', { tray: true, claudeModel: 'sonnet' });
     const a = new Launchers({ store });
-    assert.deepEqual(a.migrated, { oldBoard: true, favorites: ['claude', 'codex', 'gemini', 'deepseek', 'shell'] });
+    assert.deepEqual([a.migrated.oldBoard, a.migrated.favorites], [true, ['claude', 'codex', 'gemini', 'deepseek', 'shell']]);
+    assert.ok(store.getMeta('launchers'), 'P115: 옛 키(launchers)도 남는다(옛 코드가 쓴다)');
     const first = store.getMeta(META_KEY);
     assert.equal(first.items.find((l) => l.id === 'claude').model, 'sonnet');
     const b = new Launchers({ store });
@@ -129,7 +140,8 @@ test('P33 옮기기: 판 기록에서 한 번만. 옛 설정이 있으면 옛 �
     assert.equal(new Launchers({ store: s2 }).migrated.oldBoard, true);
     s2.close();
     const s3 = new Store(path.join(dir, 'b3.db'));
-    assert.deepEqual(new Launchers({ store: s3 }).migrated, { oldBoard: false, favorites: ['claude', 'codex', 'gemini', 'shell'] });
+    const m3 = new Launchers({ store: s3 }).migrated;
+    assert.deepEqual([m3.oldBoard, m3.favorites], [false, ['claude', 'codex', 'gemini', 'shell']]);
     s3.close();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -161,7 +173,7 @@ test('P33 API: 만들기, 고치기, 지우기, 즐겨찾기(자리), 순서. �
     ls.delete({ id: c.launcher.id });
     assert.deepEqual(ls.data().favorites, ['shell', 'claude', 'gemini', gateway]);
     assert.throws(() => ls.get(c.launcher.id), (e) => e.code === 'no_launcher');
-    assert.deepEqual(ls.preview({ launcher: { name: 'p', harness: 'codex', model: 'm' } }).preview.line, 'codex --model m');
+    assert.deepEqual(ls.preview({ launcher: { name: 'p', harness: 'codex', model: 'm' } }).preview.line, 'codex -m m');
     store.close();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -188,13 +200,13 @@ function spawnBackend() {
   const dir = tmp();
   const b = new Backend({ quietMs: 600000, port: 0, logDir: dir, sessionsDir: path.join(dir, 'sessions'), claudeJson: path.join(dir, 'none.json'), claudeCommand: 'claude', hookTimeoutSec: 2 });
   b.store = new Store(path.join(dir, 'board.db'));
-  b.sessions = new Map(); b.herdrOk = true; b.hookUrl = 'http://127.0.0.1:1/hook'; b.plugin = {};
+  b.sessions = new Map(); b.termOk = true; b.hookUrl = 'http://127.0.0.1:1/hook'; b.plugin = {};
   b.branch = { settingsExtra: () => ({}), envFor: () => ({}), noteChild() {}, placeChild: () => null };
   b.features = { settings: { get: () => ({ ...DEFAULTS }) }, launchers: null };
   b.features.launchers = new Launchers({ store: b.store });
   b.queue = { enqueue() {}, pending: () => 0 };
   b.api = { broadcast() {} };
-  b.broadcastSession = () => {}; b.broadcastWorkspaces = () => {}; b.probeGit = () => {}; b.registerResume = () => {};
+  b.broadcastSession = () => {}; b.broadcastWorkspaces = () => {}; b.probeGit = () => {};
   const calls = []; let n = 0;
   b.adapter = {
     connected: true,
@@ -239,6 +251,7 @@ test('P33 spawn { launcher }: 직접 명령은 셸 패널에 그 줄을 치고, 
   assert.deepEqual(calls.find((c) => c[0] === 'createWorkspace')[1].env, { X: '1' });
   assert.ok(!calls.some((c) => c[0] === 'startAgent'));
   await assert.rejects(() => b.spawn({ cwd, launcher: 'Echo', prompt: 'hi' }), (e) => e.code === 'not_agent');
+  if (!b.features.launchers.find('shell')) b.features.launchers.create({ launcher: { name: 'Shell', harness: 'shell' } }); // P122: 원본 새 판에는 셸 런처가 없다(macOS 판 새 판에는 있다)
   const sh = await b.spawn({ cwd, launcher: 'shell' });
   assert.equal(sh.kind, 'shell'); assert.equal(sh.command, undefined); assert.match(sh.name, /^sh\d/);
   b.store.close();
@@ -257,7 +270,7 @@ test('P33 spawn { launcher }: codex 호출자는 -m 모델과 인자를 herdr에
   b.features.launchers.update({ id: 'codex', patch: { model: 'gpt-6-astra', args: '--full-auto' } });
   const r = await b.spawn({ cwd, launcher: 'Codex' });
   assert.equal(r.kind, 'codex');
-  assert.deepEqual(calls.find((c) => c[0] === 'startAgent')[1].args, ['--full-auto', '--model', 'gpt-6-astra']);
+  assert.deepEqual(calls.find((c) => c[0] === 'startAgent')[1].args, ['-c', 'check_for_update_on_startup=false', '-m', 'gpt-6-astra', '--full-auto']); // P115: 업데이트 확인 끄기
   b.store.close();
 });
 

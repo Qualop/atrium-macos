@@ -29,7 +29,7 @@ $s.TargetPath = $target
 $s.Arguments = ''
 $s.WorkingDirectory = $WorkDir
 $s.WindowStyle = 7 # 최소화
-$s.Description = 'Atrium 실제 판(herdr 세션 atrium)'
+$s.Description = 'Atrium 실제 판(터미널 세션 atrium)'
 if ($Icon) { $s.IconLocation = $Icon }
 $s.Save()
 Write-Output $lnk

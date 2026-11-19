@@ -180,7 +180,7 @@ test('P66 새 세션 이름(spawn)은 남의 판 이름을 피한다(대소문�
   const { b, add } = board();
   add('s1');
   renameSession(b, { session: 's1', name: 'worker', by: 'cli' });
-  b.requireHerdr = () => {};
+  b.requireTerminal = () => {};
   await assert.rejects(() => b.spawn({ cwd: tmp(), name: 'Worker', kind: 'shell' }), (e) => e.key === 'nameTaken');
   await assert.rejects(() => b.spawn({ cwd: tmp(), name: 'S1', kind: 'shell' }), (e) => e.key === 'nameTaken', '남의 주소도 대소문자 무시');
 });

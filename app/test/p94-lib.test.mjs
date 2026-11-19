@@ -136,10 +136,11 @@ test('PC 배치: 겹침 없음, 리드 → 워커 순서, 선마다 관계 종�
   assert.ok(b('port').x > b('lead2').x && b('notes').x > b('lead2').x);
   // 형제는 띄운 순서
   assert.ok(b('ui').y < b('tests').y && b('tests').y < b('build').y && b('build').y < b('copy').y);
-  assert.equal(MISSION.boxH, 64);
+  assert.equal(MISSION.boxH, 96); // P149: 일 줄 두 줄까지(64 → 96)
   const rel = (a, z) => (lay.edges.find((e) => e.from === `s:${a}` && e.to === `s:${z}`) || {}).rel;
   assert.equal(rel('lead', 'rev'), 'spawn'); assert.equal(rel('lead', 'ui'), 'role'); assert.equal(rel('lead2', 'docs'), 'prompt');
-  assert.equal(lay.edges.find((e) => e.from === 'human').rel, 'human');
+  assert.ok(!lay.edges.some((e) => e.from === 'human'), 'P145: 사람 선은 없다');
+  assert.ok(lay.human.has('s:lead'), 'P145: 사람이 보낸 지시는 받는 세션의 표시로');
   const cross = lay.edges.find((e) => e.from === 's:lead2' && e.to === 's:port');
   assert.ok(cross.cross, '다른 워크스페이스로 간 선은 cross');
   // 머리 글 차례: 팀이 있는 wa, wb(product끼리 붙는다), 다른 워크스페이스 하위만 있는 wc·wd는 머리 글이 없다(부모 팀 안에 놓인다)

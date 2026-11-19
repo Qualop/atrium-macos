@@ -7,7 +7,7 @@ import { frame, sendBar, until, sid, stateOf } from './p4-lib.mjs';
 const N = 'cx';
 const log = logger('p4-f5');
 const { app, page } = await launch({ log });
-const sum = () => page.evaluate((n) => { const s = [...window.__mt.getState().sessions.values()].find((x) => x.name === n); return s && { state: s.state, herdr: s.herdrStatus, kind: s.kind, hooked: s.hooked, ask: s.ask, lastAnswer: s.lastAnswer, answerSource: s.answerSource, estimate: s.estimate, exit: s.exit }; }, N);
+const sum = () => page.evaluate((n) => { const s = [...window.__mt.getState().sessions.values()].find((x) => x.name === n); return s && { state: s.state, herdr: s.termStatus, kind: s.kind, hooked: s.hooked, ask: s.ask, lastAnswer: s.lastAnswer, answerSource: s.answerSource, estimate: s.estimate, exit: s.exit }; }, N);
 
 if (!(await sid(page, N))) {
   await page.click('[data-action=spawn]');

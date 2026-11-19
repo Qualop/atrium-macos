@@ -7,7 +7,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, Handle, Position, useStore as useFlowStore } from '@xyflow/react';
 import { useStore } from './store.js';
 import { api } from './api.js';
-import { faceFor } from './lib/faces.js';
+import { faceFor, zoomStep } from './lib/faces.js';
 import { convoTier } from './lib/overview.js'; // P85: 판 밖 대화 카드도 멀리 보기 규칙을 따른다(열린 대화는 쉼, 닫힌 대화는 끝남)
 import { ago, labelFit } from './lib/labels.js';
 import { shifted, linkLabelHidden } from './lib/link-labels.js'; // P67, P108
@@ -16,10 +16,12 @@ import { KindIcon } from './SessionNode.jsx';
 import { openConvo, archiveItem } from './Sidebar.jsx';
 import { bindingText } from './lib/sidebar.js';
 import { convoFace } from '../../../backend/src/convo-canvas.mjs';
+import { useInvRef, useZoomStyle, awayFromView } from './zoom-var.js'; // P112: 배율을 렌더 없이. P146: awayFromView
+import { countRender } from './perf-trace.js'; // P146: 성능 기록
 
-const zoomSel = (s) => s.transform[2];
+const AWAY_PAD = 480; // P146: 화면 둘레 이만큼(화면 px) 밖의 대화 노드는 얼굴 없이 틀만 그린다
 const oneLine = (t) => String(t || '').replace(/\s+/g, ' ').trim();
-const VIA = { claude: 'claude -w', herdr: 'herdr agent', 'atrium-child': 'atrium child', 'atrium-spawn': 'atrium spawn', 'mtask-child': 'atrium child', 'mtask-spawn': 'atrium spawn' }; // mtask-*는 P18 전 이름
+const VIA = { claude: 'claude -w', 'atrium-child': 'atrium child', 'atrium-spawn': 'atrium spawn', 'mtask-child': 'atrium child', 'mtask-spawn': 'atrium spawn' }; // mtask-*는 P18 전 이름
 
 function useNow(ms = 30000) { const [n, set] = useState(Date.now()); useEffect(() => { const t = setInterval(() => set(Date.now()), ms); return () => clearInterval(t); }, [ms]); return n; }
 
@@ -61,7 +63,7 @@ function CardFace({ c, now, narrow }) {
   return (
     <div className="mt-cv-card" data-role="convo-card">
       <div className="mt-cv-head mt-cdrag">
-        <span className="mt-cv-kind"><KindIcon kind="claude" title={t('convo.kindTitle')} /></span>
+        <span className="mt-cv-kind" data-harness={c.harness || 'claude'}><KindIcon kind={c.harness || 'claude'} title={c.harness === 'codex' ? t('codexConvo.kindTitle') : t('convo.kindTitle')} /></span>{/* P133: Codex 대화는 Codex 아이콘 */}
         <b className="mt-cv-title" title={`${title}\n${t('sidebar.convoId', { id: c.convId })}\n${c.cwd || ''}`}>{title}</b>
         <span className="mt-cv-time" title={fmtDateTime(c.lastAt || 0)}>{ago(c.lastAt, now)}</span>
       </div>
@@ -85,13 +87,16 @@ function CardFace({ c, now, narrow }) {
 }
 
 // 멀리: 제목과 마지막 활동, 도는 중 표시. 글자는 화면 기준 크기(노드 높이·너비에 맞춰 줄인다)
-function FarFace({ c, zoom, now }) {
+// P146: 배율을 구독하지 않는다. 글자 크기는 CSS(--inv 계단 값, 노드 감싸개가 쓴다)와 노드 크기 상한으로 정한다(farFont). 예전에는 대화 노드마다
+// 배율을 구독해 확대·축소의 매 프레임 대화 노드 전부(화면 밖 포함)가 다시 그려졌다(P144 원인 7)
+export const farFont = (n, cap) => `min(calc(${n}px * var(--inv, 1)), ${+cap.toFixed(2)}px)`;
+function FarFace({ c, now }) {
   const t = useT();
-  const px = (n, frac, wfrac) => Math.min(n / Math.max(zoom, 0.02), c.h * frac, c.w * wfrac);
+  countRender('convoFar'); // P146: 성능 기록
   const b = c.binding || {};
   return (
-    <div className="mt-cv-far mt-cdrag" data-role="convo-far" style={{ fontSize: px(12, 0.16, 1 / 13) }}>
-      <div className="mt-cv-far-title" style={{ fontSize: px(14, 0.2, 1 / 11) }}>{c.title || oneLine(c.firstPrompt) || c.convId.slice(0, 8)}</div>
+    <div className="mt-cv-far mt-cdrag" data-role="convo-far" style={{ fontSize: farFont(12, Math.min(c.h * 0.16, c.w / 13)) }}>
+      <div className="mt-cv-far-title" style={{ fontSize: farFont(14, Math.min(c.h * 0.2, c.w / 11)) }}>{c.title || oneLine(c.firstPrompt) || c.convId.slice(0, 8)}</div>
       <div className="mt-cv-dim">{ago(c.lastAt, now)}{c.block ? ` · ⎇ ${c.block}` : ''}{c.subagents ? ` · ${t('convo.subShort', { n: c.subagents })}` : ''}</div>
       {b.open && <div className="mt-cv-flag run">{t('convo.runningShort')}</div>}
     </div>
@@ -103,42 +108,56 @@ function IconFace({ c }) {
   const b = c.binding || {};
   return (
     <div className="mt-iconface mt-cdrag" data-role="convo-icon" title={c.title || c.convId}>
-      <KindIcon kind="claude" title={c.title || t('convo.kindShort')} />
+      <KindIcon kind={c.harness || 'claude'} title={c.title || t('convo.kindShort')} />
       <span className="mt-icon-name">{c.title || c.convId.slice(0, 8)}</span>
       {b.open && <span className="mt-icon-dot" data-state="working" style={{ '--sc': 'var(--st-working)' }} />}
     </div>
   );
 }
 
-function ConvoNodeInner({ data, selected }) {
+function ConvoNodeInner({ id, data, selected }) {
   const c = useStore((st) => st.convoNodes.get(data.convId));
-  const zoom = useFlowStore(zoomSel);
   const now = useNow();
   const prevFace = useRef(null);
+  // P112: 배율은 단계 값(얼굴, 좁은 카드)으로만 구독하고 --inv는 요소에 바로 쓴다(SessionNode와 같다)
+  const cw = c ? c.w : 0;
+  // 얼굴(경계에서 흔들리지 않게 faces.js 이력)과 좁은 카드를 한 값으로 구독한다. P146: 좁은지는 카드 얼굴일 때만, 계단 값으로 본다(멀리 얼굴은 넘나들어도 다시 그리지 않는다)
+  // 화면에서 멀면(AWAY_PAD 밖) 얼굴을 그리지 않고 'away' 하나로 구독한다: 먼 노드는 배율 경계를 넘어도 다시 그리지 않고 화면 가까이 올 때만 다시 그린다
+  const fn = useFlowStore((st) => {
+    if (awayFromView(st, id, AWAY_PAD)) return 'away';
+    const z = st.transform[2]; const ff = faceFor(cw, z, prevFace.current);
+    return convoFace(ff) === 'card' && cw * zoomStep(z) < 260 ? `${ff}|n` : ff;
+  });
+  const away = fn === 'away';
+  const [f0, narrowMark] = fn.split('|');
+  const f = away ? (prevFace.current || 'far') : f0;
+  const narrow = narrowMark === 'n';
+  const invRef = useInvRef(0.02, id, true); // P146: 계단 값(1.1배마다)으로. 매 프레임 쓰지 않는다
+  countRender('convo'); // P146: 성능 기록
   if (!c) return null;
-  const f = faceFor(c.w, zoom, prevFace.current); // 경계에서 흔들리지 않게(faces.js 이력)
   prevFace.current = f;
   const face = convoFace(f);
   const b = c.binding || {};
   return (
-    <div className={`mt-cv face-${face} t-${convoTier(b)}${b.open ? ' running' : ''}${selected ? ' selected' : ''}`} style={{ '--inv': 1 / Math.max(zoom, 0.02) }} data-convo={c.convId} data-face={face} data-ws={c.workspaceKey} data-block={c.block || ''}>
+    <div className={`mt-cv face-${face} t-${convoTier(b)}${b.open ? ' running' : ''}${selected ? ' selected' : ''}${away ? ' away' : ''}`} ref={invRef} data-convo={c.convId} data-face={face} data-away={away ? '1' : undefined} data-ws={c.workspaceKey} data-block={c.block || ''}>
       {/* 띄움 선의 끝(잇기는 하지 않는다) */}
       {[['t', Position.Top], ['r', Position.Right], ['b', Position.Bottom], ['l', Position.Left]].map(([hid, pos]) => <Handle key={hid} type="source" position={pos} id={hid} className="mt-cv-handle" isConnectable={false} />)}
-      {face === 'card' && <CardFace c={c} now={now} narrow={c.w * zoom < 260} />}
-      {face === 'far' && <FarFace c={c} zoom={zoom} now={now} />}
-      {face === 'icon' && <IconFace c={c} />}
+      {!away && face === 'card' && <CardFace c={c} now={now} narrow={narrow} />}
+      {!away && face === 'far' && <FarFace c={c} now={now} />}
+      {!away && face === 'icon' && <IconFace c={c} />}
     </div>
   );
 }
 export const ConvoNode = memo(ConvoNodeInner);
 
 // 워크트리 블록 배경(같은 리포의 워크트리 대화를 묶어 보인다). 누르거나 끌지 않는다
+const wtboxHead = (zoom) => ({ fontSize: Math.max(12, Math.min(28, 12 / Math.max(zoom, 0.02))) });
 function WorktreeBoxInner({ data }) {
   const t = useT();
-  const zoom = useFlowStore(zoomSel);
+  const headRef = useZoomStyle(wtboxHead); // P112: 글자 크기는 렌더 없이
   return (
     <div className="mt-wtbox" data-worktree={data.block} data-ws={data.ws}>
-      <div className="mt-wtbox-head" style={{ fontSize: Math.max(12, Math.min(28, 12 / Math.max(zoom, 0.02))) }}>⎇ {data.block} <span className="mt-cv-dim">· {t('convo.worktreeConvos', { n: data.n })}</span></div>
+      <div className="mt-wtbox-head" ref={headRef}>⎇ {data.block} <span className="mt-cv-dim">· {t('convo.worktreeConvos', { n: data.n })}</span></div>
     </div>
   );
 }

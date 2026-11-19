@@ -116,7 +116,7 @@ test('상태 바뀜 → 종류: 끝남, 응답 필요, 오류, 예기치 않은 
   assert.equal(pushKindOf(sum({ state: 'error' }), 'working'), 'error');
   assert.equal(pushKindOf(sum({ state: 'exited', exit: { kind: 'other' } }), 'working'), 'exit');
   assert.equal(pushKindOf(sum({ state: 'exited', exit: { kind: 'normal' } }), 'ready'), null, '사람이 끔');
-  assert.equal(pushKindOf(sum({ state: 'exited', exit: { kind: 'herdr_stopped' } }), 'ready'), null, '판이 끔');
+  assert.equal(pushKindOf(sum({ state: 'exited', exit: { kind: 'terminal_stopped' } }), 'ready'), null, '판이 끔');
   assert.equal(pushKindOf(sum({ kind: 'shell', state: 'ready' }), 'working'), null);
   assert.equal(pushKindOf(sum(), null), null);
   assert.equal(pushKindOf(sum(), undefined), null);
@@ -298,7 +298,7 @@ function server(t = { transport: null }) {
   const tailscale = { status: () => null, hosts: () => [], selfLogin: () => null, on: () => {}, off: () => {}, stop: () => {} };
   const st = { remoteAccess: true };
   const sent = [];
-  const web = new WebServer({ cfg: { remoteEnabled: true, port: 1, dataDir: dir, profile: 'dev', herdrSession: 'atrium-dev-test' }, store, api: null, tailscale, settings: () => st, pushTransport: async (endpoint, o) => { sent.push({ endpoint, ...o }); return { status: 201 }; } });
+  const web = new WebServer({ cfg: { remoteEnabled: true, port: 1, dataDir: dir, profile: 'dev', terminalSession: 'atrium-dev-test' }, store, api: null, tailscale, settings: () => st, pushTransport: async (endpoint, o) => { sent.push({ endpoint, ...o }); return { status: 201 }; } });
   return { web, store, st, sent, dir, done: () => { web.stop(); store.close(); fs.rmSync(dir, { recursive: true, force: true }); } };
 }
 const conn = (d) => ({ auth: { kind: 'device', device: { id: d.id, name: d.name } } });

@@ -6,6 +6,7 @@
 // - 팀 요약(team): 리드·sub 아래 모든 세션 수와 일함·응답 필요·잠듦 수. 리드가 일하지 않는데 팀이 일하면 "워커를 기다림"(waiting), 팀의 응답 필요는 리드에 올라온다(climb).
 // - 강조(focusOf): 한 세션을 가리키면 그 세션, 조상, 팀(자손), 바로 이어진 세션과 그 사이 선만 또렷하게.
 import { tierOf } from './overview.js';
+import { shownRole } from './roles.js'; // P141(#17)
 
 export const EDGE_ORDER = ['role', 'prompt', 'spawn', 'bar', 'loop'];
 export const REL_ORDER = ['spawn', 'role', 'prompt', 'human'];
@@ -25,7 +26,7 @@ export function mergeEdges(edges, has = () => true) {
     const p = pairs.get(k) || { id: k, from: e.from, to: e.to, kinds: [], parts: [], role: null, text: null, count: 0, lastAt: 0, active: false };
     if (!p.kinds.includes(e.kind)) p.kinds.push(e.kind);
     p.parts.push(e);
-    if (e.kind === 'role' && e.label) p.role = e.label;
+    if (e.kind === 'role' && e.label) p.role = shownRole(e.label); // P141(#17)
     if ((e.kind === 'prompt' || e.kind === 'bar' || e.kind === 'loop') && e.label && (e.lastAt || 0) >= p.lastAt) p.text = e.label;
     if (e.kind !== 'spawn') p.count += e.count || 0;
     p.lastAt = Math.max(p.lastAt, e.lastAt || 0);
@@ -57,9 +58,11 @@ export function tierFor(node, live) {
 export function missionTree(graph) {
   const nodes = ((graph && graph.nodes) || []).filter((n) => n && n.kind === 'session');
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const pairs = mergeEdges((graph && graph.edges) || [], (id) => byId.has(id)).filter((p) => p.kinds.some((k) => SESSION_KINDS.includes(k)));
+  // P153 r11(P156 계약): 사람·에이전트가 정한 동료(peer)·독립(none) 쌍은 위계 후보가 아니다(그 선은 남지만 나무 부모를 고르지 않는다). 정한 하위(sub)는 백엔드가 node.parentId(일 부모)로 준다
+  const explicitOff = (p) => p.parts.some((e) => (e.relation === 'peer' || e.relation === 'none') && e.relationSource && e.relationSource !== 'auto');
+  const pairs = mergeEdges((graph && graph.edges) || [], (id) => byId.has(id)).filter((p) => p.kinds.some((k) => SESSION_KINDS.includes(k)) && !explicitOff(p));
   // 하위 세션인데 띄움 선이 없으면(옛 판) 부모 → 하위 쌍을 하나 만든다
-  for (const n of nodes) if (n.parentId && byId.has(n.parentId) && !pairs.some((p) => p.from === n.parentId && p.to === n.id)) pairs.push({ id: `${n.parentId}>${n.id}`, from: n.parentId, to: n.id, kinds: ['spawn'], primary: 'spawn', parts: [], role: n.role || null, text: null, count: 0, lastAt: 0, active: false, synthetic: true });
+  for (const n of nodes) if (n.parentId && byId.has(n.parentId) && !pairs.some((p) => p.from === n.parentId && p.to === n.id)) pairs.push({ id: `${n.parentId}>${n.id}`, from: n.parentId, to: n.id, kinds: ['spawn'], primary: 'spawn', parts: [], role: shownRole(n.role) || null, text: null, count: 0, lastAt: 0, active: false, synthetic: true });
   // 실제 부모(parentId) 사슬의 깊이: 같은 등급의 후보 중 더 얕은 쪽(리드)을 고른다
   const realDepth = (id) => { let d = 0; for (let x = byId.get(id), i = 0; x && x.parentId && byId.has(x.parentId) && i < 100; x = byId.get(x.parentId), i++) d++; return d; };
   const parent = new Map(), via = new Map();
@@ -110,7 +113,7 @@ export function roleModel(graph, { live = null, tiers = null, tree = null } = {}
     const hasKids = (T.kids.get(n.id) || []).length > 0, hasParent = T.parent.has(n.id);
     const rank = hasKids ? (hasParent ? 'sub' : 'lead') : hasParent ? 'worker' : touched.has(n.id) ? 'worker' : 'solo';
     const via = T.via.get(n.id);
-    const roleName = (via && via.role) || n.role || null;
+    const roleName = (via && via.role) || shownRole(n.role) || null;
     const family = rank === 'lead' ? 'lead' : roleFamily(roleName);
     let team = null, waiting = 0, climb = 0;
     if (hasKids) {
@@ -181,7 +184,8 @@ export const nodeTier = (n, live = null) => (live || (n && n.state) ? tierFor(n,
 export const REST_TIERS = ['rest', 'sleep', 'done'];
 export const restTier = (t) => REST_TIERS.includes(t);
 // 위 거르기 칸(P32의 분류 열쇠 그대로)과 등급: 맞지 않는 세션은 자리는 그대로 두고 흐리게
-export const FILTERS = ['all', 'needs_you', 'working', 'idle', 'done', 'exited'];
+// P149: 작업 완료 칸은 뺐다(작업 완료는 판 위 알약과 카드의 보라 표시로만 보인다, 사용자). filterMatch의 'done'은 옛 호출을 위해 남긴다
+export const FILTERS = ['all', 'needs_you', 'working', 'idle', 'exited'];
 export function filterMatch(tier, filter) {
   switch (filter) {
     case 'needs_you': return tier === 'turn' || tier === 'alert';
@@ -194,7 +198,8 @@ export function filterMatch(tier, filter) {
 }
 // 모델과 노력 수준 한 낱말: "claude-opus-5-5" + "high" → "opus 5.5·high"
 export function modelText(model, effort) {
-  let m = String(model || '').trim().replace(/^claude-/, '').replace(/\[.*\]$/, '');
+  // P137: /model이 보인 이름(Sonnet 5.5)과 다음 답의 ID(claude-sonnet-5-5)가 같은 글로 보이게 소문자로
+  let m = String(model || '').trim().toLowerCase().replace(/^claude-/, '').replace(/\[.*\]$/, '');
   m = m.replace(/-(\d+)-(\d+)$/, ' $1.$2').replace(/-(\d+)$/, ' $1');
   return [m, effort].filter(Boolean).join('·') || null;
 }

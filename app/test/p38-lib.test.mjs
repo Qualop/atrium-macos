@@ -53,8 +53,9 @@ test('unscalePoint: 배율 1이거나 크기를 모르면 그대로', () => {
   assert.deepEqual(out, { clientX: 1300, clientY: 100 });
 });
 
-test('clearsSelection: 복사·붙여넣기는 지우고, 휠과 프레임으로는 지우지 않는다(P42에서 바뀜: 선택이 글에 붙어 함께 움직인다)', () => {
-  for (const e of ['copy', 'paste']) {
+test('clearsSelection: 붙여넣기는 지우고, 휠과 프레임으로는 지우지 않는다(P42에서 바뀜: 선택이 글에 붙어 함께 움직인다). P125: 복사로도 지우지 않는다', () => {
+  assert.equal(clearsSelection('copy'), false); // P125: 고른 글이 남아 다음 Ctrl+C도 복사다
+  for (const e of ['paste']) {
     assert.equal(clearsSelection(e), true, e);
     assert.equal(clearsSelection(e, { hasSelection: false }), false, `${e} 선택 없음`);
   }

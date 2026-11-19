@@ -34,7 +34,7 @@ test('복귀 요약 줄에도 열쇠가 붙는다(사용자 내용인 마지막 
     { sessionId: 'a', t: 1, kind: 'state', data: { from: 'working', to: 'waiting', ask: { kind: 'permission', tool: 'Bash', summary: 'Bash: ls' } } },
     { sessionId: 'b', t: 2, kind: 'closed', data: { reason: 'killed' } },
     { sessionId: 'c', t: 3, kind: 'hook', data: { ev: 'Stop', lastAnswer: '다 했다' } },
-    { sessionId: null, t: 4, kind: 'herdr_disconnected', data: {} },
+    { sessionId: null, t: 4, kind: 'herdr_disconnected', data: {} }, // 업데이트 전 기록
   ];
   const lines = summarizeChanges(ev, { nameOf: (s) => s });
   const by = (k) => lines.find((l) => l.kind === k);
@@ -42,7 +42,7 @@ test('복귀 요약 줄에도 열쇠가 붙는다(사용자 내용인 마지막 
   assert.equal(by('needs_you').text, '권한: Bash: ls');
   assert.deepEqual(by('exited').msg, { key: 'chgKilled', vars: {} });
   assert.equal(by('turn_done').msg, null);
-  assert.equal(by('herdr').msg.key, 'chgHerdrDown');
+  assert.equal(by('terminal').msg.key, 'chgTerminalDown'); // P129: 옛 이벤트 이름(herdr_disconnected)도 읽는다. P53: 터미널과 백엔드 줄을 나눠 목록(chgList)으로 묶지 않는다
 });
 
 test('루프 확인 문구: 한국어 글과 같은 짜임의 열쇠', () => {

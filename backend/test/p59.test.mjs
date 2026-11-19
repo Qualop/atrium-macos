@@ -44,7 +44,7 @@ async function boot() {
   const clock = { off: 0 };
   const now = () => Date.now() + clock.off;
   const st = { remoteAccess: true };
-  const web = new WebServer({ cfg: { remoteEnabled: true, port, dataDir: dir, profile: 'dev', herdrSession: 'atrium-dev-test' }, store, api: null, tailscale: tsw, settings: () => st, now });
+  const web = new WebServer({ cfg: { remoteEnabled: true, port, dataDir: dir, profile: 'dev', terminalSession: 'atrium-dev-test' }, store, api: null, tailscale: tsw, settings: () => st, now });
   const apiToken = 'board-api-token-for-test';
   const settingsSet = (p) => { const was = web.accepting(); Object.assign(st, normalizePatch(p)); const on = web.accepting(); return { settings: { ...st }, ...(on !== was ? { remote: web.accessChanged(on) } : {}) }; };
   const api = new ApiServer({

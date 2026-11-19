@@ -24,7 +24,7 @@ try{
  execFileSync('/usr/bin/ditto',['-c','-k','--sequesterRsrc','--keepParent',bundle,zip]);
  execFileSync('/usr/bin/ditto',[bundle,path.join(volume,'Atrium.app')]);
  fs.symlinkSync('/Applications',path.join(volume,'Applications'));
- fs.writeFileSync(path.join(volume,'Read Me.txt'),`Atrium ${version}\n\nDrag Atrium.app to Applications. Node and herdr are included. Install and sign in to your agent CLI separately.\n\nThis build is ad-hoc signed, not Apple-notarized. macOS may require an explicit Open Anyway in Privacy & Security.\n\nSource and licenses: https://github.com/Qualop/atrium-macos\nBundled licenses are in Atrium.app/Contents/Resources/licenses.\n`);
+ fs.writeFileSync(path.join(volume,'Read Me.txt'),`Atrium ${version}\n\nDrag Atrium.app to Applications. Node and the herdr-core terminal engine are included. Install and sign in to your agent CLI separately.\n\nThis build is ad-hoc signed, not Apple-notarized. macOS may require an explicit Open Anyway in Privacy & Security.\n\nSource and licenses: https://github.com/Qualop/atrium-macos\nBundled licenses are in Atrium.app/Contents/Resources/licenses.\n`);
  execFileSync('/usr/bin/hdiutil',['create','-volname',`Atrium ${version}`,'-srcfolder',volume,'-format','UDZO',dmg],{stdio:'inherit'});
  const sums=[zip,dmg].map(file=>`${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}  ${path.basename(file)}`).join('\n')+'\n';
  fs.writeFileSync(path.join(staging,'SHA256SUMS.txt'),sums);fs.renameSync(staging,output);console.log(output);

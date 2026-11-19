@@ -2,11 +2,12 @@
 // 목록은 세 곳에서 온다.
 // - 호출자(launchers.mjs): 이름, 하네스, 모델, 게이트웨이 경유 여부. 띄우는 명령은 atrium child <이름> --launcher <호출자>.
 // - 하네스가 아는 모델(HARNESSES의 models)과 짧은 별칭(opus, sonnet, haiku, fable). P72: Codex는 Codex의 모델 목록 캐시(codex-models.mjs)를 읽은 목록이다.
-// - 게이트웨이가 알려 주는 모델: 게이트웨이를 쓰는 claude 호출자(ANTHROPIC_BASE_URL)마다 그 주소의 /v1/models를 Claude Code처럼(anthropic-version 머리글) 읽는다.
-//   이 모델은 그 호출자의 env(게이트웨이 주소 등)로 띄운다. 판이 알려진 Anthropic 모델은 게이트웨이를 거치지 않고 하네스 줄로 띄우므로 게이트웨이 목록에서 뺀다.
-// 이름 풀기는 정확한 ID → 별칭 → 느슨한 맞춤(대소문자, 띄어쓰기·하이픈, "deepseek flash" ↔ deepseek-flash) 순서다. 같은 모델을 가리키는 줄이 여럿이면 하나로 본다(호출자 > 하네스 > 게이트웨이).
+// - 연결이 알려 주는 모델(P115): 런처가 참조하는 연결(connections.mjs)마다 그 프로토콜의 모델 목록(Anthropic식 /v1/models, OpenAI식 /models)을 읽는다.
+//   이 모델은 그 연결을 쓰는 런처(레일 순서의 첫 것)의 하네스로 띄운다. 판이 알려진 Anthropic 모델은 연결을 거치지 않고 하네스 줄로 띄우므로 연결 목록에서 뺀다.
+//   출력 모양(source 'gateway', gateway, gateways)은 P41 그대로다(atrium 계약). gateway는 그 연결의 base URL이다.
+// 이름 풀기는 정확한 ID → 별칭 → 느슨한 맞춤(대소문자, 띄어쓰기·하이픈, "glm flash" ↔ glm-flash) 순서다. 같은 모델을 가리키는 줄이 여럿이면 하나로 본다(호출자 > 하네스 > 연결).
 // 서로 다른 모델이 맞으면 띄우지 않고 후보를 돌려주고, 없으면 가까운 후보를 돌려준다. 모르는 이름으로 조용히 띄우지 않는다.
-import { HARNESSES, harnessOf, gatewayOf, MODEL_RE, quoteArg } from './launchers.mjs';
+import { HARNESSES, harnessOf, MODEL_RE, quoteArg } from './launchers.mjs';
 
 // 짧은 별칭. opus·sonnet·haiku는 Claude Code가 아는 별칭이라 그대로 넘기고, fable은 전체 ID로 푼다
 export const CLAUDE_ALIASES = { fable: 'claude-fable-5-1' };
@@ -29,13 +30,7 @@ export function variantsOf(s) {
 }
 const stripVariants = (s) => String(s || '').replace(/\[1m\]$/i, '').replace(/--fast$/i, '');
 
-// opencodex 모양의 모델 이름: ocx-claude-<제공자>--<모델>[--fast][[1m]]
-export function parseOcx(id) {
-  const m = /^ocx-claude-([a-z0-9.]+)--(.+?)(--fast)?(\[1m\])?$/i.exec(String(id || ''));
-  if (!m) return null;
-  return { provider: m[1].toLowerCase(), base: m[2], variants: [...(m[4] ? ['1m'] : []), ...(m[3] ? ['fast'] : [])] };
-}
-// 게이트웨이 모델 한 줄: display_name "deepseek-flash (deepseek) · Fast · 1M"이 있으면 그것을, 없으면 "<제공자>/<모델>" 모양의 ID를 읽는다
+// 연결 모델 한 줄: display_name "glm-flash (zai) · Fast · 1M"이 있으면 그것을, 없으면 "<제공자>/<모델>" 모양의 ID를 읽는다
 export function parseGatewayModel(m) {
   const id = String(m.id || '');
   const dn = String(m.display_name || '');
@@ -44,8 +39,6 @@ export function parseGatewayModel(m) {
     const tail = d[3].toLowerCase();
     return { id, label: dn, base: d[1].trim(), provider: d[2].trim().toLowerCase(), variants: [...(/1m/.test(tail) ? ['1m'] : []), ...(/fast/.test(tail) ? ['fast'] : [])] };
   }
-  const o = parseOcx(id);
-  if (o) return { id, label: id, ...o };
   const i = id.lastIndexOf('/');
   const raw = i >= 0 ? id.slice(i + 1) : id;
   return { id, label: dn || id, base: stripVariants(raw), provider: i >= 0 ? id.slice(0, i).toLowerCase() : (m.owned_by ? String(m.owned_by).toLowerCase() : ''), variants: variantsOf(raw) };
@@ -53,21 +46,20 @@ export function parseGatewayModel(m) {
 
 // 모델 이름이 가리키는 것(같은 모델을 가리키는 줄끼리 하나로 본다)
 function targetOfModel(harness, model) {
-  const o = parseOcx(model);
-  if (o) return { target: `${o.provider}:${o.base.toLowerCase()}`, base: o.base, provider: o.provider, variants: o.variants };
   const m = String(model || '');
   return { target: `${harness}:${(CLAUDE_ALIASES[m.toLowerCase()] || m).toLowerCase()}`, base: m, provider: harness, variants: [] };
 }
 
-// 목록 만들기. launchers: 호출자들, gateways: [{ url, host(호출자), ok, models: [/v1/models의 data], why }]
+// 목록 만들기. launchers: 호출자들, gateways: [{ url(연결 base URL), connection, name, host(호출자), ok, models: [모델 목록의 data], why }](P115: 연결마다 하나)
+// harnessModels: 하네스별로 읽어 온 모델 목록 { codex: [...] }(P72). 없으면 HARNESSES의 고정 목록
 export function buildCatalog({ launchers = [], gateways = [], providers = {}, harnessModels = {} } = {}) {
   const entries = [];
   for (const l of launchers) {
     const h = harnessOf(l.harness);
     if (!AGENT_HARNESS(h)) continue;
-    const gw = gatewayOf(l);
+    const conn = l.connection ? gateways.find((g) => g.connection === l.connection) : null;
     const t = targetOfModel(h.id, l.model || '');
-    entries.push({ source: 'launcher', harness: h.id, kind: h.kind, launcher: l.name, launcherId: l.id, model: l.model || '', gateway: gw ? (l.env && l.env.ANTHROPIC_BASE_URL) || gw.url : null, keys: { exact: [l.name, l.id], exactModel: l.model ? [l.model] : [], alias: l.model ? [t.base] : [] }, ...t, words: [l.name, l.model, t.base].filter(Boolean).join(' '), command: `atrium child <이름> --launcher ${launcherRef(l)}`, startCommand: l.startCommand || '' }); // P97: 실행 명령
+    entries.push({ source: 'launcher', harness: h.id, kind: h.kind, launcher: l.name, launcherId: l.id, model: l.model || '', gateway: conn ? conn.url : (l.harness === 'claude' && l.env && l.env.ANTHROPIC_BASE_URL) || null, connection: conn ? conn.name : null, keys: { exact: [l.name, l.id], exactModel: l.model ? [l.model] : [], alias: l.model ? [t.base] : [] }, ...t, words: [l.name, l.model, t.base].filter(Boolean).join(' '), command: `atrium child <이름> --launcher ${launcherRef(l)}`, startCommand: l.startCommand || '' }); // P97: 실행 명령
   }
   for (const h of Object.values(HARNESSES)) {
     // Provider lists are loaded by Branch through Backend.agentModels. Never
@@ -90,14 +82,19 @@ export function buildCatalog({ launchers = [], gateways = [], providers = {}, ha
     if (!g.ok) continue;
     for (const raw of g.models || []) {
       const p = parseGatewayModel(raw);
-      if (!p.id || !MODEL_RE.test(p.id) || seen.has(p.id)) continue;
-      if (p.provider === 'anthropic' || known.has(stripVariants(p.id).toLowerCase())) continue; // 판이 게이트웨이 없이 띄우는 모델
-      seen.add(p.id);
-      const ocx = `ocx-claude-${p.provider}--${p.base}${p.variants.includes('fast') ? '--fast' : ''}${p.variants.includes('1m') ? '[1m]' : ''}`;
-      entries.push({ source: 'gateway', harness: 'claude', kind: 'claude', launcher: null, host: g.host ? g.host.name : null, hostId: g.host ? g.host.id : null, model: p.id, label: p.label, gateway: g.url, keys: { exact: [], exactModel: [p.id], alias: [`${p.base}${p.variants.includes('fast') ? '--fast' : ''}${p.variants.includes('1m') ? '[1m]' : ''}`, ocx, `${p.provider}/${p.base}`] }, target: `${p.provider}:${p.base.toLowerCase()}`, base: p.base, provider: p.provider, variants: p.variants, words: [p.base, p.provider, p.label].join(' '), command: `atrium child <이름> --model ${q(p.id)}` });
+      const sk = `${g.connection || g.url}|${p.id}`; // P115: 연결마다(같은 모델 ID가 다른 연결에도 있을 수 있다)
+      if (!p.id || !MODEL_RE.test(p.id) || seen.has(sk)) continue;
+      if (p.provider === 'anthropic' || known.has(stripVariants(p.id).toLowerCase())) continue; // 판이 연결 없이 띄우는 모델
+      if (!g.host) continue; // 그 연결을 쓰는 런처가 없으면 띄울 하네스가 없다
+      seen.add(sk);
+      const hh = harnessOf(g.host.harness) || HARNESSES.claude;
+      entries.push({ source: 'gateway', harness: hh.id, kind: hh.kind, launcher: null, host: g.host.name, hostId: g.host.id, model: p.id, label: p.label, gateway: g.url, connection: g.name || null, keys: { exact: [], exactModel: [p.id], alias: [`${p.base}${p.variants.includes('fast') ? '--fast' : ''}${p.variants.includes('1m') ? '[1m]' : ''}`, `${p.provider}/${p.base}`] }, target: `${p.provider}:${p.base.toLowerCase()}`, base: p.base, provider: p.provider, variants: p.variants, words: [p.base, p.provider, p.label].join(' '), command: `atrium child <이름> --model ${q(p.id)}` });
     }
   }
-  return { entries, gateways: gateways.map((g) => ({ url: g.url, host: g.host ? g.host.name : null, ok: !!g.ok, why: g.why || null, count: g.ok ? (g.models || []).length : 0 })) };
+  // P115: 같은 모델 ID를 여러 연결(하네스가 다른)이 알려 주면 명령에 --kind를 붙여 그 연결의 하네스로 띄우게 한다
+  const viaConn = entries.filter((e) => e.source === 'gateway');
+  for (const e of viaConn) if (viaConn.some((x) => x !== e && x.model === e.model && x.kind !== e.kind)) e.command = `atrium child <이름> --kind ${e.kind} --model ${q(e.model)}`;
+  return { entries, gateways: gateways.map((g) => ({ url: g.url, connection: g.name || null, protocol: g.protocol || null, host: g.host ? g.host.name : null, ok: !!g.ok, why: g.why || null, count: g.ok ? (g.models || []).length : 0 })) };
 }
 
 // 그 하네스 종류만(--kind를 준 경우)
@@ -128,7 +125,7 @@ export function resolveModel(query, catalog, { kind = null } = {}) {
     const rank = (e) => (e.source === 'launcher' ? (e.gateway ? 0 : 3) : SOURCE_RANK[e.source]);
     return { ok: true, how: 'exact', entry: byModel.sort((a, b) => rank(a) - rank(b))[0] };
   }
-  // 2. 별칭(opus 등의 짧은 이름, 게이트웨이 모델의 이름, opencodex 모양 이름)
+  // 2. 별칭(opus 등의 짧은 이름, 연결 모델의 이름과 <제공자>/<모델>)
   const byAlias = entries.filter((e) => e.keys.alias.some((k) => k && k.toLowerCase() === lq));
   if (byAlias.length) return pick(byAlias, qv, 'alias');
   // 3. 느슨한 맞춤: 변형 말("1m", "fast")을 뺀 나머지가 같거나(띄어쓰기·하이픈·점·대소문자 무시), 낱말이 모두 들어 있다
@@ -139,7 +136,7 @@ export function resolveModel(query, catalog, { kind = null } = {}) {
     const keysOf = (e) => [...e.keys.exact, ...e.keys.exactModel, ...e.keys.alias, e.base].filter(Boolean).map((k) => norm(stripVariants(k)));
     const strong = entries.filter((e) => keysOf(e).includes(nq));
     if (strong.length) return pick(strong, qv, 'loose');
-    // P96: 제공자 앞머리(deepseek/, b.ai/)를 뗀 이름으로 한 번 더(Codex의 opencodex 이름 deepseek/deepseek-flash ↔ "deepseek flash")
+    // P96: 제공자 앞머리(zai/, b.ai/)를 뗀 이름으로 한 번 더(제공자 이름이 붙은 모델 ID ↔ 말로 한 이름)
     const tail = (k) => k.slice(k.lastIndexOf('/') + 1);
     const strongTail = entries.filter((e) => keysOf(e).map(tail).includes(nq));
     if (strongTail.length) return pick(strongTail, qv, 'loose');
@@ -175,32 +172,24 @@ function lev(a, b) {
 
 // 한 줄 설명(atrium models, 후보 목록)
 export function describeEntry(e) {
-  if (e.source === 'launcher') return `런처 ${e.launcher} · ${HARNESSES[e.harness] ? HARNESSES[e.harness].label : e.harness}${e.startCommand ? ` · 실행 명령 ${e.startCommand}` : ''} · 모델 ${e.model || '(하네스 기본)'}${e.gateway ? ` · 게이트웨이 경유(${e.gateway})` : ''}`;
+  if (e.source === 'launcher') return `런처 ${e.launcher} · ${HARNESSES[e.harness] ? HARNESSES[e.harness].label : e.harness}${e.startCommand ? ` · 실행 명령 ${e.startCommand}` : ''} · 모델 ${e.model || '(하네스 기본)'}${e.connection ? ` · 연결 ${e.connection}(${e.gateway})` : e.gateway ? ` · 게이트웨이 경유(${e.gateway})` : ''}`;
   if (e.source === 'harness') return `${HARNESSES[e.harness].label} 모델 ${e.model}${e.aliases && e.aliases.length ? `(별칭 ${e.aliases.join(', ')})` : ['opus', 'sonnet', 'haiku'].includes(e.model) ? '(Claude Code 별칭)' : ''}`;
-  return `게이트웨이 모델 ${e.label || e.model} · Claude Code · 게이트웨이 경유(${e.gateway}${e.host ? `, 런처 ${e.host}의 env` : ''})`;
+  return `연결 ${e.connection || e.gateway}의 모델 ${e.label || e.model} · ${HARNESSES[e.harness] ? HARNESSES[e.harness].label : e.harness} · 런처 ${e.host}로 띄운다`;
 }
 export const candidateLines = (list) => list.map((e) => `  - ${describeEntry(e)}\n    ${e.command}`).join('\n');
 
-// 게이트웨이 모델 목록 읽기(Claude Code의 게이트웨이 모델 찾기와 같은 머리글). 안 닿으면 { ok: false, why }
-export async function fetchGatewayModels(baseUrl, { timeoutMs = 2000, fetchImpl = globalThis.fetch } = {}) {
-  const url = `${String(baseUrl).replace(/\/+$/, '')}/v1/models?limit=1000`;
-  try {
-    const r = await fetchImpl(url, { headers: { 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(timeoutMs) });
-    if (!r.ok) return { ok: false, why: `HTTP ${r.status}` };
-    const j = await r.json().catch(() => null);
-    const data = j && Array.isArray(j.data) ? j.data : null;
-    if (!data) return { ok: false, why: "유효한 모델 목록이 아닙니다." };
-    return { ok: true, models: data.filter((m) => m && typeof m.id === 'string').map((m) => ({ id: m.id, display_name: m.display_name || null, owned_by: m.owned_by || null })) };
-  } catch (e) { return { ok: false, why: e && e.name === 'TimeoutError' ? 'timeout' : (e && e.cause && e.cause.code) || (e && e.message) || 'unreachable' }; }
-}
-// 게이트웨이를 쓰는 claude 호출자의 주소들(같은 주소는 처음 호출자 하나). extra는 판 설정의 opencodex 주소 등 { url, host }
-export function gatewaysOf(launchers, extra = []) {
+// P115: 연결 모델 목록 읽기는 프로토콜별(connections.mjs fetchConnectionModels). 옛 이름으로도 부른다
+export { fetchConnectionModels as fetchGatewayModels } from './connections.mjs';
+// 런처가 참조하는 연결들(연결마다 하나, host는 그 연결을 쓰는 첫 런처: 레일 순서 → 목록 순서). → [{ url, connection(ID), name, protocol, host, conn }]
+export function gatewaysOf(launchers, connections = [], favorites = []) {
+  const rank = (l) => { const i = favorites.indexOf(l.id); return i < 0 ? favorites.length + launchers.indexOf(l) : i; };
+  const ordered = [...launchers].sort((a, b) => rank(a) - rank(b));
   const out = new Map();
-  for (const l of launchers) {
-    if (l.harness !== 'claude' || !l.env || !l.env.ANTHROPIC_BASE_URL) continue;
-    const url = l.env.ANTHROPIC_BASE_URL;
-    if (!out.has(url)) out.set(url, { url, host: l });
+  for (const l of ordered) {
+    if (!l.connection || out.has(l.connection)) continue;
+    const c = connections.find((x) => x.id === l.connection);
+    if (!c) continue;
+    out.set(c.id, { url: c.baseUrl, connection: c.id, name: c.name, protocol: c.protocol, host: l, conn: c });
   }
-  for (const x of extra) if (x && x.url && !out.has(x.url)) out.set(x.url, x);
   return [...out.values()];
 }

@@ -51,8 +51,8 @@ let app, page, mainPid;
 try {
   ({ app, page, mainPid } = await launch({ log, env: ENV, args: ['--remote-debugging-port=9372'] }));
   const data = await until(async () => { const d = await call(page, 'launcher.list'); return d && d.launchers ? d : null; }, 30000);
-  step('새 판의 런처는 Claude Code, Codex, 셸 셋', JSON.stringify(data.launchers.map((l) => l.id)) === '["claude","codex","shell"]', data.launchers.map((l) => `${l.id}:${l.preview.line || l.harness}`));
-  step('셋 모두 레일에', JSON.stringify(data.favorites) === '["claude","codex","shell"]', data.favorites);
+  step('새 판의 런처는 Claude Code, Codex 둘(P122)', JSON.stringify(data.launchers.map((l) => l.id)) === '["claude","codex"]', data.launchers.map((l) => `${l.id}:${l.preview.line || l.harness}`));
+  step('둘 모두 레일에', JSON.stringify(data.favorites) === '["claude","codex"]', data.favorites);
   step('Claude Code는 권한 방식 manual', data.launchers[0].permissionMode === 'manual', data.launchers[0].preview.line);
   const cx = data.harnesses.find((h) => h.id === 'codex');
   step('Codex 모델 목록은 가짜 CODEX_HOME의 캐시', cx.modelSource === 'codex' && JSON.stringify(cx.models) === JSON.stringify(FAKE), { models: cx.models, hidden: cx.hiddenModels, source: cx.modelSource });
@@ -62,7 +62,7 @@ try {
   await sleep(1500);
   await shot(page, '1-rail');
   const rail = await page.evaluate(() => [...document.querySelectorAll('[data-role="rail-favorites"] [data-action="launch"]')].map((b) => b.dataset.launcher));
-  step('레일 단추는 셋', JSON.stringify(rail) === '["claude","codex","shell"]', rail);
+  step('레일 단추는 둘', JSON.stringify(rail) === '["claude","codex"]', rail);
 
   // 설정 › 런처 탭
   await page.click('[data-action="settings-open"]');

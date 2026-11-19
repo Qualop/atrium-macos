@@ -139,7 +139,7 @@ async function boot({ login = 'me@example.com', settings = {} } = {}) {
   const port = srv.address().port;
   const tsw = new TailscaleWatch({ port, bin: 'tailscale', run: runner(fakeStatus({ login }), fakeServe({ port })) });
   await tsw.refresh();
-  const cfg = { port, remoteEnabled: true, dataDir: dir, profile: 'dev', herdrSession: 'atrium-dev-test' };
+  const cfg = { port, remoteEnabled: true, dataDir: dir, profile: 'dev', terminalSession: 'atrium-dev-test' };
   const st = { ...settings };
   const web = new WebServer({ cfg, store, api: null, tailscale: tsw, settings: () => st });
   const apiToken = 'board-api-token-for-test';

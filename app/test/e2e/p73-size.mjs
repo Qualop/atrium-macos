@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { launch, closeApp, shot, logger, sleep, REPO, OUT } from './harness.mjs';
 import { assertTestBoard } from './p9-guard.mjs';
 import { loadConfig } from '../../../backend/src/config.mjs';
+import { hcStateDir } from '../../../backend/src/hc/core.mjs'; // P129: 이 판의 hc 상태 폴더(세션을 지우는 자리)
 
 if (process.env.MT_E2E_OUT !== 'p73') throw new Error('MT_E2E_OUT=p73을 명령줄에서 준다');
 for (const k of Object.keys(process.env)) if (/^(ATRIUM_|MTASK_|HERDR_)/.test(k)) throw new Error(`판 값이 든 셸에서 돌리지 않는다(${k}). backend/.dev/clean-env.sh로 부른다`);
@@ -28,7 +29,7 @@ const atrium = (...args) => execFileSync(process.execPath, [path.join(REPO, 'bac
 if (process.argv.includes('--clean')) {
   const say = (...a) => console.log(...a);
   const cfg = loadConfig({ argv: ['--dev'], env: { ...process.env, ...ENV } });
-  if (cfg.herdrSession !== 'atrium-dev-p73' || String(cfg.port) !== '47893') throw new Error('P73 판만');
+  if (cfg.terminalSession !== 'atrium-dev-p73' || String(cfg.port) !== '47893') throw new Error('P73 판만');
   let up = true;
   try { atrium('status'); } catch { up = false; }
   if (up) {
@@ -38,9 +39,7 @@ if (process.argv.includes('--clean')) {
     try { say('herdr stop', atrium('herdr', 'stop', '--yes').trim().slice(0, 200)); } catch (e) { say('herdr stop 실패', String(e.message).slice(0, 200)); }
     try { say('backend stop', atrium('backend', 'stop').trim()); } catch (e) { say('backend stop 실패', String(e.message).slice(0, 200)); }
   }
-  const herdr = (...a) => { try { return execFileSync(cfg.herdrPath || 'herdr', a, { encoding: 'utf8', env: cleanEnv() }).trim(); } catch (e) { return `실패: ${String(e.stderr || e.message).trim().slice(0, 200)}`; } };
-  say('herdr session stop', herdr('session', 'stop', cfg.herdrSession));
-  say('herdr session delete', herdr('session', 'delete', cfg.herdrSession));
+  { const d = hcStateDir(cfg.terminalSession); fs.rmSync(d, { recursive: true, force: true }); say('hc 상태 지움', d); }
   for (const d of [ENV.ATRIUM_DATA_DIR, ENV.ATRIUM_APP_USERDATA, path.join(DEV, 'app-dev'), FIX, ENV.ATRIUM_CLAUDE_SESSIONS, WS]) { fs.rmSync(d, { recursive: true, force: true }); say('지움', d); }
   process.exit(0);
 }

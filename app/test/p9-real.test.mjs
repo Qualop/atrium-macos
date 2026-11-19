@@ -37,13 +37,13 @@ const dry = (env, ...args) => JSON.parse(execFileSync(process.execPath, [path.jo
 
 test('P9: real.mjs는 --dev 없이 실제 판 프로필로 띄우고, ATRIUM_* 값이 있으면 그 값을 쓴다(--dev를 줘도 뺀다)', () => {
   const real = dry({});
-  assert.equal(real.profile, 'real'); assert.equal(real.herdrSession, 'atrium'); assert.equal(real.port, 47800);
+  assert.equal(real.profile, 'real'); assert.equal(real.terminalSession, 'atrium'); assert.equal(real.port, 47800);
   assert.equal(path.basename(real.dataDir), 'atrium');
   assert.deepEqual(real.args, ['.']);
   assert.equal(real.exe, electronExecutable(APP));
   assert.equal(path.resolve(real.cwd), APP);
   const t = dry(OK, '--dev');
-  assert.equal(t.profile, 'real'); assert.equal(t.herdrSession, 'atrium-dev-p9'); assert.equal(t.port, 47821);
+  assert.equal(t.profile, 'real'); assert.equal(t.terminalSession, 'atrium-dev-p9'); assert.equal(t.port, 47821);
   assert.equal(path.resolve(t.dataDir), path.resolve(OK.ATRIUM_DATA_DIR)); assert.equal(t.appUserData, OK.ATRIUM_APP_USERDATA);
   assert.deepEqual(t.args, ['.']);
 });

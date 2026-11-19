@@ -6,13 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { unwrapPasted, promptMatches, parseTargets, toLF } from '../src/text.mjs';
 import { predictTrustFrom, buildStartArgs, buildResumeArgv, writeSessionSettings, transcriptPathFor } from '../src/launch.mjs';
-import { newRuntime, applyHook, applyHerdrStatus, applyAgentReleased, applyAgentDetected, applyHerdrDisconnected, deriveState, flags } from '../src/state.mjs';
+import { newRuntime, applyHook, applyTermStatus, applyAgentReleased, applyAgentDetected, applyTermDisconnected, deriveState, flags } from '../src/state.mjs';
 import { DeliveryQueue, blockReason } from '../src/delivery.mjs';
 import { Store } from '../src/store.mjs';
 import { parseChoices, isTrustDialog } from '../src/screen.mjs';
 import { readMessages, lastExchange } from '../src/transcript.mjs';
 import { loadConfig } from '../src/config.mjs';
-import { cleanEnv } from '../src/herdr/adapter.mjs';
+import { cleanEnv } from '../src/proc-env.mjs';
 import { planAnswer, checkSteps, sameAsk } from '../src/answer.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-unit-'));
@@ -66,60 +66,60 @@ test('대화 기록 경로', () => {
 test('3절: 시작 → ready → working → 권한 waiting → 거부(hook 없음)로 풀림', () => {
   const rt = newRuntime({ now: 0 });
   assert.equal(deriveState(rt).state, 'starting');
-  applyHerdrStatus(rt, 'unknown', 1);
+  applyTermStatus(rt, 'unknown', 1);
   assert.equal(deriveState(rt).state, 'starting');
-  rt.herdr.present = true;
-  applyHerdrStatus(rt, 'idle', 2, { launchPending: false, agentSessionId: 's' });
+  rt.term.present = true;
+  applyTermStatus(rt, 'idle', 2, { launchPending: false, agentSessionId: 's' });
   assert.equal(deriveState(rt).state, 'ready');
   applyHook(rt, { hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, 3);
-  applyHerdrStatus(rt, 'working', 4);
+  applyTermStatus(rt, 'working', 4);
   assert.equal(deriveState(rt).state, 'working');
   applyHook(rt, { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_use_id: 't1', tool_input: { file_path: 'C:/a.txt' } }, 5);
   applyHook(rt, { hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: { file_path: 'C:/a.txt' } }, 6);
   const w = deriveState(rt);
   assert.equal(w.state, 'waiting');
-  assert.equal(w.estimate, 'hook waiting, herdr working'); // hook이 herdr보다 먼저 온다
+  assert.equal(w.estimate, 'hook waiting, term working'); // hook이 herdr보다 먼저 온다
   assert.equal(w.ask.summary, 'Write: C:/a.txt');
   assert.equal(w.ask.toolUseId, 't1');
-  applyHerdrStatus(rt, 'blocked', 7);
+  applyTermStatus(rt, 'blocked', 7);
   assert.equal(deriveState(rt).estimate, undefined);
-  applyHerdrStatus(rt, 'idle', 8); // esc 거부: PostToolUse 없이 풀린다(E9)
+  applyTermStatus(rt, 'idle', 8); // esc 거부: PostToolUse 없이 풀린다(E9)
   assert.equal(deriveState(rt).state, 'ready');
-  assert.equal(rt.lastAskResolved.resolvedBy, 'herdr:idle');
+  assert.equal(rt.lastAskResolved.resolvedBy, 'term:idle');
 });
 
 test('3절: blocked + hook 없음 + launch_pending은 trust_wait, 아니면 알 수 없는 대화상자', () => {
   const rt = newRuntime({ trustPredicted: true });
-  rt.herdr.present = true;
-  applyHerdrStatus(rt, 'blocked', 1);
+  rt.term.present = true;
+  applyTermStatus(rt, 'blocked', 1);
   assert.equal(deriveState(rt).state, 'trust_wait');
   // 신뢰 대화상자에서 esc → hook 없이 해제 → 신뢰하지 않아 끝남
   applyAgentReleased(rt, 2);
   assert.equal(deriveState(rt).state, 'exited');
   assert.equal(rt.exit.kind, 'trust_declined');
-  applyHerdrStatus(rt, 'idle', 3); // 해제 뒤에 오는 idle로 되살아나지 않는다
+  applyTermStatus(rt, 'idle', 3); // 해제 뒤에 오는 idle로 되살아나지 않는다
   assert.equal(deriveState(rt).state, 'exited');
 
   const rt2 = newRuntime();
-  rt2.herdr.present = true;
-  applyHerdrStatus(rt2, 'idle', 1, { launchPending: false, agentSessionId: 'x' });
+  rt2.term.present = true;
+  applyTermStatus(rt2, 'idle', 1, { launchPending: false, agentSessionId: 'x' });
   applyHook(rt2, { hook_event_name: 'Stop', last_assistant_message: 'ok' }, 2);
-  applyHerdrStatus(rt2, 'blocked', 3);
+  applyTermStatus(rt2, 'blocked', 3);
   assert.equal(deriveState(rt2).state, 'waiting');
   assert.equal(deriveState(rt2).ask.kind, 'unknown_dialog');
 });
 
 test('3절: 질문은 hook에서 선택지를 읽고, Stop은 마지막 답, StopFailure는 error', () => {
   const rt = newRuntime();
-  rt.herdr.present = true;
-  applyHerdrStatus(rt, 'working', 1);
+  rt.term.present = true;
+  applyTermStatus(rt, 'working', 1);
   applyHook(rt, { hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'q1', tool_input: { questions: [{ question: 'Which?', options: [{ label: 'Red' }, { label: 'Blue' }] }] } }, 2);
-  applyHerdrStatus(rt, 'blocked', 3);
+  applyTermStatus(rt, 'blocked', 3);
   assert.deepEqual(deriveState(rt).ask.questions, [{ question: 'Which?', header: undefined, multiSelect: false, options: ['Red', 'Blue'] }]);
   applyHook(rt, { hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'q1' }, 4);
   assert.equal(rt.pendingAsk, null);
   applyHook(rt, { hook_event_name: 'StopFailure', error: 'rate_limit' }, 5);
-  applyHerdrStatus(rt, 'idle', 6);
+  applyTermStatus(rt, 'idle', 6);
   assert.equal(deriveState(rt).state, 'error');
   assert.equal(deriveState(rt).error.type, 'rate_limit');
   applyHook(rt, { hook_event_name: 'UserPromptSubmit', prompt: 'again' }, 7);
@@ -134,35 +134,42 @@ test('3절: 질문은 hook에서 선택지를 읽고, Stop은 마지막 답, Sto
 
 test('C3: herdr가 꺼지면 진행 중 턴을 끊긴 턴으로 남기고, 다시 찾으면 starting', () => {
   const rt = newRuntime();
-  rt.herdr.present = true;
-  applyHerdrStatus(rt, 'idle', 1, { launchPending: false, agentSessionId: 'x' });
+  rt.term.present = true;
+  applyTermStatus(rt, 'idle', 1, { launchPending: false, agentSessionId: 'x' });
   applyHook(rt, { hook_event_name: 'UserPromptSubmit', prompt: 'long job' }, 2);
-  applyHerdrStatus(rt, 'working', 3);
+  applyTermStatus(rt, 'working', 3);
   applyHook(rt, { hook_event_name: 'SessionEnd', reason: 'other' }, 4);
-  applyHerdrDisconnected(rt, 5);
+  applyTermDisconnected(rt, 5);
   assert.equal(deriveState(rt).state, 'exited');
-  assert.equal(rt.exit.kind, 'herdr_stopped');
+  assert.equal(rt.exit.kind, 'terminal_stopped');
   assert.equal(rt.interruptedTurn.state, 'working');
   applyAgentDetected(rt, 6);
   assert.equal(deriveState(rt).state, 'starting');
-  applyHerdrStatus(rt, 'unknown', 7);
+  applyTermStatus(rt, 'unknown', 7);
   assert.equal(deriveState(rt).state, 'starting');
-  applyHerdrStatus(rt, 'idle', 8);
+  applyTermStatus(rt, 'idle', 8);
   assert.equal(deriveState(rt).state, 'ready');
 });
 
-test('3절: /exit 정상 종료', () => {
+test('3절: /exit 정상 종료(판이 보냄), 사람이 친 /exit·Ctrl+C 두 번은 직접 종료(P125)', () => {
   const rt = newRuntime();
-  rt.herdr.present = true;
-  applyHerdrStatus(rt, 'idle', 1, { launchPending: false, agentSessionId: 'x' });
+  rt.term.present = true;
+  applyTermStatus(rt, 'idle', 1, { launchPending: false, agentSessionId: 'x' });
+  rt.exitRequested = true; // 판이 /exit를 보냈다
   applyHook(rt, { hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' }, 2);
   applyAgentReleased(rt, 3);
   assert.equal(rt.exit.kind, 'normal');
+  const rt2 = newRuntime();
+  rt2.term.present = true;
+  applyTermStatus(rt2, 'idle', 1, { launchPending: false, agentSessionId: 'x' });
+  applyHook(rt2, { hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' }, 2);
+  applyAgentReleased(rt2, 3);
+  assert.equal(rt2.exit.kind, 'user');
 });
 
 test('B1: 보낼 수 있는지와 기다리는 이유', () => {
   const cfg = { inputQuietMs: 3000 };
-  const v = { state: 'ready', agentPresent: true, herdrConnected: true, closed: false };
+  const v = { state: 'ready', agentPresent: true, termConnected: true, closed: false };
   assert.equal(blockReason(v, 10000, cfg), null);
   assert.equal(blockReason({ ...v, state: 'waiting' }, 0, cfg), 'waiting');
   assert.equal(blockReason({ ...v, state: 'trust_wait' }, 0, cfg), 'trust_wait');
@@ -174,7 +181,7 @@ test('B1: 보낼 수 있는지와 기다리는 이유', () => {
 
 test('B1: 막혀 있으면 기다렸다가 풀리면 보내고, UserPromptSubmit으로 확인한다', async () => {
   const store = new Store(path.join(tmp(), 'b.db'));
-  const view = { state: 'waiting', agentPresent: true, herdrConnected: true, closed: false };
+  const view = { state: 'waiting', agentPresent: true, termConnected: true, closed: false };
   const sent = [];
   const events = [];
   const q = new DeliveryQueue({ store, cfg: { inputQuietMs: 3000, deliveryMaxWaitMs: 60000, submitConfirmMs: 30000 }, view: () => view, send: async (sid, text) => { sent.push([sid, text]); } });
@@ -241,8 +248,8 @@ test('대화 기록 읽기와 C2 보정', () => {
 test('설정: dev 프로필은 실제 판과 겹치지 않는다', () => {
   const real = loadConfig({ argv: [], env: { LOCALAPPDATA: 'C:\\L' } });
   const dev = loadConfig({ argv: ['--dev'], env: {} });
-  assert.equal(real.herdrSession, 'atrium');
-  assert.notEqual(dev.herdrSession, real.herdrSession);
+  assert.equal(real.terminalSession, 'atrium');
+  assert.notEqual(dev.terminalSession, real.terminalSession);
   assert.notEqual(dev.port, real.port);
   assert.notEqual(dev.dataDir, real.dataDir);
   assert.throws(() => loadConfig({ argv: ['--dev'], env: { ATRIUM_HERDR_SESSION: 'atrium' } }));
@@ -318,51 +325,4 @@ test('A1: 보내기 전 확인 — 카드의 요청이 지금 요청인지, 허�
   assert.ok(!sameAsk(null, { toolUseId: 't1' }));
   assert.throws(() => checkSteps([{ keys: ['ctrl+g'] }]), { code: 'bad_request' });
   assert.doesNotThrow(() => checkSteps([{ keys: ['1', 'esc', 'down', 'enter', 'tab'] }, { text: 'x' }]));
-});
-
-// P2에서 고친 것: 구독을 바꾸는 사이(새 구독이 받기 전)에 옛 구독으로 온 이벤트를 잃지 않는다. 가짜 herdr 파이프 서버로 본다.
-test('herdr 어댑터: 구독을 바꾸는 사이의 이벤트를 잃지 않고, 구독 바꾸기는 하나씩', async () => {
-  const { HerdrAdapter } = await import('../src/herdr/adapter.mjs');
-  const net = await import('node:net');
-  const pipe = String.raw`\\.\pipe\mtask-unit-${process.pid}-${Date.now()}`;
-  const subs = [];
-  let order = [];
-  const server = net.createServer((sock) => {
-    let buf = '';
-    sock.on('data', (d) => {
-      buf += d;
-      const i = buf.indexOf('\n'); if (i < 0) return;
-      const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
-      if (m.method !== 'events.subscribe') return;
-      const n = subs.push(sock);
-      order.push(`start${n}`);
-      const ev = (pane) => JSON.stringify({ event: 'pane_agent_detected', data: { pane_id: pane, agent: 'claude' } }) + '\n';
-      if (n === 1) sock.write(JSON.stringify({ id: m.id, result: { ok: true } }) + '\n');
-      else if (n === 2) {
-        // 둘째 구독은 늦게 받는다. 그 사이 첫 구독으로 agent_detected가 온다(w1).
-        setTimeout(() => subs[0].write(ev('w1:p1')), 20);
-        // 받는 순간 첫 구독 파이프에 이벤트 하나(w2)가 오는 중이고, 같은 이벤트가 새 구독으로도 온다(중복)
-        setTimeout(() => { order.push(`ack${n}`); sock.write(JSON.stringify({ id: m.id, result: { ok: true } }) + '\n'); subs[0].write(ev('w2:p1')); sock.write(ev('w2:p1')); }, 80);
-      } else { order.push(`ack${n}`); sock.write(JSON.stringify({ id: m.id, result: { ok: true } }) + '\n'); }
-    });
-    sock.on('error', () => {});
-  });
-  await new Promise((r) => server.listen(pipe, r));
-  const a = new HerdrAdapter({ herdrPath: 'x', session: 'unit-test', logDir: tmp() });
-  a.pipe = pipe;
-  a._watching = true;
-  const got = [];
-  a.on('event', (e) => got.push(e));
-  try {
-    await a._subscribe();
-    await Promise.all([a._subscribe(), a._subscribe()]);
-    await new Promise((r) => setTimeout(r, 200));
-    assert.deepEqual(got.map((e) => `${e.type}:${e.paneId}`), ['agent_detected:w1:p1', 'agent_detected:w2:p1']); // 잃지 않고, 두 번 내지 않는다
-    assert.deepEqual(order, ['start1', 'start2', 'ack2', 'start3', 'ack3']); // 겹치지 않고 하나씩
-  } finally {
-    a._watching = false;
-    a.stopEvents();
-    for (const s of subs) s.destroy();
-    await new Promise((r) => server.close(r));
-  }
 });

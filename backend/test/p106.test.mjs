@@ -21,7 +21,7 @@ const ASK = 'Reply with the single word ok-w1 and do nothing else.';
 function rig(t, { refuse = () => null, view = {}, look = null, opts = {} } = {}) {
   t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
   const log = { tries: 0, sent: [], enter: 0, inspect: 0, recover: [], events: [], refused: [], stuck: [] };
-  const v = { state: 'ready', agentPresent: true, herdrConnected: true, closed: false, lastUserInputAt: 0, ...view };
+  const v = { state: 'ready', agentPresent: true, termConnected: true, closed: false, lastUserInputAt: 0, ...view };
   const store = fakeStore();
   const q = new DeliveryQueue({
     store, cfg: { ...cfg, ...opts }, view: () => v,
@@ -106,7 +106,7 @@ test('P106 취소: 막혀 물러난 전달은 대기 중에도, 조용히 다시
 
   // 조용한 다시 보내기가 herdr 응답을 기다리는 중(sending)에 취소: 그 시도가 끝나기를 기다렸다가 취소한다
   let release; let hold = false;
-  const q2 = new DeliveryQueue({ store: fakeStore(), cfg, view: () => ({ state: 'ready', agentPresent: true, herdrConnected: true }), send: () => (hold ? new Promise((_, rej) => { release = () => rej(err('agent_not_found')); }) : Promise.reject(err('agent_not_found'))) });
+  const q2 = new DeliveryQueue({ store: fakeStore(), cfg, view: () => ({ state: 'ready', agentPresent: true, termConnected: true }), send: () => (hold ? new Promise((_, rej) => { release = () => rej(err('agent_not_found')); }) : Promise.reject(err('agent_not_found'))) });
   const d2 = q2.enqueue('s', ASK);
   await tick();
   hold = true; q2.poke('s'); q2.pump(); await tick();
@@ -117,7 +117,7 @@ test('P106 취소: 막혀 물러난 전달은 대기 중에도, 조용히 다시
 
   // 처음 보내는 짧은 순간(거부 없음): 시도가 끝나 들어갔으면 취소하지 않는다
   let ok;
-  const q3 = new DeliveryQueue({ store: fakeStore(), cfg: { ...cfg, cancelWaitMs: 2000 }, view: () => ({ state: 'ready', agentPresent: true, herdrConnected: true }), send: () => new Promise((r) => { ok = r; }) });
+  const q3 = new DeliveryQueue({ store: fakeStore(), cfg: { ...cfg, cancelWaitMs: 2000 }, view: () => ({ state: 'ready', agentPresent: true, termConnected: true }), send: () => new Promise((r) => { ok = r; }) });
   const d3 = q3.enqueue('s', ASK);
   await tick();
   assert.equal(d3.status, 'sending');
@@ -127,7 +127,7 @@ test('P106 취소: 막혀 물러난 전달은 대기 중에도, 조용히 다시
   await c;
   // 처음 시도가 거부되면 cancelWait가 그것을 기다려 취소한다
   let no;
-  const q4 = new DeliveryQueue({ store: fakeStore(), cfg, view: () => ({ state: 'ready', agentPresent: true, herdrConnected: true }), send: () => new Promise((_, rej) => { no = () => rej(err('agent_not_ready')); }) });
+  const q4 = new DeliveryQueue({ store: fakeStore(), cfg, view: () => ({ state: 'ready', agentPresent: true, termConnected: true }), send: () => new Promise((_, rej) => { no = () => rej(err('agent_not_ready')); }) });
   const d4 = q4.enqueue('s', ASK);
   await tick();
   const c4 = q4.cancelWait(d4.deliveryId);

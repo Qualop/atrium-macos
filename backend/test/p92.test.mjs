@@ -205,12 +205,11 @@ test('진단 기록과 알림에 질문·요청·답의 글이 없다', async ()
   assert.deepEqual(pushText([{ sessionId: 'a', name: 'a', kind: 'need', ws: 'r', subs: 3 }], 'ko'), { title: '@a · 응답 필요', body: 'r' }, '하위 세션 수는 끝남에만');
 });
 
-test('hook: Stop·SubagentStop의 background_tasks → 도는 뒤 일(id, 종류만). 필드가 없으면 전 값, claude가 끝나면 비운다', () => {
+test('hook: Stop·SubagentStop의 background_tasks → 도는 뒤 일(id, 종류, P164 설명 한 줄). 필드가 없으면 전 값, claude가 끝나면 비운다', () => {
   const rt = newRuntime();
   applyHook(rt, { hook_event_name: 'UserPromptSubmit', prompt: 'x' });
   applyHook(rt, { hook_event_name: 'Stop', last_assistant_message: 'started', background_tasks: [{ id: 'b1', type: 'shell', status: 'running', description: 'SECRET sleep', command: 'sleep 45' }, { id: 'a1', type: 'subagent', status: 'running', description: 'SECRET', agent_type: 'general-purpose' }, { id: 'b0', type: 'shell', status: 'completed' }], session_crons: [] });
-  assert.deepEqual(rt.bg.tasks, [{ id: 'b1', type: 'shell' }, { id: 'a1', type: 'subagent' }]);
-  assert.ok(!JSON.stringify(rt.bg).includes('SECRET'));
+  assert.deepEqual(rt.bg.tasks, [{ id: 'b1', type: 'shell', label: 'SECRET sleep' }, { id: 'a1', type: 'subagent', label: 'SECRET' }]);
   applyHook(rt, { hook_event_name: 'SubagentStop', background_tasks: [{ id: 'b1', type: 'shell', status: 'running' }] });
   assert.deepEqual(rt.bg.tasks.map((x) => x.id), ['b1']);
   applyHook(rt, { hook_event_name: 'Stop', last_assistant_message: 'y' });

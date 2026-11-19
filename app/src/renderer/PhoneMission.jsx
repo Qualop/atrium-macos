@@ -21,6 +21,8 @@ import { roleText, teamText, modelText, ageText } from './lib/mission-model.js';
 import { kindOf, shownKind, logoFor } from './lib/kinds.js';
 import { TOUCH_SLOP_PX, pinchViewport, panViewport, mid, dist } from './lib/touch-board.js';
 import { MissionLight } from './Mission.jsx'; // P107: 테두리를 따라 도는 빛 층(PC와 같다)
+import { missionStyleOf } from './lib/mission-terr.js';
+import { PhoneMap } from './PhoneMap.jsx'; // P166: PC 세션 맵과 같은 무한 캔버스(기본, P160 세로 목록 PhoneLineage.jsx를 갈음)
 
 const REFRESH_MS = 600; // 판이 바뀌면 이만큼 모았다가 다시 받는다
 let cache = null; // 마지막 mission.graph
@@ -50,6 +52,9 @@ function Avatar({ live, r }) {
   );
 }
 
+// P119: 작업 완료 카드의 끝 표식(위 가장자리 꼬리표 안의 체크). 색만으로 가르지 않게 모양과 글을 함께 둔다
+const DoneMark = () => <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.3 5 8.7 9.6 3.6" /></svg>;
+
 function Node({ n, live, dim, no, t, now }) {
   const r = n.row;
   const shell = (live && live.kind === 'shell') || r.agentKind === 'shell';
@@ -75,6 +80,7 @@ function Node({ n, live, dim, no, t, now }) {
   return (
     <button type="button" className={`mt-pm-node ${cls}${r.team ? ' lead' : ''}`} {...common}>
       {r.tier === 'work' && <MissionLight role="pm-light" />}
+      {r.tier === 'review' && <span className="mt-pm-donetag" data-role="pm-done"><DoneMark />{t('doneMark.tag')}</span>}
       <span className="mt-pm-top">{no ? <span className="mt-pm-no" data-role="pm-team-no">{no}</span> : null}<b className="mt-pm-name">{r.name}</b></span>
       <span className={`mt-pm-sub ${line.k}`} data-role={`pm-${line.k}`}>{line.main ? <b data-role="pm-role">{line.main}</b> : null}{line.main && line.text ? ' · ' : null}{line.text}</span>
       <span className="mt-pm-meta" data-role="pm-meta">{meta || (shell ? t('mmMap.noModel') : '')}</span>
@@ -83,7 +89,13 @@ function Node({ n, live, dim, no, t, now }) {
   );
 }
 
-export function PhoneMission({ onBack, onOpen, conn }) {
+// P166: 기본은 PhoneMap.jsx(PC와 같은 무한 캔버스, 세로 화면 배치). 이 파일의 지도(ClassicPhoneMission)는 숨은 판 설정 missionStyle: classic일 때만 쓴다
+export function PhoneMission(props) {
+  const style = useStore((st) => missionStyleOf(st.settings));
+  return style === 'classic' ? <ClassicPhoneMission {...props} /> : <PhoneMap {...props} />;
+}
+
+function ClassicPhoneMission({ onBack, onOpen, conn }) {
   const t = useT();
   const sessions = useStore((st) => st.sessions);
   const links = useStore((st) => st.links);
@@ -209,6 +221,7 @@ export function PhoneMission({ onBack, onOpen, conn }) {
         <div className="mt-pm-sum" data-role="pm-sum">
           <button type="button" className={`mt-pm-chip t-turn${focus === 'turn' ? ' on' : ''}`} data-n={c.turn} data-action="pm-focus-turn" aria-pressed={focus === 'turn'} disabled={!c.turn && focus !== 'turn'} title={t('phoneMission.focus')} onClick={() => pick('turn')}><i />{t('phoneMission.needs', { n: c.turn })}</button>
           <button type="button" className={`mt-pm-chip t-work${focus === 'work' ? ' on' : ''}`} data-n={c.work} data-action="pm-focus-work" aria-pressed={focus === 'work'} disabled={!c.work && focus !== 'work'} title={t('phoneMission.focus')} onClick={() => pick('work')}><i />{t('phoneMission.working', { n: c.work })}</button>
+          {c.review > 0 || focus === 'review' ? <button type="button" className={`mt-pm-chip t-review${focus === 'review' ? ' on' : ''}`} data-n={c.review} data-action="pm-focus-review" aria-pressed={focus === 'review'} title={t('phoneMission.focus')} onClick={() => pick('review')}><i />{t('doneMark.phone', { n: c.review })}</button> : null}
           <span className="mt-pm-chip">{t('phoneMission.all', { n: c.all })}</span>
         </div>
       )}

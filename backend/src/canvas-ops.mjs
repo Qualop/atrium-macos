@@ -1,4 +1,4 @@
-// 단일 캔버스와 관계 표현의 판 API(ARCH 4절 H, P6a). backend.mjs의 Backend(b)를 받아 판 기록을 바꾼다. herdr는 어댑터로만 부른다.
+// 단일 캔버스와 관계 표현의 판 API(ARCH 4절 H, P6a). backend.mjs의 Backend(b)를 받아 판 기록을 바꾼다. 터미널은 어댑터로만 부른다.
 // - 영역과 빈자리(H1), 영역 옮기기, 검색(H2), 붙여 묶기(H5), 크기 단계와 정리(H7). 골라 묶기(그룹, H6)는 P22에서 뺐다
 // - 계산은 canvas.mjs·search.mjs의 순수 함수(창도 같이 씀). 바꾼 뒤에는 board.changed를 보내 창이 판을 다시 읽게 한다.
 import crypto from 'node:crypto';
@@ -637,17 +637,17 @@ export function migrateDocks(b) {
   return out;
 }
 
-// herdr에서 같은 탭에 나뉜 패널(에이전트가 pane split으로 나눈 패널)은 처음부터 나눈 방향대로 붙인다(H5). herdr 레이아웃은 바꾸지 않는다
+// 터미널의 같은 탭에 나뉜 패널(탭 배치가 있는 터미널만. hc는 없다)은 처음부터 나눈 방향대로 붙인다(H5). 터미널 배치는 바꾸지 않는다
 export async function autoDockSplit(b, s, parent) {
   if (!parent || parent === s || !s.paneId || !parent.paneId || (parent.workspaceKey || null) !== (s.workspaceKey || null)) return null;
-  if (parent.herdrWorkspaceId !== s.herdrWorkspaceId) return null;
+  if (parent.termWorkspaceId !== s.termWorkspaceId) return null;
   let layout = null;
   try { layout = await b.adapter.paneLayout(s.paneId); } catch (e) { b.log(`pane.layout failed ${s.paneId}: ${e.code || e.message}`); return null; }
   const rect = (id) => { const p = layout && (layout.panes || []).find((x) => x.pane_id === id); return p ? p.rect : null; };
   const side = splitSide(rect(parent.paneId), rect(s.paneId));
   if (!side) return null; // 같은 탭이 아니다
   try {
-    const r = dockAttach(b, { session: s.sessionId, to: parent.sessionId, side, origin: 'herdr' }, 'herdr split');
+    const r = dockAttach(b, { session: s.sessionId, to: parent.sessionId, side, origin: 'split' }, 'terminal split');
     b.store.addEvent(s.sessionId, 'auto_docked', { parent: parent.name, side, tabId: layout.tab_id });
     return r.dock;
   } catch (e) { b.store.addEvent(s.sessionId, 'auto_dock_skipped', { parent: parent.name, side, why: e.message }); return null; }

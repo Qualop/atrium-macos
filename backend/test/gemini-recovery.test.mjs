@@ -43,14 +43,14 @@ function fixture(t, kind = 'gemini') {
   const b = {
     cfg: { dataDir: root, sessionsDir: root, recoverGraceMs: 0 },
     store, sessions: new Map(), bus: new EventEmitter(), killing: new Set(),
-    api: { broadcast() {} }, log() {}, requireHerdr() {}, probeGit() {},
+    api: { broadcast() {} }, log() {}, requireTerminal() {}, probeGit() {},
     hooked: (s) => s.rt.hooked !== false,
     registerResume: () => assert.fail(`${kind} must not register Claude resume arguments`),
     broadcastSession: (s) => store.saveRuntime(s.sessionId, s.rt),
     ensureWorkspace: (w) => { if (!store.getWorkspace(w.key)) store.insertWorkspace({ ...w, createdAt: 1 }); },
     withNewPane: async (create, register) => { const r = await create(); await register(r); return r; },
-    setPane: async (s, paneId, herdrWorkspaceId) => {
-      Object.assign(s, { paneId, herdrWorkspaceId }); store.updateSession(s.sessionId, { paneId, herdrWorkspaceId });
+    setPane: async (s, paneId, termWorkspaceId) => {
+      Object.assign(s, { paneId, termWorkspaceId }); store.updateSession(s.sessionId, { paneId, termWorkspaceId });
     },
     closeSession: (s, reason) => {
       calls.push(['closeSession', s.sessionId, reason]);
@@ -91,9 +91,9 @@ function fixture(t, kind = 'gemini') {
       fs.writeFileSync(rt[`${kind}TranscriptPath`], JSON.stringify({ sessionId: nativeId, messages: turned ? [{ type: 'user', content: 'keep my conversation' }] : [] }));
     }
     if (turned) Object.assign(rt, { lastPrompt: 'keep my conversation', lastPromptAt: 100, lastAnswer: 'remembered answer', lastAnswerAt: 200, turn: { startedAt: 100, endedAt: 200 } });
-    if (!closed) rt.exit = { kind: 'herdr_stopped' };
+    if (!closed) rt.exit = { kind: 'terminal_stopped' }; // P129: herdr_stopped → terminal_stopped
     Object.assign(rt, runtime);
-    const s = { sessionId: id, name: `${kind}${id.slice(0, 8)}`, cwd, workspaceKey: ws.key, kind, origin, rt, paneId: 'old:p1', herdrWorkspaceId: 'old', model: `${kind}-test-model`, settingsPath: path.join(root, 'deleted-settings.json'), hookToken: 'old-token', permissionMode: 'manual', createdAt: 1 };
+    const s = { sessionId: id, name: `${kind}${id.slice(0, 8)}`, cwd, workspaceKey: ws.key, kind, origin, rt, paneId: 'old:p1', termWorkspaceId: 'old', model: `${kind}-test-model`, settingsPath: path.join(root, 'deleted-settings.json'), hookToken: 'old-token', permissionMode: 'manual', createdAt: 1 };
     s.agentName = s.name;
     store.insertSession({ ...s, runtime: rt });
     store.setNode({ session_id: id, x: 100, y: 200, w: 720, h: 460, z: 3, size: 'large', area: '' });
@@ -152,7 +152,8 @@ test('archived Gemini reopens the exact native conversation with fresh hooks and
   assert.deepEqual(f.store.nodeOf(s.sessionId), node);
   assert.equal(f.store.getSession(s.sessionId).closedAt, null);
   assert.equal(f.store.archiveMarks().get(`session:${s.sessionId}`).archivedAt, null);
-  assert.deepEqual(call(f, 'startAgent')[0], { name: s.name, paneId: out.paneId, kind: 'gemini', args: ['--resume', ID(101), '--sandbox', '--model', old.model] });
+  // hc: 에이전트를 새 터미널로 띄우므로(셸 env를 물려받지 않는다) 판의 env를 startAgent에도 준다
+  assert.deepEqual(call(f, 'startAgent')[0], { name: s.name, paneId: out.paneId, kind: 'gemini', args: ['--resume', ID(101), '--sandbox', '--model', old.model], env: call(f, 'geminiSettings').at(-1).env });
   assert.equal(s.rt.geminiSessionId, ID(101)); assert.equal(s.rt.geminiTranscriptPath, old.rt.geminiTranscriptPath);
   assert.equal(s.rt.lastPromptAt, 100);
   assertIntegration(f, s);
@@ -347,7 +348,7 @@ test('archived managed agy resumes the exact native conversation with fresh env,
   assert.equal(s.model, old.model); assert.deepEqual(f.store.nodeOf(s.sessionId), node);
   assert.equal(f.store.getSession(s.sessionId).closedAt, null);
   assert.equal(f.store.archiveMarks().get(`session:${s.sessionId}`).archivedAt, null);
-  assert.deepEqual(call(f, 'startAgent')[0], { name: s.name, paneId: out.paneId, kind: 'agy', args: ['--conversation', ID(101), '--sandbox', '--model', s.model] });
+  assert.deepEqual(call(f, 'startAgent')[0], { name: s.name, paneId: out.paneId, kind: 'agy', args: ['--conversation', ID(101), '--sandbox', '--model', s.model], env: call(f, 'agySettings').at(-1).env }); // hc: startAgent에도 판의 env
   assert.equal(s.rt.agySessionId, ID(101)); assert.equal(s.rt.agyTranscriptPath, old.rt.agyTranscriptPath);
   assert.equal(f.store.getSession(s.sessionId).runtime.agySessionId, ID(101));
   assertIntegration(f, s);
@@ -388,7 +389,7 @@ test('used agy refuses missing or invalid native metadata and never substitutes 
     const f = fixture(t, 'agy'); const s = f.session(changes);
     const row = f.store.closedSession(s.sessionId);
     row.runtime.geminiSessionId = ID(999); row.runtime.geminiTranscriptPath = s.rt.agyTranscriptPath;
-    row.runtime.herdr.agentSessionId = ID(998);
+    row.runtime.term.agentSessionId = ID(998); // P129: 터미널 상태 칸 herdr → term
     f.store.saveRuntime(s.sessionId, row.runtime);
     await assert.rejects(f.r.reopen({ session: s.sessionId }), { code: 'not_resumable' });
     assert.equal(f.r.closedView(f.store.closedSessions()[0], new Set()).canReopen, false);

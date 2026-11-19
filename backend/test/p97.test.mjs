@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Launchers, normalizeLauncher, normalizeStartCommand, parseCommandLine, splitArgs, shellStatements, previewLauncher, resolveLauncher, startWarning, onPath, uniqueName, claudeStartOf, startOpt, HARNESSES } from '../src/launchers.mjs';
 import { buildResumeArgv, buildStartArgs, psLine, psQuote, platformLine } from '../src/launch.mjs';
-import { HerdrAdapter } from '../src/herdr/adapter.mjs';
+import { HerdrAdapter } from '../src/herdr-migrate/adapter.mjs';
 import { Store } from '../src/store.mjs';
 import { Backend } from '../src/backend.mjs';
 import { DEFAULTS } from '../src/settings.mjs';
@@ -33,7 +33,7 @@ test('P97 붙여 넣기: ocx claude 한 줄 → Claude Code 판 세션(실행 �
 test('P97 붙여 넣기: codex 한 줄 → Codex(-m 모델, 나머지는 추가 인자), herdr가 아는 다른 종류는 추가 인자만', () => {
   const r = parse('codex --search --model deepseek/deepseek-flash');
   assert.deepEqual([r.recognized.as, r.launcher.harness, r.launcher.model, r.launcher.args, r.recognized.board], ['codex', 'codex', 'deepseek/deepseek-flash', '--search', false]);
-  assert.equal(previewLauncher(valid(r)).line, 'codex --search --model deepseek/deepseek-flash');
+  assert.equal(previewLauncher(valid(r)).line, 'codex -m deepseek/deepseek-flash --search'); // P115: 하네스 어댑터가 모델을 -m으로 앞에 붙인다
   assert.equal(parse('codex --model=gpt-6-astra').launcher.model, 'gpt-6-astra');
   assert.equal(parse('codex -mgpt-6-sol').launcher.model, 'gpt-6-sol');
   const pi = parse('pi --thinking high');
@@ -74,12 +74,14 @@ test('P97 붙여 넣기: 모르는 명령, claude 밖의 감싸개, claude 밖�
   const a = parse('aider --model "gpt x" --yes');
   assert.deepEqual([a.recognized.as, a.recognized.why, a.launcher.harness, a.launcher.command, a.recognized.board], ['command', 'unknown', 'command', "aider --model 'gpt x' --yes", false]);
   valid(a);
-  assert.equal(parse('ocx codex -m x').recognized.why, 'wrapperNotClaude');
+  const w = parse('wrap codex -m x'); // P115: 래퍼 명령(실행 명령)은 모든 에이전트 하네스가 받는다
+  assert.deepEqual([w.recognized.as, w.launcher.harness, w.launcher.startCommand, w.launcher.model], ['codex', 'codex', 'wrap codex', 'x']);
   const e = parse("$env:OPENAI_BASE_URL='http://x'; codex -m y");
-  assert.equal(e.launcher.harness, 'codex');
+  // P115: Codex 런처는 env 칸이 없어(인증은 연결) env가 붙은 줄은 명령 런처가 된다. macOS 판: env는 명령 앞머리가 아니라 따로(프로세스 env)
+  assert.deepEqual([e.recognized.why, e.launcher.harness, e.launcher.command], ['envNotClaude', 'command', 'codex -m y']);
   assert.deepEqual(e.launcher.env, { OPENAI_BASE_URL: 'http://x' });
   assert.deepEqual(previewLauncher(valid(e)).env, ['OPENAI_BASE_URL']);
-  assert.equal(previewLauncher(valid(e)).line, 'codex --model y');
+  assert.equal(previewLauncher(valid(e)).line, 'codex -m y');
   const z = parse('   \n  ');
   assert.equal(z.recognized.as, 'empty');
 });
@@ -97,7 +99,9 @@ test('P97 실행 명령 검사: 빈 칸·claude는 기본, 첫 낱말은 명령 
   const l = normalizeLauncher({ name: 'o', harness: 'claude', startCommand: 'ocx claude' });
   assert.equal(l.startCommand, 'ocx claude');
   assert.equal('startCommand' in normalizeLauncher({ name: 'c', harness: 'claude', startCommand: 'claude' }), false);
-  assert.equal('startCommand' in normalizeLauncher({ name: 'x', harness: 'codex', startCommand: 'ocx codex' }), false);
+  assert.equal(normalizeLauncher({ name: 'x', harness: 'codex', startCommand: 'wrap codex' }).startCommand, 'wrap codex', 'P115: 실행 명령은 모든 에이전트 하네스');
+  assert.equal('startCommand' in normalizeLauncher({ name: 'y', harness: 'codex', startCommand: 'codex' }), false, 'P115: 그 하네스의 기본 명령 하나면 비운다');
+  assert.throws(() => normalizeLauncher({ name: 'z', harness: 'codex', startCommand: 'wrap codex resume' }), (e) => e.key === 'launcherStart.reserved', 'P115: 하네스가 정하는 인자');
   assert.ok(HARNESSES.claude.fields.includes('startCommand'));
   assert.deepEqual(resolveLauncher(l).startCommand, 'ocx claude');
   assert.equal(resolveLauncher(normalizeLauncher({ name: 'c', harness: 'claude' })).startCommand, '');
@@ -163,13 +167,13 @@ function spawnBackend() {
   const dir = tmp();
   const b = new Backend({ quietMs: 600000, port: 0, logDir: dir, sessionsDir: path.join(dir, 'sessions'), claudeJson: path.join(dir, 'none.json'), claudeCommand: 'claude', hookTimeoutSec: 2 });
   b.store = new Store(path.join(dir, 'board.db'));
-  b.sessions = new Map(); b.herdrOk = true; b.hookUrl = 'http://127.0.0.1:1/hook'; b.plugin = {};
+  b.sessions = new Map(); b.termOk = true; b.hookUrl = 'http://127.0.0.1:1/hook'; b.plugin = {};
   b.branch = { settingsExtra: () => ({}), noteChild() {}, placeChild: () => null };
   b.features = { settings: { get: () => ({ ...DEFAULTS }) }, launchers: null };
   b.features.launchers = new Launchers({ store: b.store });
   b.queue = { enqueue() {}, cancelSession() {}, pending: () => 0 };
   b.api = { broadcast() {} };
-  b.broadcastSession = () => {}; b.broadcastWorkspaces = () => {}; b.probeGit = () => {}; b.registerResume = () => {};
+  b.broadcastSession = () => {}; b.broadcastWorkspaces = () => {}; b.probeGit = () => {};
   const calls = []; let n = 0;
   b.adapter = {
     connected: true,
@@ -199,7 +203,7 @@ test('P97 spawn { launcher }: 실행 명령 호출자는 판 세션(설정 파�
   assert.equal(b.store.getSession(r.sessionId).runtime.startCommand, 'ocx claude', '세션 행(start_command)');
   assert.equal(b.launchOf(s).startCommand, 'ocx claude');
   assert.deepEqual(buildResumeArgv({ claudeCommand: 'claude', ...b.launchOf(s) }).slice(0, 2), ['ocx', 'claude'], '데이터 폴더를 옮긴 뒤 다시 만든 이어 가기 명령도');
-  assert.equal(b.store.spawnInfo(r.sessionId).startCommand, undefined, '원문 실행 명령은 공개 이벤트에 넣지 않는다');
+  assert.equal(b.store.spawnInfo(r.sessionId).startCommand, '[command]', '원문 실행 명령은 공개 이벤트에 넣지 않는다(가린 글자만)'); // 원본 결함 수정: 값 대신 가림 표시
   // 기본 Claude Code 호출자는 그대로 herdr agent.start(command 없음)
   calls.length = 0;
   const c = await b.spawn({ cwd, launcher: 'claude' });
@@ -246,7 +250,7 @@ test('P97 API launcher.parse: 겹치지 않는 이름을 제안하고 미리보�
   assert.equal(r.launcher.name, 'ocx claude haiku 2');
   assert.equal(r.recognized.board, true);
   assert.match(r.preview.line, /^ocx claude --permission-mode manual --model haiku$/);
-  assert.equal(L.list().launchers.length, 5, '저장하지 않는다');
+  assert.equal(L.list().launchers.length, 5, '저장하지 않는다(macOS 판: 새 판 런처 넷 + 만든 하나)');
   // 고치는 중인 호출자는 이름 겹침에서 뺀다
   const id = L.list().launchers.find((l) => l.name === 'ocx claude haiku').id;
   assert.equal(L.parse({ text: 'ocx claude --model haiku', except: id }).launcher.name, 'ocx claude haiku');

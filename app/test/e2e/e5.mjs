@@ -27,7 +27,7 @@ const emTotal = (em) => +(em.reduce((a, m) => a + m.memKB, 0) / 1024).toFixed(1)
 const { app, page } = await launch({ log, query });
 const status = () => page.evaluate(() => window.__mt.api.call('backend.status'));
 const electronMetrics = () => page.evaluate(() => window.mt.metrics());
-const pidsOf = (st) => ({ backend: st.pid, herdrServer: st.herdr.serverPid, controllers: st.relay.map((r) => r.controllerPid) });
+const pidsOf = (st) => ({ backend: st.pid, herdrServer: st.terminal.serverPid, controllers: st.relay.map((r) => r.controllerPid) });
 // Electron 프로세스(Browser=main, Tab=창, GPU 등)의 CPU는 OS 프로세스 시간으로 잰다(한 코어 기준 %)
 const EPIDS = (await electronMetrics()).map((m) => ({ pid: String(m.pid), type: m.type }));
 const ePids = EPIDS.map((e) => e.pid);

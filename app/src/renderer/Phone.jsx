@@ -34,6 +34,7 @@ import { useConnSteady } from './steady.js'; // P82: 짧은 끊김에는 연결 
 import { PushButton, PushSheet, SessionMuteButton } from './PhonePush.jsx'; // P88: 알림(웹 푸시), P92: 세션 하나 끄기
 import { setOpenHandler, launchOpen, clearLaunchOpen } from './push.js'; // P88: 알림을 누르면 그 세션으로
 import { reopenBoard, boardLevel, boardHeavier, boardReset, bootState } from './crash-watch.js'; // P84: 반복해서 죽으면 가벼운 화면(목록). P86: 보드 단계
+import { useVoice, VoiceButton, VoiceInterim } from './Voice.jsx'; // P165: 음성 입력
 import './phone.css';
 
 // ---------- 화면 고르기(main.jsx) ----------
@@ -203,7 +204,7 @@ function Row({ s, now, showRepo, wsName, onOpen }) {
   const t = useT();
   const tone = toneOf(s);
   const line = lastLineOf(s);
-  const at = line.kind === 'ask' ? s.ask && s.ask.since : s.lastActivityAt || s.lastAnswerAt;
+  const at = line.kind === 'ask' ? s.waitingSince || (s.ask && s.ask.since) : s.lastActivityAt || s.lastAnswerAt;
   const label = s.kind === 'shell' && s.state !== 'exited' && s.state !== 'sleeping' ? (s.shell && s.shell.atPrompt === false ? STATE_LABEL.shell_running : STATE_LABEL.shell_idle) : STATE_LABEL[s.state] || s.state;
   const lead = line.kind === 'ask' ? t(`phone.ask_${line.key}`, { tool: line.tool || '' }) : line.kind === 'prompt' ? t('phone.youSaid') : line.kind === 'error' ? t('state.error') : '';
   return (
@@ -338,7 +339,7 @@ function PhoneList({ onOpen, onNew, onMission }) {
 // ---------- 세션 하나 ----------
 const KEY_LABEL = { enter: '⏎', esc: 'Esc', ctrlc: 'Ctrl+C', up: '↑', down: '↓', tab: 'Tab', shifttab: '⇧Tab', slash: '/' };
 // P104: 키 패드. 키 줄 자리에 두 줄로 펼친다(phone.css .mt-ph-pad의 칸 배치). 누르면 화면 키보드와 입력 줄의 초점은 그대로 둔다
-const PAD_GLYPH = { esc: 'Esc', tab: 'Tab', space: 'Space', enter: '⏎ Enter', up: '↑', down: '↓', left: '←', right: '→' };
+const PAD_GLYPH = { esc: 'Esc', tab: 'Tab', space: 'Space', backspace: '⌫', enter: '⏎ Enter', up: '↑', down: '↓', left: '←', right: '→' };
 const noFocus = (e) => e.preventDefault();
 function PadIcon() {
   return <svg className="mt-ph-padicon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M7 9.5h.01M10.5 9.5h.01M14 9.5h.01M17.5 9.5h.01M8 14.5h8" /></svg>;
@@ -432,8 +433,12 @@ function PhoneSession({ s, onBack, onGo, fromMission = false }) {
     phoneInputCall(api, terms, id, 'terminal.input', { data }).catch((e) => { if (e.code !== 'disconnected') toast(errText(e), 'error'); }); // P82: 끊긴 동안은 띠가 알린다
   };
   const bump = (d) => setScale((v) => { const n = clampPhoneScale(Math.round((v + d) * 100) / 100); try { store().setItem(PHONE_SCALE_KEY, String(n)); } catch {} return n; });
+  const voice = useVoice({ text, setText, taRef, inline: false }); // P165: 확정 글만 입력칸에, 미확정 글은 위 한 줄에 흐리게
+  useEffect(() => { if (taRef.current && text) grow(taRef.current); }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
   async function send() {
-    const plan = sendPlan(s, text);
+    let cur = text;
+    if (voice.active) { await voice.finish(1000); cur = voice.current(); } // P165: 녹음 중이면 끝내고 남은 글을 받은 뒤
+    const plan = sendPlan(s, cur);
     if (!plan || busy) return;
     setBusy(true);
     markInteracted(id);
@@ -472,7 +477,7 @@ function PhoneSession({ s, onBack, onGo, fromMission = false }) {
         </button>
       </header>
       <div className="mt-ph-term" ref={boxRef} data-role="phone-term">
-        {live && box.w > 0 && <TerminalView sessionId={id} width={box.w} height={box.h} fontScale={scale} webgl={false} onInput={() => markInteracted(id)} />}
+        {live && box.w > 0 && <TerminalView sessionId={id} width={box.w} height={box.h} fontScale={scale} webgl={false} touchSelect onInput={() => markInteracted(id)} />}
         {s.state === 'sleeping' && (
           <div className="mt-ph-cover" data-role="phone-asleep"><p>{t('phone.asleep')}</p><button type="button" className="mt-ph-primary" data-action="phone-wake" onClick={() => wakeSession(id)}>{s.waking ? t('phone.waking') : t('phone.wake')}</button></div>
         )}
@@ -492,12 +497,14 @@ function PhoneSession({ s, onBack, onGo, fromMission = false }) {
       )}
       {live && (
         <form className="mt-ph-input" data-role="phone-input" onSubmit={(e) => { e.preventDefault(); send(); }}>
-          {noteText && <div className="mt-ph-note" data-role="phone-note">{noteText}</div>}
+          {noteText && !voice.active && <div className="mt-ph-note" data-role="phone-note">{noteText}</div>}
+          <VoiceInterim voice={voice} />
+          <VoiceButton voice={voice} className="mt-ph-voice" />
           <textarea ref={taRef} rows={1} value={text} data-field="phone-text" enterKeyHint="enter" autoCapitalize="off" autoCorrect="off" spellCheck={false}
             placeholder={s.kind === 'shell' ? t('phone.inputShell') : t('phone.inputAgent', { name: s.name })}
             onChange={(e) => { setText(e.target.value); grow(e.target); }}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }} />
-          <button type="submit" className="mt-ph-send" data-action="phone-send" disabled={busy || !text.trim()} aria-label={t('phone.send')}>
+          <button type="submit" className="mt-ph-send" data-action="phone-send" disabled={busy || (!text.trim() && !voice.active)} aria-label={t('phone.send')}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
           </button>
         </form>

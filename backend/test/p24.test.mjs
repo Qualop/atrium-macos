@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { repoSleepPlan, idleSince, Sleeper } from '../src/sleep.mjs';
-import { newRuntime, deriveState, applyHerdrStatus, applyAgentDetected, applyAgentReleased } from '../src/state.mjs';
+import { newRuntime, deriveState, applyTermStatus, applyAgentDetected, applyAgentReleased } from '../src/state.mjs';
 import { transcriptPathFor } from '../src/launch.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p24-'));
@@ -52,34 +52,33 @@ function board() {
   const b = {
     cfg: { claudeProjects: root, killWaitMs: 2000 }, sessions, store, queue, killing: new Set(), log: () => {},
     hooked: (s) => s.kind === 'claude', relay: { stats: () => [], detach: () => {} },
-    features: { loops: { activeCount: () => 0 }, settings: { get: () => ({ sleepAfterMin: 30, sessionSleepAfterMin: 0 }) } },
-    requireHerdr: () => {},
+    features: { loops: { activeCount: () => 0 }, settings: { get: () => ({ sleepAfterMin: 30, sessionSleepAfterMin: 0 }) } }, // P111: 리포 규칙만 본다(세션 규칙은 p111.test.mjs)
+    requireTerminal: () => {},
     resolve: (ref) => sessions.get(ref) || [...sessions.values()].find((s) => s.name === ref),
     resolveWorkspace: async (ref) => ({ key: ref === 'repo-a' ? 'ka' : ref === 'repo-b' ? 'kb' : ref }),
     broadcastSession: (s, o) => calls.push(['broadcast', s.name, deriveState(s.rt).state, !!s.waking, o && o.cause]),
     withNewPane: async (create, register) => { const r = await create(); await register(r); return r; },
     launchOf: (s) => ({ sessionId: s.sessionId, settingsPath: 'C:/d/x.json', permissionMode: 'manual', model: 'haiku', effort: null, pluginDir: 'C:/p', systemPromptFile: 'C:/p.md' }),
-    registerResume: () => {},
     adapter: {
       connected: true,
       processInfo: async () => null,
       sendText: async () => {},
       // 한 패널을 닫으면 herdr가 다른 에이전트에게도 같은 idle을 다시 알린다(창 시험에서 본 것): lastActivityAt이 늘어난다
-      paneKeys: async (pane) => { const s = [...sessions.values()].find((x) => x.paneId === pane); if (s) setTimeout(() => { applyAgentReleased(s.rt); for (const o of sessions.values()) if (o !== s && o.paneId && o.kind === 'claude' && o.rt.herdr.status) applyHerdrStatus(o.rt, o.rt.herdr.status); }, 10); },
+      paneKeys: async (pane) => { const s = [...sessions.values()].find((x) => x.paneId === pane); if (s) setTimeout(() => { applyAgentReleased(s.rt); for (const o of sessions.values()) if (o !== s && o.paneId && o.kind === 'claude' && o.rt.term.status) applyTermStatus(o.rt, o.rt.term.status); }, 10); },
       workspacePanes: async () => [], closeWorkspace: async () => {}, closePane: async () => {}, refreshSubscription: async () => {},
       createWorkspace: async () => { wsN++; return { paneId: `w${wsN}:p1`, workspaceId: `w${wsN}` }; },
       waitShellReady: async () => true,
-      startAgent: async ({ name, paneId }) => { calls.push(['startAgent', name, Date.now()]); const s = [...sessions.values()].find((x) => x.paneId === paneId); setTimeout(() => { applyAgentDetected(s.rt); applyHerdrStatus(s.rt, 'idle'); }, 20); return { agent: { launchPending: true } }; },
+      startAgent: async ({ name, paneId }) => { calls.push(['startAgent', name, Date.now()]); const s = [...sessions.values()].find((x) => x.paneId === paneId); setTimeout(() => { applyAgentDetected(s.rt); applyTermStatus(s.rt, 'idle'); }, 20); return { agent: { launchPending: true } }; },
     },
   };
   let n = 0;
   const add = (name, key, kind = 'claude') => {
     const rt = newRuntime({ kind, hooked: kind === 'claude' });
-    if (kind === 'claude') { applyAgentDetected(rt); applyHerdrStatus(rt, 'idle'); } else applyHerdrStatus(rt, 'idle');
+    if (kind === 'claude') { applyAgentDetected(rt); applyTermStatus(rt, 'idle'); } else applyTermStatus(rt, 'idle');
     rt.lastActivityAt = Date.now() - 40 * MIN; rt.launchedAt = Date.now() - 60 * MIN;
     if (kind === 'claude') rt.lastHookAt = Date.now() - 40 * MIN;
     const cwd = key === 'ka' ? dirs.A : dirs.B;
-    const s = { sessionId: ID(++n), name, cwd, kind, origin: 'board', paneId: `w${n}:p1`, herdrWorkspaceId: `w${n}`, agentName: name, rt, touchedAt: Date.now() - 40 * MIN, workspaceKey: key };
+    const s = { sessionId: ID(++n), name, cwd, kind, origin: 'board', paneId: `w${n}:p1`, termWorkspaceId: `w${n}`, agentName: name, rt, touchedAt: Date.now() - 40 * MIN, workspaceKey: key };
     sessions.set(s.sessionId, s);
     if (kind === 'claude') { const f = transcriptPathFor(root, cwd, s.sessionId); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, '{}\n'); }
     return s;
@@ -94,7 +93,7 @@ const st = (s) => deriveState(s.rt).state;
 
 test('P24 저절로: 쉰 리포만 한 번에 통째로 잠들고(다른 패널을 닫을 때 오는 herdr 알림에 다시 세지 않는다) 일이 있는 리포는 하나도 잠들지 않는다', async () => {
   const { sl, a1, a2, b1, b2, sh, events } = board();
-  b2.rt.herdr.status = 'working';
+  b2.rt.term.status = 'working';
   await sl.tick();
   assert.deepEqual([st(a1), st(a2), st(b1), st(b2)], ['sleeping', 'sleeping', 'ready', 'working']);
   assert.notEqual(st(sh), 'sleeping', '셸은 그대로');
@@ -139,14 +138,14 @@ test('P24 깨우기: 잠든 리포의 세션 하나를 깨우면(누르기·전�
 test('P24 손으로: 이 리포 잠재우기는 보는 노드도 잠재우되 일하는 세션이 있으면 까닭과 세션 이름을 돌려준다. 쉬는 리포 모두, 이 리포 깨우기', async () => {
   const { sl, b, a1, a2, b1, b2 } = board();
   b.relay.stats = () => [{ sessionId: a1.sessionId }];
-  b2.rt.herdr.status = 'working';
+  b2.rt.term.status = 'working';
   await assert.rejects(sl.sleepRepoHand({ workspace: 'repo-b' }), (e) => e.code === 'sleep_working' && e.key === 'repoSleepRefused' && e.vars.repo === 'repo-b' && e.vars.name === '@b2');
   const bulk = await sl.sleepIdle();
   assert.equal(bulk.slept, 0, '보는 노드가 있는 리포와 일하는 리포는 쉬는 리포 모두에서 빠진다');
   assert.deepEqual(bulk.skipped.map((x) => [x.name, x.reason]).sort(), [['repo-a', 'viewing'], ['repo-b', 'working']]);
   const hand = await sl.sleepRepoHand({ workspace: 'repo-a' });
   assert.equal(hand.slept, 2); assert.deepEqual([st(a1), st(a2)], ['sleeping', 'sleeping']);
-  b2.rt.herdr.status = 'idle';
+  b2.rt.term.status = 'idle';
   const bulk2 = await sl.sleepIdle();
   assert.equal(bulk2.repos, 1); assert.equal(bulk2.slept, 2); assert.deepEqual([st(b1), st(b2)], ['sleeping', 'sleeping']);
   const w = await sl.wakeRepoHand({ workspace: 'repo-a' });

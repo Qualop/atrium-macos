@@ -50,7 +50,7 @@ async function boot({ passkey = false } = {}) {
   const now = () => Date.now() + clock.off;
   // 판 설정(settings.mjs)처럼 모든 키가 있다. 기본은 패스키 끔
   const st = { ...DEFAULTS, remoteAccess: true, remotePasskey: passkey };
-  const web = new WebServer({ cfg: { remoteEnabled: true, port, dataDir: dir, profile: 'dev', herdrSession: 'atrium-dev-test' }, store, api: null, tailscale: tsw, settings: () => st, now });
+  const web = new WebServer({ cfg: { remoteEnabled: true, port, dataDir: dir, profile: 'dev', terminalSession: 'atrium-dev-test' }, store, api: null, tailscale: tsw, settings: () => st, now });
   const apiToken = 'board-api-token-for-test';
   // backend.mjs의 settings.set처럼: remote*는 이 PC만, 원격 받기·패스키로 확인이 바뀌면 알린다
   const settingsSet = (p, c) => {

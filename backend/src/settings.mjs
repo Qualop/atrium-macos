@@ -1,9 +1,7 @@
 // 판 설정(P6b, ARCH 4절 I7): 판 기록(meta 표의 `settings`)에 둔다. P16: 화면 언어(language, 기본 영어). 창과 Electron main이 settings.get으로 읽고 settings.updated 이벤트로 따라간다.
 // 트레이 상주(tray, P14부터 기본 켜짐), P10의 보관 기간(archiveDays)과 리포 스스로 찾기(autoOpenRepos). 창 쪽 설정 화면은 P6c가 만들었다.
-// P8: 가지 펼치기 상한과 기존 새 세션 기본값은 계속 유지한다.
-// P33: 호출자는 기존 기본값에서 한 번 옮긴다. 호출자 없이 띄울 때는 기존 설정을 쓴다.
-
-import { DEFAULT_MODEL as DEEPSEEK_MODEL, COMMAND_MAX } from './deepseek.mjs';
+// P8: 가지 펼치기 상한 셋(branchMaxChildren, branchMaxDepth, branchMaxTotal)은 이 판(macOS)에서 계속 쓴다(upstream P36은 없앴다).
+// P33: 옛 새 세션 기본값(claude*, codexArgs 등, launcher-migrate.mjs LEGACY_KEYS)은 호출자(launchers.mjs)로 옮겼다. 옛 키는 판 기록에 남지만(옛 코드로 돌아갈 때) 읽지도 보이지도 않는다.
 
 export const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max']; // claude --effort. 빈 값이면 넘기지 않는다
 export const PERMISSION_MODES = ['manual', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'];
@@ -11,25 +9,32 @@ export const PERMISSION_MODES = ['manual', 'acceptEdits', 'plan', 'auto', 'dontA
 export const LANGUAGES = ['en', 'ko']; // P16: 화면 언어. 새 판은 영어
 export const WORK_LIGHT = ['on', 'system', 'off']; // P107: 작업 중 테두리 빛(app lib/work-light.js LIGHT_MODES와 같다)
 
+// macOS 판: 에이전트가 atrium child로 띄우는 하위 세션의 기본 모델과 노력 수준(사용자 결정 2026-11-18: opus 또는 sol, 노력은 대개 high).
+// 에이전트가 --model·--effort를 주면 그것이 이긴다(작은 일은 --effort low). 비우면 예전처럼 부모의 것을 물려받는다
+export const CHILD_DEFAULTS = Object.freeze({ childModelClaude: 'claude-opus-5-5', childModelCodex: 'gpt-6.1-sol', childEffort: 'high' });
+const MODEL_ID = /^[A-Za-z0-9._:/\[\]-]{0,120}$/;
+
 export const SETTINGS = {
-  agentAutoApprove: { type: 'boolean', default: false, label: '보드가 관리하는 Claude Code, Codex, Gemini, Antigravity 세션의 도구 실행을 자동 승인합니다. 로그인과 프로젝트 신뢰 확인은 직접 처리합니다.' },
+  // macOS 판: 판이 띄우는 Claude Code 세션의 자동 압축 기준(문맥의 %). 긴 세션은 호출마다 쌓인 문맥 전체를 다시 읽으므로 일찍 압축할수록 토큰이 준다
+  // (2026-11-18 실측: 800회 호출 세션이 평균 44만 토큰씩, 누계 3.5억을 다시 읽었다). 0이면 Claude Code 기본(90~100%). 사용자 전역 설정은 바꾸지 않는다
+  // macOS 판(사용성): 영역 이름표 단추를 늘 보일지(창의 표시 설정)
+  regionActsAlways: { type: 'boolean', default: false, label: '프로젝트 영역 이름표의 단추를 늘 보입니다.' },
+  claudeCompactWindowK: { type: 'number', default: 250, min: 0, max: 1000, label: '자동 압축 비율을 잴 문맥 창 크기(천 토큰). 기본 250이면 65%일 때 약 16만 토큰에서 압축합니다. 0이면 모델의 창(Opus는 100만)을 씁니다.' },
+  claudeAutoCompactPct: { type: 'number', default: 65, min: 0, max: 95, label: '보드가 띄운 Claude Code 세션은 문맥이 이 비율(%)에 이르면 자동으로 압축합니다(0: Claude Code 기본). 낮을수록 긴 세션의 토큰 사용이 줄어듭니다.' },
+  childModelClaude: { type: 'string', default: CHILD_DEFAULTS.childModelClaude, max: 120, pattern: MODEL_ID, label: '하위 세션(Claude Code)의 기본 모델. 비우면 부모의 모델을 물려받는다.' },
+  childModelCodex: { type: 'string', default: CHILD_DEFAULTS.childModelCodex, max: 120, pattern: MODEL_ID, label: '하위 세션(Codex)의 기본 모델. 비우면 부모의 모델을 물려받는다.' },
+  childEffort: { type: 'choice', default: CHILD_DEFAULTS.childEffort, options: EFFORTS, label: '하위 세션의 기본 추론 수준. 에이전트가 --effort로 바꿀 수 있다(작은 일은 low). 비우면 물려받는다.' },
+  agentAutoApprove: { type: 'boolean', default: false, label: '보드가 관리하는 세션의 도구 실행을 자동으로 처리합니다. Claude Code는 자동 권한 검토(auto), Codex·Gemini·Antigravity는 자동 승인입니다. 로그인과 프로젝트 신뢰 확인은 직접 처리합니다.' },
+  // macOS 판: Claude 계정 여럿. 사용 한도에 걸린 세션을 우선순위의 다음 계정으로 같은 대화를 이어 띄우고, 계정을 고르지 않은 새 세션은 한도에 걸리지 않은 계정으로 띄운다(account-failover.mjs)
+  claudeAccountFailover: { type: 'boolean', default: true, label: 'Claude 계정이 사용 한도에 걸리면 우선순위의 다음 계정으로 같은 대화를 이어 갑니다.' },
   language: { type: 'choice', default: 'en', options: LANGUAGES, label: '화면 언어(en 영어, ko 한국어). 창과 트레이 메뉴가 따른다(P16)' },
   tray: { type: 'boolean', default: true, label: '창을 닫아도 트레이에 남아 알림을 띄운다(I7). 트레이 메뉴로 백엔드를 켜고 끈다(P14)' },
   branchMaxChildren: { type: 'number', default: 4, min: 1, max: 16, label: '세션 하나가 만들 수 있는 하위 세션 수(K3)' },
   branchMaxDepth: { type: 'number', default: 3, min: 2, max: 6, label: '나무 깊이(사람이 띄운 세션이 1단계, K3)' },
   branchMaxTotal: { type: 'number', default: 16, min: 1, max: 64, label: '판 전체 하위 세션 수(K3)' },
   // P10: 보관과 리포 스스로 찾기(archive.mjs, recall.mjs). 0일이면 저절로 보관을 끈다(손 보관은 그대로)
-  archiveDays: { type: 'number', default: 14, min: 0, max: 365, label: '마지막 활동이 이 일수보다 오래된 판 밖 대화와 닫힌 세션은 보관으로 본다(0이면 끔)' },
-  autoOpenRepos: { type: 'boolean', default: true, label: '터미널(Claude Code CLI)에서 일한 리포를 워크스페이스로 저절로 연다' },
-  claudeModel: { type: 'string', default: '', max: 80, pattern: /^[A-Za-z0-9._:/\[\]-]*$/, label: 'Claude Code 모델(비우면 Claude Code 기본. 세션 안에서 /model로 바꾼다)' },
-  claudeEffort: { type: 'choice', default: '', options: EFFORTS, label: 'Claude Code 노력 수준(비우면 Claude Code 기본)' },
-  claudePermissionMode: { type: 'choice', default: 'manual', options: PERMISSION_MODES, label: 'Claude Code 권한 모드' },
-  claudeAllowHerdr: { type: 'boolean', default: false, label: 'herdr 명령 자동 승인(herdr, test, printf, echo만)' },
-  codexArgs: { type: 'string', default: '', max: 300, label: 'Codex 실행 인자(따옴표로 묶은 인자를 지원한다)' },
-  deepseekModel: { type: 'string', default: DEEPSEEK_MODEL, max: 80, pattern: /^[A-Za-z0-9._:/\[\]-]*$/, label: `DeepSeek 모델(판이 띄우는 Claude Code의 --model. opencodex 프록시가 DeepSeek로 보낸다. 비우면 ${DEEPSEEK_MODEL})` },
-  deepseekCommand: { type: 'string', default: '', max: COMMAND_MAX, pattern: /^[^\x00-\x1f\x7f]*$/, hint: '한 줄, 줄바꿈·탭 없이', label: 'DeepSeek 직접 명령(셸 한 줄. 비우면 위 모델로 판이 Claude Code를 띄우고, 채우면 새 셸 패널에 그대로 친다. hook 없음)' },
-  // P40: herdr 실행 파일 경로. 비우면 찾는다(ATRIUM_HERDR 다음, 설치기 current 링크·PATH·알려진 폴더보다 먼저). 바꾸면 백엔드가 다시 찾는다
-  herdrPath: { type: 'string', default: '', max: 1024, label: 'herdr 실행 파일 경로입니다. 비우면 herdr 설치 폴더와 PATH에서 찾습니다.' },
+  archiveDays: { type: 'number', default: 14, min: 0, max: 365, label: '마지막 활동 이후 지정한 일수가 지난 보드 외부 대화와 닫힌 세션을 자동 보관합니다 (0: 사용 안 함).' },
+  autoOpenRepos: { type: 'boolean', default: true, label: '터미널(Claude Code CLI)에서 작업한 Git 저장소를 프로젝트로 자동으로 엽니다.' },
   // P49(R3): Tailscale로 온 요청의 로그인 사용자 제한. 켜져 있으면 이 PC에 로그인한 Tailscale 사용자와 허용 목록만 짝 맺고 연결한다. 이 PC의 창에서만 바꾼다
   remoteSameUser: { type: 'boolean', default: true, label: 'Tailscale을 통한 요청은 이 PC에 로그인한 사용자와 허용 목록의 사용자만 허용합니다.' },
   // P58(S4): 원격 받기. 끄면 이 PC 밖에서 온 요청(바깥 요청, 짝 맺은 기기 연결)을 모두 거부하고 붙은 원격 연결을 닫는다. 이 PC의 창과 CLI는 그대로. Tailscale serve 설정은 건드리지 않는다
@@ -46,10 +51,19 @@ export const SETTINGS = {
   updateChannel: { type: 'choice', default: 'stable', options: ['stable', 'dev'], label: '업데이트 채널 (stable: 정식 릴리즈, dev: dev 브랜치에 합친 기능을 먼저 받는 사전 릴리즈).' },
   sleepAfterMin: { type: 'number', default: 30, min: 0, max: 1440, label: '프로젝트 전체에 지정한 시간(분) 동안 활동이 없으면 보드에서 시작한 Claude Code 세션을 모두 절전 모드로 전환합니다 (0: 사용 안 함).' },
   // P111: 세션 하나가 이 시간(분) 동안 쉬면 그 리포가 바빠도 그 세션만 잠재운다(sleep.mjs sessionSleepPlan). 리포 규칙(sleepAfterMin)이 먼저다
+  // macOS 판: 하위 워커(일 부모가 있는 세션)는 이 시간(분) 쉬면 혼자 잠든다. 워커 claude 하나가 130~330MB라 끝난 워커를 오래 두지 않는다. 0이면 세션 규칙(sessionSleepAfterMin)을 따른다
+  workerSleepAfterMin: { type: 'number', default: 5, min: 0, max: 1440, label: '하위 워커가 지정한 시간(분) 동안 활동이 없으면 그 워커만 잠재워 메모리를 돌려줍니다. 다시 시키면 깨어나 같은 대화로 이어 갑니다(0: 세션 규칙을 따름).' },
+  // macOS 판: 동시에 깨어 있는 하위 워커 수 상한(sleep.mjs capAwakeWorkers). 0이면 끔
+  maxAwakeWorkers: { type: 'number', default: 6, min: 0, max: 64, label: '동시에 깨어 있는 하위 워커 수 상한입니다. 넘으면 쉬고 있는 워커를 오래된 것부터 잠재워 메모리를 돌려줍니다(일하는 워커는 그대로, 0: 끔).' },
   sessionSleepAfterMin: { type: 'number', default: 30, min: 0, max: 1440, label: '세션 하나에 지정한 시간(분) 동안 활동이 없으면 프로젝트의 다른 세션이 작업 중이어도 그 세션만 절전 모드로 전환합니다 (0: 사용 안 함).' },
   // P107: 작업 중 테두리 빛. 보드의 작업 중 세션 노드 둘레와 미션 맵 카드 테두리를 따라 도는 빛. Windows "애니메이션 효과"가 꺼진 PC는 창이 늘 움직임 줄이기라
   // 운영체제 설정만 따르면 보이지 않아 기본은 켬. 창·휴대폰이 문서 뿌리 data-work-light로 받아 CSS가 정한다(app lib/work-light.js). 끔이면 멈춘 상태 색 테두리
-  workLight: { type: 'choice', default: 'on', options: WORK_LIGHT, label: '보드의 작업 중 세션 노드와 미션 맵 카드의 테두리를 따라 빛을 돌립니다 (on: 항상, system: 운영체제의 동작 줄이기 설정을 따름, off: 멈춘 테두리만 표시).' },
+  workLight: { type: 'choice', default: 'on', options: WORK_LIGHT, label: '보드의 작업 중 세션 노드와 세션 맵 카드의 테두리를 따라 빛을 돌립니다 (on: 항상, system: 운영체제의 동작 줄이기 설정을 따름, off: 멈춘 테두리만 표시).' },
+  // P146: 성능 기록(진단). 켜면 창(데스크톱·웹)이 30초마다 판 움직임 요약(프레임 간격, 긴 작업, 휠 지연, 노드·터미널 수)을 백엔드 로그에 남긴다. 10분 뒤 저절로 꺼진다(perf-trace.mjs)
+  perfTrace: { type: 'boolean', default: false, label: '성능 기록: 켜면 10분 동안 보드 움직임의 프레임·지연 요약(값만)을 백엔드 로그에 남깁니다. 시간이 지나면 저절로 꺼집니다.' },
+  // P152: 미션 맵 모양(숨은 설정, 창의 설정 화면에 줄이 없다). territories = 영토 지도(기본, 무한 캔버스), classic = P149까지의 열 지도(되돌릴 길)
+  missionStyle: { type: 'choice', default: 'territories', options: ['territories', 'classic'], label: '세션 맵 모양 (territories: 영토 지도, classic: 이전 열 지도).' },
+  // P114의 숨은 설정 terminalBackend는 P117에서 없앴다. P129·P132: 터미널 백엔드는 herdr-core(hc) 하나다. 판 기록(meta terminalBackend)은 옛 판 옮기기(herdr-migrate)만 쓴다
 };
 export const DEFAULTS = Object.fromEntries(Object.entries(SETTINGS).map(([k, v]) => [k, v.default]));
 
@@ -90,7 +104,7 @@ export class Settings {
   constructor({ store, broadcast }) { this.store = store; this.broadcast = broadcast; }
   // 정의에 있는 키만 보인다. 기존 호출자의 기본값도 계속 읽을 수 있다.
   get() { const raw = this.store.getMeta('settings') || {}; return Object.fromEntries(Object.keys(SETTINGS).map((k) => [k, k in raw ? raw[k] : DEFAULTS[k]])); }
-  describe() { return Object.fromEntries(Object.entries(SETTINGS).map(([k, v]) => [k, { type: v.type, default: v.default, label: v.label, ...(v.type === 'number' ? { min: v.min, max: v.max } : {}), ...(v.type === 'choice' ? { options: v.options } : {}), ...(v.type === 'string' ? { max: v.max } : {}) }])); }
+  describe() { return Object.fromEntries(Object.entries(SETTINGS).filter(([, v]) => !v.hidden).map(([k, v]) => [k, { type: v.type, default: v.default, label: v.label, ...(v.type === 'number' ? { min: v.min, max: v.max } : {}), ...(v.type === 'choice' ? { options: v.options } : {}), ...(v.type === 'string' ? { max: v.max } : {}) }])); }
   // settings.set { tray: true } 또는 { key: 'tray', value: true }
   set(p) {
     const patch = normalizePatch(p && p.key ? { [p.key]: p.value } : p);

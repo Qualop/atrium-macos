@@ -92,3 +92,14 @@ export function placeBar({ width, tlRight = 0, trLeft = width, widths, gap = 12 
   const x = Math.min(Math.max((width - w) / 2, lo), hi - w);
   return { row: 'top', level, x: Math.round(x), w: Math.ceil(w) };
 }
+
+// P141(#16): 선택 막대(bar)가 고른 노드 머리줄(heads, 화면 사각형)을 덮으면 판을 아래로 옮길 픽셀(머리줄 위가 막대 아래 gap까지). 안 덮으면 0
+export function headClearance(bar, heads, gap = 8) {
+  if (!bar) return 0;
+  let dy = 0;
+  for (const h of heads || []) {
+    const ox = Math.min(bar.right, h.right) - Math.max(bar.left, h.left), oy = Math.min(bar.bottom, h.bottom) - Math.max(bar.top, h.top);
+    if (ox > 4 && oy > 0) dy = Math.max(dy, bar.bottom + gap - h.top);
+  }
+  return Math.round(dy);
+}

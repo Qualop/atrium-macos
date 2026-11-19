@@ -222,3 +222,22 @@ body.mt-sb2-resizing .mt-sb2-resize { pointer-events: auto; }
 .mt-sb2-tool.text { font-size: 11.5px; padding: 0 7px; border-color: var(--panel-line-2); }
 .mt-sb2-tool:hover { color: var(--text); background: var(--panel-2); }
 .mt-sb2-tool.on { color: var(--accent-2); border-color: var(--accent-line); }
+
+/* P125: 끝난 세션(직접 종료 등) 줄의 "다시 열기". 시간 자리에 늘 보이는 작은 글 단추(줄 자체는 단추라 span) */
+.mt-sb2-reopen { margin-left: auto; flex: none; height: 20px; padding: 0 7px; border: 1px solid var(--accent-line); border-radius: 6px; color: var(--accent-2); font-size: 11.5px; line-height: 18px; white-space: nowrap; cursor: pointer; }
+.mt-sb2-reopen:hover { background: var(--panel-3); color: var(--text); }
+.mt-sb2-reopen.busy { opacity: .6; cursor: default; }
+/* P132: 사이드바 줄 글자 크기. 위 단계일수록 조금 크게(폴더 15 > 워크스페이스 14.5 > 세션 14, 단계마다 0.5px), 전체는 P103보다 약 1px 키웠다.
+   줄 높이는 lib/sidebar-tree.js ROW_H(폴더 32, 워크스페이스·세션 30, 응답 필요 46)가 맞춘다. 작은 글(시간·수·종류·태그)도 0.5px씩 키웠다.
+   다른 단계가 같은 규칙을 덮어쓰지 않게 이 파일 끝에 모았다 */
+.mt-sb2-row { font-size: 14px; }
+.mt-sb2-row.grp { font-size: 15px; }
+.mt-sb2-row.ws { font-size: 14.5px; }
+.mt-sb2-row.sess, .mt-sb2-row.item { font-size: 14px; }
+.mt-sb2-rename { font-size: 13.5px; }
+.mt-sb2-time, .mt-sb2-gn, .mt-sb2-c { font-size: 11.5px; }
+.mt-sb2-kind, .mt-sb2-role { font-size: 12px; }
+.mt-sb2-tag { font-size: 11px; }
+.mt-sb2-ask { font-size: 12.5px; }
+.mt-sb2-row.extra, .mt-sb2-row.morerow, .mt-sb2-row.empty { font-size: 12.5px; }
+.mt-sb2-row.sec { font-size: 12px; }

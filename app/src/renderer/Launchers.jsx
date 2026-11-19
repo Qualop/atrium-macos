@@ -2,17 +2,19 @@
 // 만들기는 두 길이다. (a) 하네스를 고르고 드롭다운(모델은 알려진 목록 + 직접 입력, 노력 수준, 권한 모드)을 조합한다. (b) 하네스 "직접 명령"을 골라 명령 한 줄을 쓴다.
 // 고르는 대로 백엔드 launcher.preview가 확인하고 실제 명령줄을 미리 보인다. 고급 칸은 추가 인자, 환경 변수(이름=값), 게이트웨이 확인 주소다.
 // 환경 변수 값은 판 기록에 평문으로 남으므로 API 키 같은 비밀값을 넣지 말라는 풀이를 늘 보이고, 비밀값처럼 보이는 이름이면 경고한다.
-// P97: 틀 맨 위에 명령줄 붙여 넣기 칸(PasteLine). Claude Code는 실행 명령 칸(예: ocx claude)이 있고, 추가 인자는 고급 밖에 둔다. "레일에 고정"은 만들기 단추 옆(기본 켜짐).
+// P97: 틀 맨 위에 명령줄 붙여 넣기 칸(PasteLine). 실행 명령 칸(예: 래퍼 명령)이 있고, 추가 인자는 고급 밖에 둔다. "레일에 고정"은 만들기 단추 옆(기본 켜짐).
+// P115: 연결 칸(설정의 연결 탭에서 만든 연결). 그 하네스가 쓰지 않는 프로토콜의 연결은 고를 수 없게 흐리게 까닭과 함께 보인다. 실행 명령은 모든 에이전트 하네스.
+//       env에 평문 인증 값이 든 런처는 목록 위에 알린다(판은 옮기지 않는다).
 // P28 원칙: 최소 창(900×600)에서도 스크롤 없이 들어간다. 목록이 길면 목록 칸만 넘긴다.
 import { useEffect, useId, useRef, useState } from 'react';
 import { api } from './api.js';
-import { useStore, toast, loadLaunchers } from './store.js';
+import { useStore, toast, loadLaunchers, loadAccounts } from './store.js';
 import { KindIcon } from './SessionNode.jsx';
 import { Icon } from './lib/icons.jsx';
 import { useT, tOr, errText } from './lib/i18n.js';
 import { kindOf } from './lib/kinds.js';
 import { hasModelCatalog } from './lib/spawn.js';
-import { ICONS, orderedLaunchers, moveFavorite, launcherIcon, launcherMark, previewLine, envToText, secretNames, harnessFields, harnessModels, blankLauncher, harnessModelLabels, modelChoices, recognizedChips, fillFromParse, autoApprovalApplies } from './lib/launchers.js';
+import { ICONS, orderedLaunchers, moveFavorite, launcherIcon, launcherMark, previewLine, envToText, secretNames, harnessFields, harnessModels, harnessModelLabels, modelChoices, blankLauncher, recognizedChips, fillFromParse, connectionChoices, harnessProtocols, autoApprovalApplies } from './lib/launchers.js';
 
 const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 const MODES = ['manual', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'];
@@ -38,6 +40,7 @@ function LauncherList({ data, onEdit }) {
     <div className="mt-ln" data-role="launchers-list">
       <p className="mt-set-note">{t('launchers.note')}</p>
       <div className="mt-ln-rows">
+        {(data.notices || []).map((n) => <div key={n.id} className="mt-ln-secret warn" data-role="launcher-plain-auth" data-launcher={n.id}>{t('connections.plainNotice', { name: n.name, names: n.env.join(', ') })}</div>)}
         {rows.map((l) => {
           const fi = favs.indexOf(l.id);
           return (
@@ -148,10 +151,45 @@ function PasteLine({ onParsed, autoFocus, except, revision }) {
   );
 }
 const harnessLabel = (h, t) => (h === 'claude' ? 'Claude Code' : h === 'codex' ? 'Codex' : h === 'command' ? t('launchers.harness.command') : h === 'shell' ? t('launchers.harness.shell') : h);
-
-function LauncherForm({ init, harnesses, onDone, focusPaste = false }) {
+// P115: 연결 고르기. 쓸 수 없는 연결은 disabled와 까닭(프로토콜)
+// macOS 판: Claude 계정(설정 › Claude 계정). 비면 기본 계정(~/.claude)
+export function AccountSelect({ value, onChange, field = 'launcher-account', className = 'mt-ln-f' }) {
   const t = useT();
-  const [d, setD] = useState(() => ({ ...init, startCommand: init.startCommand || '', envText: envToText(init.env) }));
+  const accounts = useStore((st) => st.accounts) || [];
+  useEffect(() => { loadAccounts().catch(() => {}); }, []);
+  if (accounts.length < 2 && !value) return null; // 계정이 하나뿐이면 고를 것이 없다
+  // ''는 자동(우선순위에서 한도에 걸리지 않은 계정), 'default'는 기본 계정 고정
+  return (
+    <label className={className}><span>{t('accounts.field')}</span>
+      <select data-field={field} value={value || ''} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{t('accounts.auto')}</option>
+        {accounts.map((a) => <option key={a.id} value={a.id}>{accountLabel(a, t)}</option>)}
+        {value && !accounts.some((a) => a.id === value) && <option value={value}>{t('accounts.missing', { id: value })}</option>}
+      </select>
+    </label>
+  );
+}
+export const accountLabel = (a, t) => `${a.builtin ? t('accounts.defaultName') : a.name}${a.email ? ` · ${a.email}` : a.loggedIn === false ? ` · ${t('accounts.notLoggedIn')}` : ''}`;
+
+function ConnectionSelect({ value, onChange, connections, harnesses, harness }) {
+  const t = useT();
+  const choices = connectionChoices(connections, harnesses, harness);
+  const ps = harnessProtocols(harnesses, harness);
+  const cur = choices.find((c) => c.id === value);
+  return (
+    <label className="mt-ln-f"><span>{t('launcherConn.label')}</span>
+      <select data-field="launcher-connection" value={value || ''} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{t('launcherConn.none')}</option>
+        {choices.map((c) => <option key={c.id} value={c.id} disabled={!c.ok && c.id !== value} title={c.ok ? c.baseUrl : t('launcherConn.unusable', { protocol: t(`connections.protocols.${c.protocol}`) })}>{c.name}{c.ok ? '' : ` — ${t('launcherConn.unusable', { protocol: t(`connections.protocols.${c.protocol}`) })}`}</option>)}
+      </select>
+      <span className={`mt-set-hint${cur && !cur.ok ? ' bad' : ''}`} data-role="launcher-connection-hint">{ps.length ? t('launcherConn.hint', { harness: harnessLabel(harness, t), protocols: ps.map((p) => t(`connections.protocols.${p}`)).join(', ') }) : t('launcherConn.noProtocols')}</span>
+    </label>
+  );
+}
+
+function LauncherForm({ init, harnesses, connections = [], onDone, focusPaste = false }) {
+  const t = useT();
+  const [d, setD] = useState(() => ({ ...init, startCommand: init.startCommand || '', connection: init.connection || '', envText: envToText(init.env) }));
   const [kinds, setKinds] = useState([]);
   const [pv, setPv] = useState(null); // { line, env } 또는 { error }
   const [busy, setBusy] = useState(false);
@@ -167,8 +205,10 @@ function LauncherForm({ init, harnesses, onDone, focusPaste = false }) {
   const autoApprove = autoApprovalApplies(settings, d.harness);
   const fields = harnessFields(harnesses, d.harness);
   const has = (f) => fields.includes(f);
-  const body = () => ({ id: d.id || undefined, name: d.name || '…', harness: d.harness, icon: d.icon, model: d.model, effort: d.effort, permissionMode: d.permissionMode || 'manual', allowHerdr: d.allowHerdr, args: d.args, env: d.envText, command: d.command, checkUrl: d.checkUrl, startCommand: d.startCommand });
-  useEffect(() => { let active = true; api.call('agent.kinds').then((ks) => { if (active) setKinds([...new Set(['agy', 'gemini', ...ks.map((k) => k.kind)])].filter((k) => !['claude', 'codex', 'shell', 'command'].includes(k))); }).catch(() => {}); return () => { active = false; }; }, []);
+  const body = () => ({ id: d.id || undefined, name: d.name || '…', harness: d.harness, icon: d.icon, model: d.model, effort: d.effort, permissionMode: d.permissionMode || 'manual', args: d.args, env: d.envText, command: d.command, connection: d.connection || '', account: d.account || '', startCommand: d.startCommand });
+  const named = (harnesses || []).filter((h) => !['shell', 'command'].includes(h.id)).map((h) => h.id); // P115: 백엔드 하네스 표(Claude Code, Codex, opencode, pi)
+  useEffect(() => { api.call('agent.kinds').then((ks) => setKinds(ks.map((k) => k.kind).filter((k) => !['claude', 'codex', 'opencode', 'pi', 'gemini', 'agy', ...named].includes(k)))).catch(() => {}); loadLaunchers(); }, []); // P72: 틀을 열 때 하네스 모델 목록(Codex 캐시)을 새로 받는다
+  // macOS 판: Codex·Gemini CLI·agy는 그 CLI가 아는 실제 모델 목록을 받는다(agent.models)
   useEffect(() => {
     if (!hasModelCatalog(d.harness)) return;
     let active = true;
@@ -213,15 +253,16 @@ function LauncherForm({ init, harnesses, onDone, focusPaste = false }) {
         <PasteLine onParsed={onParsed} revision={() => revision.current} autoFocus={focusPaste || !init.id} except={d.id || undefined} />
         <label className="mt-ln-f"><span>{t('launchers.name')}</span><input className="mt-set-text" data-field="launcher-name" value={d.name} maxLength={40} onChange={(e) => set('name', e.target.value)} placeholder={t('launchers.namePh')} /></label>
         <label className="mt-ln-f"><span>{t('launchers.harnessLabel')}</span>
-          <select data-field="launcher-harness" value={d.harness} onChange={(e) => { revision.current++; setD((prev) => ({ ...prev, harness: e.target.value, model: '', effort: '', args: '', command: '', permissionMode: 'manual', allowHerdr: false })); }}>
-            <option value="claude">Claude Code</option>
-            <option value="codex">Codex</option>
+          <select data-field="launcher-harness" value={d.harness} onChange={(e) => set('harness', e.target.value)}>
+            {(named.length ? named : ['claude', 'codex']).map((h) => <option key={h} value={h}>{(harnesses.find((x) => x.id === h) || {}).label || harnessLabel(h, t)}</option>)}
             {kinds.map((k) => <option key={k} value={k}>{kindOf(k).label}</option>)}
-            {!['claude', 'codex', 'shell', 'command', ...kinds].includes(d.harness) && <option value={d.harness}>{d.harness}</option>}
+            {![...named, 'claude', 'codex', 'shell', 'command', ...kinds].includes(d.harness) && <option value={d.harness}>{d.harness}</option>}
             <option value="shell">{t('launchers.harness.shell')}</option>
             <option value="command">{t('launchers.harness.command')}</option>
           </select>
         </label>
+        {has('connection') && <ConnectionSelect value={d.connection} onChange={(v) => set('connection', v)} connections={connections} harnesses={harnesses} harness={d.harness} />}
+        {has('account') && <AccountSelect value={d.account || ''} onChange={(v) => set('account', v)} />}
         {has('startCommand') && <label className="mt-ln-f"><span>{t('launcherStart.label')}</span><input className="mt-set-text mono" data-field="launcher-startCommand" value={d.startCommand} spellCheck={false} autoComplete="off" onChange={(e) => set('startCommand', e.target.value)} placeholder={t('launcherStart.ph')} title={t('launcherStart.title')} /></label>}
         {has('command') ? (
           <label className="mt-ln-f wide"><span>{t('launchers.command')}</span><input className="mt-set-text mono" data-field="launcher-command" value={d.command} onChange={(e) => set('command', e.target.value)} placeholder={t('launchers.commandPh')} /></label>
@@ -243,7 +284,7 @@ function LauncherForm({ init, harnesses, onDone, focusPaste = false }) {
         </label>}
         {/* P97: 추가 인자는 고급 밖(드롭다운으로 시작해도 같은 화면에서 실행 명령과 함께 고친다) */}
         {has('args') && <label className="mt-ln-f"><span>{t('launchers.args')}</span><input className="mt-set-text mono" data-field="launcher-args" value={d.args} onChange={(e) => set('args', e.target.value)} placeholder={t('launchers.argsPh')} /></label>}
-        {has('allowHerdr') ? <label className="mt-ln-f check"><input type="checkbox" data-field="launcher-allowHerdr" disabled={autoApprove} checked={!!d.allowHerdr} onChange={(e) => set('allowHerdr', e.target.checked)} /><span>{t('settings.allowHerdrName')}</span></label> : has('args') ? <span /> : null}
+        {has('args') ? <span /> : null}
         <div className="mt-set-sub wide">{t('launchers.advanced')}</div>
         <label className="mt-ln-f"><span>{t('launchers.icon')}</span>
           <select data-field="launcher-icon" value={d.icon} onChange={(e) => set('icon', e.target.value)}>
@@ -252,8 +293,8 @@ function LauncherForm({ init, harnesses, onDone, focusPaste = false }) {
             {ICONS.map((k) => <option key={k} value={k}>{kindOf(k).label}</option>)}
           </select>
         </label>
-        {has('checkUrl') ? <label className="mt-ln-f"><span>{t('launchers.checkUrl')}</span><input className="mt-set-text mono" data-field="launcher-checkUrl" value={d.checkUrl} onChange={(e) => set('checkUrl', e.target.value)} placeholder={t('launchers.checkUrlPh')} /></label> : <span />}
-        {has('env') && <label className="mt-ln-f wide"><span>{t('launchers.env')}</span><textarea className="mono" rows={2} data-field="launcher-env" value={d.envText} onChange={(e) => set('envText', e.target.value)} placeholder="ANTHROPIC_BASE_URL=http://127.0.0.1:10100" /></label>}
+        <span />
+        {has('env') && <label className="mt-ln-f wide"><span>{t('launchers.env')}</span><textarea className="mono" rows={2} data-field="launcher-env" value={d.envText} onChange={(e) => set('envText', e.target.value)} placeholder="NAME=value" /></label>}
       </fieldset>
       {has('env') && <div className={`mt-ln-secret${secrets.length ? ' warn' : ''}`} data-role="launcher-secret">{secrets.length ? t('launchers.secretWarn', { names: secrets.join(', ') }) : t('launchers.secretNote')}</div>}
       <div className={`mt-ln-preview mono${pv && pv.error ? ' bad' : ''}`} data-role="launcher-form-preview">
@@ -278,5 +319,5 @@ export function LaunchersTab({ startNew = false }) {
   const data = useStore((st) => st.launchers);
   const [editing, setEditing] = useState(() => (startNew ? blankLauncher('claude') : null));
   if (!data) return <div className="dim">{t('settings.loading')}</div>;
-  return editing ? <LauncherForm key={editing.id || 'new'} init={editing} harnesses={data.harnesses} focusPaste={startNew} onDone={() => setEditing(null)} /> : <LauncherList data={data} onEdit={setEditing} />;
+  return editing ? <LauncherForm key={editing.id || 'new'} init={editing} harnesses={data.harnesses} connections={data.connections || []} focusPaste={startNew} onDone={() => setEditing(null)} /> : <LauncherList data={data} onEdit={setEditing} />;
 }

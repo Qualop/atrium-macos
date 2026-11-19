@@ -1,4 +1,13 @@
 import { spawn } from 'node:child_process';
+// P72: Codex가 아는 모델 목록. Codex CLI는 쓸 수 있는 모델 목록(서버에서 받은 카탈로그)을 `$CODEX_HOME/models_cache.json`(기본 ~/.codex)에 둔다.
+// 모양: { fetched_at, client_version, models: [{ slug, display_name, visibility: 'list' | 'hide', priority, ... }] }. `codex -m <slug>`의 이름이 slug다.
+// Codex의 모델 고르기는 visibility가 list인 것만 priority 순서로 보인다. hide인 것도 -m으로는 쓸 수 있으므로 "아는 이름"에는 넣는다.
+// (같은 목록은 `codex debug models`가 JSON으로 보이고, `--bundled`는 실행 파일에 든 목록이다. 판은 프로세스를 띄우지 않고 캐시 파일만 읽는다.)
+// 파일은 크다(모델마다 지시문이 든다). 몇 초마다 한 번만 파일의 크기·시각을 보고, 바뀌었을 때만 다시 읽는다. 읽지 못하면 하네스의 고정 목록을 쓴다.
+// P96: Codex 설정(config.toml)의 model_catalog_json이 가리키는 카탈로그(사용자가 쓰는 게이트웨이 도구가 넣는다. 모양은 캐시와 같다)가 있으면 그 목록도 읽어 앞에 둔다.
+// Codex는 이 설정이 있으면 카탈로그를 모델 목록으로 쓴다. config.toml은 맨 위(첫 [표] 전)의 model_catalog_json 한 줄만 찾고 다른 값은 쓰지 않는다.
+// 이 파일들은 읽기만 한다. 같은 폴더의 인증 파일은 열지 않는다.
+import fs from 'node:fs';
 import os from 'node:os';
 import { findExecutable, nodeCliInvocation } from './platform.mjs';
 

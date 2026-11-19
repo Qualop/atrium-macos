@@ -11,12 +11,13 @@ import { execFile, execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { LINE_GAP_Y } from '../src/tree-line.mjs';
+import { lineSlot, LINE_GAP_X, LINE_GAP_Y } from '../src/tree-line.mjs';
 import { Store } from '../src/store.mjs';
 import { newRuntime } from '../src/state.mjs';
-import { writeSessionSettings, writeBoardPlugin, buildStartArgs, buildResumeArgv, BOARD_SYSTEM_PROMPT, HERDR_ALLOW } from '../src/launch.mjs';
+import { writeSessionSettings, writeBoardPlugin, buildStartArgs, buildResumeArgv, BOARD_SYSTEM_PROMPT } from '../src/launch.mjs';
 import { normalizePatch, Settings } from '../src/settings.mjs';
-import { Branch, BRANCH_ALLOW, depthOf, isDescendant, descendantsOf, checkLimits, childName, childSlot, childNotice, delegateSkill, childShims, CHILD_NAME_RE } from '../src/branch.mjs';
+import * as branchMod from '../src/branch.mjs';
+import { Branch, ATRIUM_ALLOW, depthOf, isDescendant, descendantsOf, checkLimits, childName, childNotice, boardSkill, childShims, CHILD_NAME_RE } from '../src/branch.mjs';
 import { SIZE_STEPS, overlaps, GAP } from '../src/canvas.mjs';
 import { workspaceOf } from '../src/git.mjs';
 
@@ -50,6 +51,23 @@ test('audit: descendants remain discoverable and removable through a closed inte
   assert.deepEqual(b.branch.listChildren(lead, { all: true }).children.map((s) => s.name), ['top', 'leaf']);
   const result = await b.branch.killChild(lead, { name: 'top' });
   assert.deepEqual(result.killed.map((s) => s.name), ['leaf', 'top']);
+});
+
+test('macOS 판: 일하는 하위(그 아래 포함)나 대기 글이 있는 하위는 --force 없이 끄지 않는다(하던 일과 토큰이 사라진다)', async () => {
+  const { b, lead } = await fakeBoard({ limits: { branchMaxDepth: 5 } });
+  const top = await b.branch.spawnChild(lead, { name: 'top', wait: false });
+  const leaf = await b.branch.spawnChild(b.sessions.get(top.sessionId), { name: 'leaf', wait: false });
+  const L = b.sessions.get(leaf.sessionId); L.rt.phase = 'running'; L.rt.term.status = 'working'; L.rt.term.present = true;
+  await assert.rejects(b.branch.killChild(lead, { name: 'top' }), (e) => e.code === 'child_busy' && /@leaf/.test(e.message) && /--force/.test(e.message));
+  assert.deepEqual(b.killed, []);
+  L.rt.term.status = 'idle';
+  let pend = 1; b.queue.pending = (sid) => (sid === leaf.sessionId ? pend : 0);
+  await assert.rejects(b.branch.killChild(lead, { name: 'top' }), (e) => e.code === 'child_busy');
+  pend = 0;
+  assert.deepEqual((await b.branch.killChild(lead, { name: 'top' })).killed.map((x) => x.name), ['leaf', 'top']);
+  const w = await b.branch.spawnChild(lead, { name: 'w', wait: false });
+  const W = b.sessions.get(w.sessionId); W.rt.phase = 'running'; W.rt.term.status = 'working'; W.rt.term.present = true;
+  assert.deepEqual((await b.branch.killChild(lead, { name: 'w', force: true })).killed.map((x) => x.name), ['w']);
 });
 
 test('audit: DeepSeek children retain the provider flavor and other providers do not inherit its model', async () => {
@@ -90,7 +108,8 @@ test('audit: provider-qualified Codex model IDs survive child inheritance', asyn
   const { b, lead } = await fakeBoard();
   lead.kind = 'codex'; lead.model = 'provider/model-v1';
   await b.branch.spawnChild(lead, { name: 'codex-worker', wait: false });
-  assert.equal(b.spawned[0].model, lead.model);
+  // P115: 같은 하네스 물려받기는 호출자 정의(launcherDef)로 띄운다. 옛 관리 Codex 부모(harnessPlan 없음)의 모델도 그대로
+  assert.equal(b.spawned[0].launcherDef.model, lead.model);
 });
 
 test('audit: a lost child response during startup still sends the parent its delegation details', async () => {
@@ -145,26 +164,23 @@ test('K1: 하위 세션 이름 — 주면 herdr 이름 규칙대로, 없으면 <
   assert.ok(CHILD_NAME_RE.test(long) && long.length <= 32);
 });
 
-test('K4: 나무 자리 — 부모 오른쪽 열, 형제는 위아래로 쌓이고, 막히면 한 열 더 오른쪽', () => {
+// 원본 P75: 자리는 tree-line.mjs lineSlot(옛 childSlot은 없어졌다)
+test('K4(P75): 나무 자리 — 부모 오른쪽 한 열, 형제는 앞 형제(의 띠) 아래, 막히면 열을 바꾸지 않고 그 아래로 잇는다', () => {
   const size = SIZE_STEPS.small;
   const parent = { x: 0, y: 0, w: 720, h: 460 };
-  const items = [parent];
-  const fits = (c) => !items.some((i) => overlaps(c, i, GAP - 1));
-  const a = childSlot({ parent, siblings: [], size, fits });
-  assert.equal(a.x, 720 + 200); assert.equal(a.y, 0);
-  items.push(a);
-  const b = childSlot({ parent, siblings: [a], size, fits });
-  assert.equal(b.x, a.x); assert.equal(b.y, a.y + a.h + GAP);
-  items.push(b);
-  // 사람이 형제 하나를 멀리 옮겼으면 그 열의 남은 형제 아래
-  const moved = { ...b, x: 5000, y: 5000 };
-  const c = childSlot({ parent, siblings: [a, moved], size, fits: (r) => !items.filter((i) => i !== b).concat([moved]).some((i) => overlaps(r, i, GAP - 1)) });
-  assert.equal(c.x, a.x); assert.equal(c.y, a.y + a.h + GAP);
-  // 열이 다른 노드로 막혀 있으면 다음 열
-  const wall = { x: 840, y: -10000, w: 480, h: 30000 };
-  const d = childSlot({ parent, siblings: [], size, fits: (r) => !overlaps(r, wall, GAP - 1) && !overlaps(r, parent, GAP - 1) });
-  assert.ok(d.x > wall.x + wall.w);
-  assert.equal(childSlot({ parent: null, size, fits }), null);
+  const a = lineSlot({ parent, bands: [], size, obstacles: [parent] });
+  assert.deepEqual([a.x, a.y], [720 + LINE_GAP_X, 0]);
+  const ra = { ...a, ...size };
+  const b = lineSlot({ parent, bands: [ra], size, obstacles: [parent, ra] });
+  assert.deepEqual([b.x, b.y], [a.x, a.y + size.h + LINE_GAP_Y]);
+  // 앞 형제의 띠(손자까지)가 길면 그 아래
+  const band = { x: a.x, y: 0, w: 3000, h: 2000 };
+  assert.equal(lineSlot({ parent, bands: [band], size }).y, 2000 + LINE_GAP_Y);
+  // 열이 다른 노드로 막혀 있으면 같은 열에서 그 아래로(다음 열로 가지 않는다)
+  const wall = { x: 840, y: -100, w: 480, h: 3000 };
+  const d = lineSlot({ parent, bands: [], size, obstacles: [parent, wall] });
+  assert.equal(d.x, 720 + LINE_GAP_X); assert.equal(d.y, wall.y + wall.h + LINE_GAP_Y);
+  assert.equal(lineSlot({ parent: null, size }), null);
 });
 
 // ---------- 승인 규칙과 env ----------
@@ -179,32 +195,28 @@ function allowed(rules, tool, cmd) {
     return cmd === p;
   });
 }
-test('K2: 승인 규칙 — 하위 세션 명령과 herdr 일 시키기·기다리기·답 읽기만. 다른 atrium·herdr 명령과 다른 판 호출은 묻는다', () => {
-  for (const c of ['atrium child w1', 'atrium child w1 --prompt "x"', 'atrium children', 'atrium children --all', 'atrium child-kill w1', 'mtask child w1', 'mtask child w1 --prompt "x"', 'mtask children', 'mtask children --all', 'mtask child-kill w1', 'herdr agent prompt w1 "do it" --wait --timeout 600000', 'herdr agent wait w1 --timeout 600000', 'herdr agent read w1 --source recent-unwrapped --lines 80']) {
-    assert.ok(allowed(BRANCH_ALLOW, 'Bash', c), `허용해야 한다: ${c}`);
+test('K2: 승인 규칙 — 하위 세션 명령과 atrium 일 시키기·기다리기·답 읽기만. 다른 atrium 명령, herdr 명령, 다른 판 호출은 묻는다(P129)', () => {
+  for (const c of ['atrium child w1', 'atrium child w1 --prompt "x"', 'atrium children', 'atrium children --all', 'atrium child-kill w1', 'mtask child w1', 'mtask child w1 --prompt "x"', 'mtask children', 'mtask children --all', 'mtask child-kill w1', 'atrium prompt w1 "do it"', 'atrium wait w1', 'atrium read w1']) {
+    assert.ok(allowed(ATRIUM_ALLOW, 'Bash', c), `허용해야 한다: ${c}`);
   }
-  for (const c of ['atrium kill w1', 'atrium settings set tray on', 'mtask kill w1', 'mtask settings set tray on', 'mtask call session.kill', 'node mtask.mjs kill w1', 'herdr pane split --current', 'herdr agent start x', 'herdr agent send-keys w1 enter', 'herdr --session other agent prompt w1 "x"', 'herdr server stop', 'mtaskchild']) {
-    assert.ok(!allowed(BRANCH_ALLOW, 'Bash', c), `묻어야 한다: ${c}`);
+  for (const c of ['atrium kill w1', 'atrium settings set tray on', 'mtask kill w1', 'mtask settings set tray on', 'mtask call session.kill', 'node mtask.mjs kill w1', 'herdr agent prompt w1 "do it" --wait', 'herdr agent read w1 --lines 80', 'herdr pane split --current', 'herdr agent start x', 'herdr agent send-keys w1 enter', 'herdr --session other agent prompt w1 "x"', 'herdr server stop', 'mtaskchild']) {
+    assert.ok(!allowed(ATRIUM_ALLOW, 'Bash', c), `묻어야 한다: ${c}`);
   }
-  assert.ok(allowed(BRANCH_ALLOW, 'PowerShell', 'mtask child w1'));
-  assert.ok(allowed(BRANCH_ALLOW, 'PowerShell', 'atrium child w1'));
-  assert.ok(!BRANCH_ALLOW.some((r) => /herdr:\*|herdr \*\)/.test(r)), 'herdr 전체 허용(P4 allowHerdr)은 넣지 않는다');
+  assert.ok(allowed(ATRIUM_ALLOW, 'PowerShell', 'mtask child w1'));
+  assert.ok(allowed(ATRIUM_ALLOW, 'PowerShell', 'atrium child w1'));
+  assert.ok(!ATRIUM_ALLOW.some((r) => /herdr/.test(r)), 'herdr 규칙은 넣지 않는다(P129)');
 });
 
-test('K1·K2: 세션 설정 파일에 env(판, 세션 ID, 세션 토큰)와 규칙이 들어가고 hook·allowHerdr는 그대로', () => {
+test('K1·K2: 세션 설정 파일에 env(판, 세션 ID, 세션 토큰)와 규칙이 들어가고 hook은 그대로', () => {
   const d = tmp();
   const f = path.join(d, 's.json');
-  writeSessionSettings({ file: f, hookUrl: 'http://127.0.0.1:47820/hooks/claude', token: 'h', sessionId: 'sid', env: { ATRIUM_PORT: '47820', ATRIUM_SESSION_ID: 'sid', ATRIUM_SESSION_TOKEN: 't' }, allow: BRANCH_ALLOW });
+  writeSessionSettings({ file: f, hookUrl: 'http://127.0.0.1:47820/hooks/claude', token: 'h', sessionId: 'sid', env: { ATRIUM_PORT: '47820', ATRIUM_SESSION_ID: 'sid', ATRIUM_SESSION_TOKEN: 't' }, allow: ATRIUM_ALLOW });
   const j = JSON.parse(fs.readFileSync(f, 'utf8'));
   assert.equal(j.env.ATRIUM_PORT, '47820'); assert.equal(j.env.ATRIUM_SESSION_ID, 'sid');
-  assert.deepEqual(j.permissions.allow, BRANCH_ALLOW);
+  assert.deepEqual(j.permissions.allow, ATRIUM_ALLOW);
   assert.ok(j.hooks.Stop);
   assert.ok(!Object.keys(j.env).some((k) => /ANTHROPIC|CLAUDE/.test(k)));
-  const g = path.join(d, 'g.json');
-  writeSessionSettings({ file: g, hookUrl: 'x', token: 'h', sessionId: 'sid', allowHerdr: true, allow: BRANCH_ALLOW });
-  const k = JSON.parse(fs.readFileSync(g, 'utf8')).permissions.allow;
-  assert.deepEqual(k.slice(0, HERDR_ALLOW.length), HERDR_ALLOW);
-  assert.equal(new Set(k).size, k.length);
+  assert.equal(new Set(j.permissions.allow).size, j.permissions.allow.length);
 });
 
 test('K1: 워크트리는 처음 띄울 때만 claude -w로 넘기고 이어 가기 명령에는 넣지 않는다. 하위 세션은 새 세션 ID로(갈라 열기 없음)', () => {
@@ -215,23 +227,40 @@ test('K1: 워크트리는 처음 띄울 때만 claude -w로 넘기고 이어 가
   assert.ok(!buildStartArgs({ sessionId: 'id2', settingsPath: 's', permissionMode: 'manual' }).includes('--worktree'));
 });
 
-test('K2: 플러그인에 일 맡기기 스킬과 atrium 명령(sh, cmd, 별칭 mtask)이 생기고 짧은 안내에 한 줄', () => {
+test('K2(P36): 플러그인에 atrium 스킬과 옛 이름 delegate(같은 글), atrium 명령(sh, cmd, 별칭 mtask)이 생기고 짧은 안내에 한 줄', () => {
   const d = tmp();
-  const pl = writeBoardPlugin({ dir: d, skillText: '---\nname: herdr\n---\n', skills: { delegate: delegateSkill(LIMITS) }, bin: childShims({ node: 'C:\\node\\node.exe', script: 'C:\\m\\bin\\atrium-child.mjs' }) });
-  const root = path.join(d, 'atrium-herdr');
-  const skill = fs.readFileSync(path.join(root, 'skills', 'delegate', 'SKILL.md'), 'utf8');
-  assert.match(skill, /^---\nname: delegate\n/);
+  const extra = new Branch({ store: { branchRows: () => [], getMeta: () => null }, bus: new EventEmitter() }).pluginExtra(); // macOS 판: 스킬 글에 지금 워커 상한(설정)을 적는다
+  const pl = writeBoardPlugin({ dir: d, skillText: '---\nname: herdr\n---\n', skills: extra.skills, bin: childShims({ node: 'C:\\node\\node.exe', script: 'C:\\m\\bin\\atrium-child.mjs' }) });
+  const root = path.join(d, 'atrium');
+  const skill = fs.readFileSync(path.join(root, 'skills', 'atrium', 'SKILL.md'), 'utf8');
+  const old = fs.readFileSync(path.join(root, 'skills', 'delegate', 'SKILL.md'), 'utf8');
+  assert.match(skill, /^---\nname: atrium\n/); assert.match(old, /^---\nname: delegate\n/);
+  assert.equal(skill.split('\n---\n')[1], old.split('\n---\n')[1]); // 몸글이 같다(돌던 세션이 옛 이름을 불러도 새 글)
   assert.ok(!skill.includes('mtask') && !skill.includes('multitask'));
-  for (const w of ['atrium child', 'herdr agent prompt', 'herdr agent read', 'atrium child-kill', '하위 세션 4개', '깊이 3단계', '판 전체 16개', '--session']) assert.ok(skill.includes(w), w);
+  // P116: 일 시키기·기다리기·읽기는 atrium prompt|wait|read(herdr 명령과 --session 안내는 없다)
+  for (const w of ['atrium child', '--worktree', '--prompt', '--model', '--effort', 'atrium prompt <이름> "<지시>" --wait', 'atrium wait <이름>', 'atrium read <이름>', 'atrium child-kill', 'atrium child-wait', 'needs_trust', 'needs_commit', '보드에서 @wt1 카드의 신뢰 질문에 답해 주세요.', 'git worktree add', '상한: 세션 하나에 하위 세션 4개, 깊이 3단계, 판 전체 16개', '사용자가 말하지 않아도', '완료 기준']) assert.ok(skill.includes(w), w); // macOS 판: 워커 상한 4/3/16을 스킬에 적는다(원본은 상한 없음)
+  assert.ok(!skill.includes('상한은 없다'));
+  for (const w of ['상한(', '판 밖 터미널을 열라고 한다', 'herdr', '--session']) assert.ok(!skill.includes(w), w); // macOS 판: 상한 줄("…개, 깊이…")은 있다
+  // 길이: P8 delegate 글(3107바이트)의 두 배를 넘지 않는다. P111: 잠든 워커 줄에 혼자 잠들기와 깨우기 범위(+77바이트)를 더해 80바이트를 더 둔다
+  // P143: 결과를 한 길로 받기(당겨 오기·--now 밀어 넣기)로 시키기 줄을 바꿔(+223바이트) 230바이트를 더 둔다
+  // P156: 관계 고르기 절(하위·동료, relate)로 690바이트를 더 둔다
+  // macOS 판: 워커 상한 줄, 보드 도구 자동 승인 줄, 명령 추적 문구로 450바이트를 더 둔다
+  // macOS 판: 하위 세션 기본 모델·추론 줄과 토큰 절(2026-11-18)로 600바이트를 더 둔다
+  // macOS 판: 디자인 언어·범용 스킬·이어 쓰기 줄(2026-11-19, 디자인 실험 C 결과)로 1000바이트를 더 둔다
+  assert.ok(Buffer.byteLength(skill) <= 2 * 3107 + 80 + 230 + 690 + 450 + 600 + 200 + 2000 + 1000, `skill ${Buffer.byteLength(skill)}B`);
+  assert.match(skill.split('\n')[2], /사용자가 말하지 않아도/); // 설명에 스스로 쓰는 때
+  assert.equal(boardSkill('delegate'), old);
   for (const c of ['atrium', 'mtask']) { // 옛 이름 mtask는 P18 전에 띄운 세션의 스킬 글이 말한다
     const sh = fs.readFileSync(path.join(root, 'bin', c), 'utf8');
     assert.match(sh, /^#!\/bin\/sh\n/); assert.match(sh, /exec "C:\/node\/node.exe" "C:\/m\/bin\/atrium-child.mjs" "\$@"/);
     assert.match(fs.readFileSync(path.join(root, 'bin', `${c}.cmd`), 'utf8'), /"C:\\node\\node.exe" "C:\\m\\bin\\atrium-child.mjs" %\*/);
   }
-  assert.match(BOARD_SYSTEM_PROMPT, /delegate/);
-  assert.equal(BOARD_SYSTEM_PROMPT.split('\n').length, 7); // P21: 잠든 세션 깨우기 한 줄
-  assert.ok(pl.pluginDir.endsWith('atrium-herdr'));
-  assert.match(childNotice({ role: '워커', agentName: 'w1', paneId: 'w2:p1', depth: 2 }), /herdr agent prompt w1/);
+  assert.match(BOARD_SYSTEM_PROMPT, /atrium:atrium/); assert.doesNotMatch(BOARD_SYSTEM_PROMPT, /herdr/); assert.match(BOARD_SYSTEM_PROMPT, /delegate/); assert.match(BOARD_SYSTEM_PROMPT, /워커 수·깊이·전체 상한을 지킨다/); // macOS 판: 워커 상한 4/3/16
+  assert.ok(ATRIUM_ALLOW.includes('Bash(atrium child-wait *)') && ATRIUM_ALLOW.includes('PowerShell(atrium child-wait *)'));
+  assert.equal(BOARD_SYSTEM_PROMPT.split('\n').length, 10); // P21: 잠든 세션 깨우기 한 줄, P81: atrium me 한 줄, P156: 관계 고르기 한 줄. macOS 판: 웹·약관 한 줄, 진행 메모·조사 한 줄
+  assert.ok(pl.pluginDir.endsWith('/atrium'));
+  assert.match(childNotice({ role: '워커', agentName: 'w1', paneId: 'w2:p1', depth: 2 }), /atrium prompt w1 "<할 일>" --wait/); // P116
+  assert.doesNotMatch(childNotice({ role: '워커', name: 'w1', depth: 2 }), /herdr/);
 });
 
 test('K3: 상한은 설정에 있다(정수, 범위 밖은 거부)', () => {
@@ -276,10 +305,10 @@ async function fakeBoard({ limits } = {}) {
   const ws = await workspaceOf(dir);
   store.insertWorkspace({ ...ws, createdAt: 1 });
   const b = {
-    cfg: { profile: 'dev', herdrSession: 'atrium-dev-p8test', port: 0, dataDir: dir }, apiToken: 'board-api-token', store, sessions: new Map(), bus: new EventEmitter(),
+    cfg: { profile: 'dev', terminalSession: 'atrium-dev-p8test', port: 0, dataDir: dir }, apiToken: 'board-api-token', store, sessions: new Map(), bus: new EventEmitter(),
     broadcasts: [], spawned: [], killed: [], links: [], queued: [],
     agentModels: async ({ kind }) => ({ models: kind === 'codex' ? [{ id: 'custom-codex', name: 'Custom Codex' }] : [] }),
-    api: { broadcast: (e, d) => b.broadcasts.push([e, d]) }, log: () => {}, requireHerdr: () => {},
+    api: { broadcast: (e, d) => b.broadcasts.push([e, d]) }, log: () => {}, requireTerminal: () => {},
     hooked: (s) => s.kind === 'claude' && s.origin === 'board',
     summary: (s) => ({ state: 'ready', ask: null }),
     ensureLink: (from, to, patch) => { const l = { linkId: 'l' + b.links.length, from, to, ...patch }; b.links.push(l); return l; },
@@ -311,13 +340,14 @@ test('K1: 하위 세션은 부모의 폴더·모델·노력 수준·권한 모�
   const r = await b.branch.spawnChild(lead, { name: 'w1', wait: false });
   const p = b.spawned[0];
   assert.equal(p.cwd, dir); assert.equal(p.model, 'haiku'); assert.equal(p.effort, 'low'); assert.equal(p.permissionMode, 'acceptEdits'); assert.equal(p.group, undefined); assert.equal(p.parentSessionId, lead.sessionId);
-  assert.equal(r.role, '워커'); assert.equal(r.depth, 2); assert.equal(r.agentName, 'w1'); assert.match(r.notice, /herdr agent prompt w1/);
+  assert.equal(r.role, '워커'); assert.equal(r.depth, 2); assert.equal(r.agentName, 'w1'); assert.match(r.notice, /atrium prompt w1 "<할 일>" --wait/); // P116
   assert.deepEqual(b.links[0], { linkId: 'l0', from: lead.sessionId, to: r.sessionId, role: '워커', spawned: true });
   assert.ok(b.store.events({ sessionId: lead.sessionId }).some((e) => e.kind === 'branch_child' && e.data.child === 'w1'));
   // 다른 모델·역할·첫 지시
   const r2 = await b.branch.spawnChild(lead, { name: 'w2', model: 'sonnet', role: '리뷰어', prompt: 'Reply with exactly: ok', wait: false });
   assert.equal(b.spawned[1].model, 'sonnet'); assert.equal(r2.role, '리뷰어');
-  assert.deepEqual(b.queued[0], { sid: r2.sessionId, text: 'Reply with exactly: ok' });
+  assert.equal(b.queued[0].sid, r2.sessionId); // P156: 첫 요청 앞에 관계 한 줄
+  assert.match(b.queued[0].text, /^\[Atrium 보드\] 관계: 너는 @lead의 하위 워커다\..*\n\nReply with exactly: ok$/s);
   // 요약: 깊이와 부모 이름
   const sum = b.branch.summaryExtra(b.sessions.get(r.sessionId)).branch;
   assert.equal(sum.depth, 2); assert.equal(sum.parentName, 'lead'); assert.equal(sum.role, '워커'); assert.equal(sum.child, true);
@@ -336,8 +366,79 @@ test('K1: 하위 세션은 부모의 폴더·모델·노력 수준·권한 모�
   assert.equal(gated.needsTrust, true); assert.equal(b.spawned.at(-1).worktree, null);
   assert.equal(b.branch.holds(gated.sessionId), true);
   fs.writeFileSync(b.cfg.claudeJson, JSON.stringify({ projects: { [repo.split(path.sep).join('/')]: { hasTrustDialogAccepted: true } } }));
-  const wt = await b.branch.spawnChild(lead, { name: 'w3', cwd: repo, worktree: 'feat', wait: false });
-  assert.equal(b.spawned.at(-1).worktree, 'feat'); assert.equal(wt.worktree, 'feat');
+  const wt = await b.branch.spawnChild(lead, { name: 'w4', cwd: repo, worktree: 'feat2', effort: 'high', wait: false });
+  assert.equal(b.spawned.at(-1).worktree, 'feat2'); assert.equal(wt.worktree, 'feat2'); assert.equal(wt.needsTrust, false); assert.equal(wt.tellHuman, null);
+  // P36: --effort가 물려받기를 덮는다. 맞지 않는 값은 거부
+  assert.equal(b.spawned.at(-1).effort, 'high'); assert.equal(wt.effort, 'high');
+  await assert.rejects(b.branch.spawnChild(lead, { name: 'w5', effort: 'huge', wait: false }), /추론 수준/);
+});
+
+test('P36: 신뢰 예상 — 커밋 없는 저장소는 상위 폴더의 신뢰를 물려받고, 커밋이 생기면 저장소 루트에서 멈춘다', async () => {
+  const { predictTrust } = await import('../src/launch.mjs');
+  const parent = tmp(); const repo = path.join(parent, 'r'); fs.mkdirSync(repo);
+  const cj = path.join(parent, 'claude.json');
+  fs.writeFileSync(cj, JSON.stringify({ projects: { [parent.split(path.sep).join('/')]: { hasTrustDialogAccepted: true }, [repo.split(path.sep).join('/')]: { hasTrustDialogAccepted: false } } }));
+  assert.equal(predictTrust(repo, cj).needsTrust, false); // git 아님
+  execFileSync('git', ['init', '-q', repo]);
+  assert.equal(predictTrust(repo, cj).needsTrust, false); // 커밋 없는 저장소(실험 C)
+  execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  assert.equal(predictTrust(repo, cj).needsTrust, true); // 첫 커밋 뒤(실험 B·C)
+});
+
+// P36: 신뢰 관문을 지나는 흐름(가짜 herdr). 사람이 답해 ready가 되면 /exit 뒤 같은 패널·같은 세션 ID로 claude -w를 띄우고, 그 사이 들어간 지시는 다시 보낸다
+test('P36: 신뢰 관문 — ready가 되면 claude -w로 다시 띄우고, 관문 동안 전달을 멈추며, child-wait는 needs_trust와 한 문장을 돌려준다', async () => {
+  const { b, lead } = await fakeBoard();
+  const repo = tmp();
+  execFileSync('git', ['init', '-q', repo]);
+  execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  b.cfg.claudeJson = path.join(repo, 'claude.json');
+  fs.writeFileSync(b.cfg.claudeJson, JSON.stringify({ projects: {} }));
+  const calls = [];
+  b.cfg.killWaitMs = 500;
+  b.adapter = {
+    sendKeys: async (n, k) => calls.push(['keys', n, k]),
+    sendText: async (p, t) => { calls.push(['text', p, t]); if (t === '/exit') child.rt.term.present = false; },
+    paneKeys: async (p, k) => calls.push(['paneKeys', p, k]),
+    waitShellReady: async () => true,
+    startAgent: async (o) => { calls.push(['start', o]); child.rt.term.present = true; return { agent: null }; },
+  };
+  b.launchOf = (s) => ({ sessionId: s.sessionId, settingsPath: 's.json', permissionMode: s.permissionMode, model: s.model, effort: s.effort, extraArgs: [] });
+  b.broadcastSession = () => {};
+  b.branch.childWaitMs = 300;
+  const g = await b.branch.spawnChild(lead, { name: 'wt1', cwd: repo, worktree: 'wt1', prompt: 'first', wait: false });
+  const child = b.sessions.get(g.sessionId);
+  // 신뢰 질문에서 멈춤: child-wait는 needs_trust와 한 문장
+  child.rt.term = { ...child.rt.term, status: 'blocked', present: true, launchPending: true, agentSessionId: null };
+  child.rt.trustScreen = { at: Date.now() };
+  const w = await b.branch.waitChild(lead, { name: 'wt1' });
+  assert.equal(w.status, 'needs_trust'); assert.equal(w.tellHuman, '보드에서 @wt1 카드의 신뢰 질문에 답해 주세요.'); assert.equal(w.gated, true); assert.equal(w.timeout, true);
+  b.bus.emit('session', child, { state: 'trust_wait' });
+  assert.equal(calls.length, 0); // 신뢰 질문에는 아무것도 보내지 않는다
+  assert.ok(b.branch.holds(child.sessionId));
+  // 사람이 수락: ~/.claude.json에 신뢰가 쓰이고 ready가 된다. 그 사이 herdr로 직접 들어간 지시가 하나 있다
+  fs.writeFileSync(b.cfg.claudeJson, JSON.stringify({ projects: { [repo.split(path.sep).join('/')]: { hasTrustDialogAccepted: true } } }));
+  child.rt.trustScreen = null; child.rt.term.status = 'idle';
+  child.rt.lastPrompt = 'slipped in'; child.rt.lastPromptAt = Date.now();
+  const before = b.queued.length;
+  b.bus.emit('session', child, { state: 'ready' });
+  b.bus.emit('session', child, { state: 'ready' }); // 두 번 와도 한 번만 다시 띄운다
+  for (let i = 0; i < 40 && b.branch.gated(child.sessionId); i++) await new Promise((r) => setTimeout(r, 25));
+  const starts = calls.filter((c) => c[0] === 'start');
+  assert.equal(starts.length, 1);
+  const args = starts[0][1].args;
+  assert.deepEqual(args.slice(0, 4), ['--session-id', child.sessionId, '--worktree', 'wt1']);
+  assert.equal(starts[0][1].paneId, child.paneId);
+  assert.ok(calls.findIndex((c) => c[0] === 'text' && c[2] === '/exit') < calls.findIndex((c) => c[0] === 'start'));
+  assert.equal(b.branch.holds(child.sessionId), false);
+  assert.ok(b.store.events({ sessionId: child.sessionId }).some((e) => e.kind === 'trust_gate_passed' && e.data.trusted && e.data.slipped));
+  assert.deepEqual(b.queued.slice(before), [{ sid: child.sessionId, text: 'slipped in' }]);
+  // 다시 켠 판도 관문 기록을 읽는다
+  assert.equal(new Branch(b).gated(child.sessionId), false);
+  // 관문을 지난 뒤 child-wait는 ready를 돌려준다
+  child.rt.phase = 'running';
+  const w2 = await b.branch.waitChild(lead, { name: 'wt1' });
+  assert.equal(w2.status, 'ready'); assert.equal(w2.needsTrust, false); assert.equal(w2.timeout, false); assert.equal(w2.next.wait, 'atrium wait wt1'); // P116
+  await assert.rejects(b.branch.waitChild(b.sessions.get(g.sessionId), { name: 'lead' }), (e) => e.code === 'not_parent');
 });
 
 test('K1: 다른 폴더면 그 워크스페이스에 띄운다', async () => {
@@ -421,12 +522,13 @@ test('K1: 하위 세션 명령은 env의 판으로 세션 토큰을 들고 간�
   const srv = await serve(b);
   try {
     const env = b.branch.envFor(lead.sessionId);
-    assert.equal(env.ATRIUM_HERDR_SESSION, 'atrium-dev-p8test'); assert.equal(env.ATRIUM_SESSION_ID, lead.sessionId);
+    assert.equal(env.ATRIUM_TERMINAL_SESSION, 'atrium-dev-p8test'); assert.equal(env.ATRIUM_HERDR_SESSION, 'atrium-dev-p8test'); assert.equal(env.ATRIUM_SESSION_ID, lead.sessionId);
     assert.ok(env.ATRIUM_SESSION_TOKEN !== b.apiToken && env.ATRIUM_SESSION_TOKEN.length === 64); // 판 API 토큰이 아니다
     const ok = await runChild(['child', 'w1', '--no-wait'], env);
     assert.equal(ok.code, 0, ok.stderr);
-    assert.match(ok.stdout, /하위 세션을 생성했습니다: @w1 \(herdr 이름 w1/);
-    assert.match(ok.stdout, /일 시키기: herdr agent prompt w1/);
+    assert.match(ok.stdout, /하위 세션을 생성했습니다: @w1 \(종류 claude, 역할 "워커"/); // P116: herdr 이름·패널은 보이지 않는다
+    assert.match(ok.stdout, /일 시키기: atrium prompt w1/);
+    assert.doesNotMatch(ok.stdout, /herdr/);
     const ls = await runChild(['children'], env);
     assert.match(ls.stdout, /@lead\(1단계\)의 하위 세션 1개/);
     // P18 전에 띄운 세션: 옛 플러그인 shim이 부르는 mtask-child.mjs와 옛 env(MTASK_*)도 된다
@@ -438,26 +540,33 @@ test('K1: 하위 세션 명령은 env의 판으로 세션 토큰을 들고 간�
     assert.ok(b.store.events({}).some((e) => e.kind === 'branch_rejected'));
     const nobody = await runChild(['children'], { ...env, ATRIUM_SESSION_ID: 'nope' });
     assert.match(nobody.stderr, /not_on_board/);
-    const other = await runChild(['children'], { ...env, ATRIUM_HERDR_SESSION: 'atrium' });
+    const other = await runChild(['children'], { ...env, ATRIUM_TERMINAL_SESSION: 'atrium', ATRIUM_HERDR_SESSION: 'atrium' });
     assert.match(other.stderr, /다른 보드에서 응답했습니다/);
+    const { ATRIUM_TERMINAL_SESSION: _t, ...oldOnly } = env; // P129: 옛 이름만 있는 env(업데이트 전에 띄운 세션)도 같은 판을 본다
+    const other2 = await runChild(['children'], { ...oldOnly, ATRIUM_HERDR_SESSION: 'atrium' });
+    assert.match(other2.stderr, /다른 보드에서 응답했습니다/);
     const noenv = await runChild(['child'], {});
     assert.match(noenv.stderr, /보드에서 시작한 세션이 아닙니다/);
     const nope = await runChild(['kill', 'w1'], env);
-    assert.equal(nope.code, 2); assert.match(nope.stderr, /child, children, child-kill, child-wait, wake, models만/);
+    assert.equal(nope.code, 2); assert.match(nope.stderr, /child, relate, children, child-kill, child-wait, wake, models만/);
     const five = await runChild(['child-kill', 'lead'], env);
     assert.match(five.stderr, /not_parent/);
   } finally { srv.close(); }
 });
 
-test('K1: 판이 띄운 세션의 설정 파일을 다시 쓸 때(P8 전 세션) env와 규칙만 더하고 hook과 다른 규칙은 그대로', async () => {
+test('K1: 판이 띄운 세션의 설정 파일을 다시 쓸 때(P8 전 세션) env와 규칙만 더하고 hook과 다른 규칙은 그대로, 옛 herdr 규칙은 뺀다(P129)', async () => {
   const { b, dir, lead } = await fakeBoard();
   const f = path.join(dir, 'old.json');
-  writeSessionSettings({ file: f, hookUrl: 'http://127.0.0.1:1/hooks/claude', token: 'h', sessionId: lead.sessionId, allowHerdr: true });
+  writeSessionSettings({ file: f, hookUrl: 'http://127.0.0.1:1/hooks/claude', token: 'h', sessionId: lead.sessionId });
+  const j0 = JSON.parse(fs.readFileSync(f, 'utf8'));
+  j0.permissions = { allow: ['Bash(herdr:*)', 'PowerShell(herdr agent prompt *)', 'Bash(git status)'] }; // P4 allowHerdr·옛 일 시키기 규칙과 사용자 규칙
+  fs.writeFileSync(f, JSON.stringify(j0));
   lead.settingsPath = f;
   assert.equal(b.branch.refreshSettings(), 1);
   const j = JSON.parse(fs.readFileSync(f, 'utf8'));
   assert.equal(j.env.ATRIUM_SESSION_ID, lead.sessionId);
-  for (const r of [...HERDR_ALLOW, ...BRANCH_ALLOW]) assert.ok(j.permissions.allow.includes(r), r);
+  for (const r of ['Bash(git status)', ...ATRIUM_ALLOW]) assert.ok(j.permissions.allow.includes(r), r);
+  assert.ok(!j.permissions.allow.some((r) => /herdr/.test(r)));
   assert.ok(j.hooks.UserPromptSubmit);
   assert.equal(b.branch.refreshSettings(), 0); // 이미 있으면 다시 쓰지 않는다
 });

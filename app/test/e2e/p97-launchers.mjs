@@ -31,6 +31,8 @@ const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k
 const env = { ...cleanEnv(), ...ENV };
 const atrium = (...a) => execFileSync(process.execPath, [path.join(REPO, 'backend', 'bin', 'atrium.mjs'), '--dev', ...a], { encoding: 'utf8', env, timeout: 180000 });
 const call = (page, m, p = {}) => page.evaluate(([mm, pp]) => window.__mt.api.call(mm, pp), [m, p]);
+// P122: 새 판에는 셸 런처가 없다. 셸 단추를 누르는 시험은 사람이 "+"로 만들듯 하나 만들어 레일에 둔다
+const shellLauncher = async (page) => { const d = await call(page, 'launcher.list'); const l = d.launchers.find((x) => x.harness === 'shell'); return l ? l.id : (await call(page, 'launcher.create', { launcher: { name: 'Shell', harness: 'shell' }, favorite: true })).launcher.id; };
 const shot = async (page, name) => { const f = path.join(OUT, `p97-${PHASE}-${name}.png`); await page.screenshot({ path: f }); log('스크린숏', path.basename(f)); return f; };
 const settings = async (page) => {
   await page.click('[data-action="settings-open"]');
@@ -103,7 +105,9 @@ try {
     await shot(page, '6-rail-after');
     // 6. 레일의 셸 런처를 누르면 이름을 묻지 않고 바로 생긴다
     const before = (await sessionsByName(page)).length;
-    await page.click('[data-role="rail-favorites"] [data-launcher="shell"]');
+    const shId = await shellLauncher(page);
+    await page.waitForSelector(`[data-role="rail-favorites"] [data-launcher="${shId}"]`);
+    await page.click(`[data-role="rail-favorites"] [data-launcher="${shId}"]`);
     await until(async () => (await sessionsByName(page)).length > before, 20000);
     await sleep(1500);
     const ss = await sessionsByName(page);
@@ -112,7 +116,7 @@ try {
     for (const s of ss) { try { atrium('kill', s.name, '--yes'); } catch {} }
     // 만든 명령 런처는 지운다(다음 단계는 같은 판에서 새로)
     const d = await call(page, 'launcher.list');
-    for (const l of d.launchers) if (!['claude', 'codex', 'shell'].includes(l.id)) await call(page, 'launcher.delete', { id: l.id });
+    for (const l of d.launchers) if (!['claude', 'codex'].includes(l.id) && l.harness !== 'shell') await call(page, 'launcher.delete', { id: l.id });
   }
 
   if (PHASE === 'after') await import('./p97-after.mjs').then((m) => m.run({ page, call, atrium, step, shot, log, settings, closeSettings, sessionsByName, sleep, until }));

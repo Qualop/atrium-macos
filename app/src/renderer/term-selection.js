@@ -1,10 +1,10 @@
 // P42: 터미널 노드의 웹 같은 글 고르기(DOM 쪽, ARCH 7.2, E12). 계산은 lib/term-select.js(단위 시험 p42-lib).
 // xterm 자체 선택은 쓰지 않는다. 선택은 "문서" 줄과 칸 경계로 들고, 보이는 부분만 term.select()로 그린다.
-// - live(claude 등): 화면은 herdr 프레임이고 앱이 스스로 스크롤한다(SGR 휠). 프레임마다 앞 화면과 견줘 움직인 줄 수를 찾아
+// - live(claude 등): 화면은 터미널 프레임이고 앱이 스스로 스크롤한다(SGR 휠). 프레임마다 앞 화면과 견줘 움직인 줄 수를 찾아
 //   본 줄을 문서(TermDoc)에 모은다. 그래서 고른 글이 화면 밖으로 나가도, 스피너가 돌아도 그대로이고 복사된다.
-// - buffer(셸): herdr 기록과 밀려난 줄이 xterm scrollback에 있다(TerminalView). 문서 줄 = 버퍼의 절대 줄, 스크롤은 판 안에서 한다.
+// - buffer(셸): 터미널 기록과 밀려난 줄이 xterm scrollback에 있다(TerminalView). 문서 줄 = 버퍼의 절대 줄, 스크롤은 판 안에서 한다.
 // 끄는 중 가장자리 가까이·밖으로 가면 거리만큼 빠르게 저절로 스크롤하고, 끄는 중 휠을 굴려도 선택이 따라 늘어난다.
-// 끝내기는 웹과 같다(밖 누르기, 글 입력, Esc). 복사·붙여넣기 뒤에도 지운다(clearsSelection).
+// 끝내기는 웹과 같다(밖 누르기, 글 입력, Esc). 붙여넣기 뒤에도 지운다(clearsSelection). P125: 놓으면 고른 글을 복사하고(onSelectEnd), 복사로는 지우지 않는다.
 import { cellAt, edgeSpeed, scrollStep, TermDoc, rangeText, visibleSpan, wordRange, lineRange, emptyRange } from './lib/term-select.js';
 
 export const LINES_PER_WHEEL = 3; // Claude Code가 SGR 휠 한 번에 움직이는 줄 수(E12에서 잰 값 2~3줄)
@@ -31,15 +31,17 @@ export function screenCells(term) {
 
 export class TermSelection {
   // mode: 'live' | 'buffer'. sendWheel(steps, cell): live에서 앱에 SGR 휠 steps번(아래 +, 위 -). onActivate: 누르면 부른다
-  constructor({ term, host, mode, sendWheel, onActivate, log }) {
-    Object.assign(this, { term, host, mode, sendWheel, onActivate, log: log || (() => {}) });
+  // onSelectEnd(): P125 끌어 고르기(두세 번 누르기, Shift+누르기 포함)를 놓았고 고른 글이 있을 때 부른다(창이 클립보드로 복사한다)
+  constructor({ term, host, mode, sendWheel, onActivate, onSelectEnd, log }) {
+    Object.assign(this, { term, host, mode, sendWheel, onActivate, onSelectEnd, log: log || (() => {}) });
     this.doc = new TermDoc();
     this.anchor = null; this.focus = null;
     this.dragging = false; this.pt = null; this.speed = 0; this.acc = 0; this.timer = null; this.lastTick = 0;
     this._down = (e) => this.onDown(e);
     this._move = (e) => this.onMove(e);
     this._up = (e) => this.onUp(e);
-    this._outside = (e) => { if (this.anchor && !this.host.contains(e.target)) this.clear('outside'); };
+    // P151: 손가락 고르기의 막대·손잡이(data-term-keep)를 누른 것은 밖 누르기가 아니다
+    this._outside = (e) => { if (this.anchor && !this.host.contains(e.target) && !(e.target && e.target.closest && e.target.closest('[data-term-keep]'))) this.clear('outside'); };
     host.addEventListener('mousedown', this._down, true);
     this._offScroll = term.onScroll(() => { if (this.mode === 'buffer') this.afterMove(); });
     this._offResize = term.onResize(() => { if (this.anchor) this.clear('resize'); });
@@ -63,7 +65,10 @@ export class TermSelection {
     window.removeEventListener('mousedown', this._outside, true);
     if (this.mode === 'buffer' && why === 'escape') this.term.scrollToBottom(); // 셸: 지금 화면으로 돌아온다
     this.log('term_selection_cleared', { why });
+    this.changed();
   }
+  // P151: 그린 선택이 바뀌었다(손가락 고르기의 손잡이·막대가 따라온다)
+  changed() { if (this.onRender) this.onRender(); }
 
   // ---------- 문서 ----------
   // 화면 줄의 스크롤 영역(live: 머리줄·입력칸 뺀 줄, 그 밖: 화면 전체)
@@ -81,6 +86,7 @@ export class TermSelection {
       else { const [lo, hi] = this.region(); span = visibleSpan(this.anchor, this.focus, { first: this.toLine(lo), last: this.toLine(hi), cols, rowBase: this.doc.top }); }
     }
     if (span) this.term.select(span.col, span.row, span.length); else this.term.clearSelection();
+    this.changed();
   }
   // live: 프레임을 쓴 뒤 부른다. 고르는 중일 때만 화면을 견준다
   onFrame() {
@@ -93,7 +99,7 @@ export class TermSelection {
   // 글이 움직였다(프레임, 판 안 스크롤): 끄는 중이면 마우스 밑 칸으로 끝을 다시 잡는다
   afterMove() {
     if (!this.anchor) return;
-    if (this.dragging && this.pt) this.focus = this.posAt(this.pt);
+    if (this.dragging && this.pt) { this.focus = this.posAt(this.pt); if (this.repin) this.repin(); } // P151 repin: 손가락으로 처음 고른 낱말을 품는다
     this.render();
   }
 
@@ -144,8 +150,10 @@ export class TermSelection {
     this.checkAuto();
   }
   onUp() {
+    const was = this.dragging;
     this.endDrag();
-    if (!this.has()) { this.anchor = this.focus = null; this.term.clearSelection(); window.removeEventListener('mousedown', this._outside, true); }
+    if (!this.has()) { this.anchor = this.focus = null; this.term.clearSelection(); window.removeEventListener('mousedown', this._outside, true); this.changed(); return; }
+    if (was && this.onSelectEnd) this.onSelectEnd();
   }
   endDrag() {
     this.dragging = false;

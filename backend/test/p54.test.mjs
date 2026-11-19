@@ -67,33 +67,22 @@ test('백엔드 start()가 실패해도 ready는 풀린다(기다리던 요청�
 });
 
 // 가짜 백엔드: herdrControl만 쓴다
-function fakeBackend({ herdrPath = null, found = null } = {}) {
+function fakeBackend() {
   const b = Object.create(Backend.prototype);
   const calls = [];
-  b.cfg = { herdrSession: 'atrium-test-p54' };
-  b.adapter = { herdrPath, stopServer: async () => { calls.push('stopServer'); return { stopped: true, out: '' }; }, probe: async () => ({ running: true }) };
-  b.resolveHerdr = async (why) => { calls.push(`resolve:${why}`); b.adapter.herdrPath = found; b.herdrFind = { tried: [] }; return b.herdrFind; };
+  b.cfg = { terminalSession: 'atrium-test-p54' };
+  b.adapter = { stopServer: async () => { calls.push('stopServer'); return { stopped: true, out: '' }; }, probe: async () => ({ running: true }) };
   b.log = () => {};
   return { b, calls };
 }
 
-test('herdr stop: 실행 파일을 모르면 다시 찾고, 그래도 없으면 부르지 않고 herdr_missing으로 알린다', async () => {
-  const { b, calls } = fakeBackend({ herdrPath: null, found: null });
-  await assert.rejects(b.herdrControl('stop', true), (e) => e.code === 'herdr_missing' && /herdr 실행 파일/.test(e.message));
-  assert.deepEqual(calls, ['resolve:stop'], "전에는 경로 없이 stopServer를 불러 10초 뒤 'herdr not found'를 돌려주었다");
-});
-
-test('herdr stop: 실행 파일을 모르다가 다시 찾으면 그 파일로 끈다', async () => {
-  const { b, calls } = fakeBackend({ herdrPath: null, found: 'C:\\fake\\herdr.exe' });
-  const r = await b.herdrControl('stop', true);
-  assert.deepEqual(calls, ['resolve:stop', 'stopServer']);
-  assert.equal(r.stop.stopped, true);
-});
-
-test('herdr stop: 실행 파일을 알면 다시 찾지 않는다', async () => {
-  const { b, calls } = fakeBackend({ herdrPath: 'C:\\fake\\herdr.exe' });
-  await b.herdrControl('stop', true);
+test('터미널 stop(P129): 확인 없이는 끄지 않고, 확인하면 어댑터의 서버를 곧바로 끈다(실행 파일 다시 찾기 없음)', async () => {
+  const { b, calls } = fakeBackend();
+  const c = await b.terminalControl('stop', false);
+  assert.equal(c.needsConfirm, true); assert.equal(c.msg.key, 'terminalStop'); assert.deepEqual(calls, []);
+  const r = await b.terminalControl('stop', true);
   assert.deepEqual(calls, ['stopServer']);
+  assert.equal(r.stop.stopped, true); assert.equal(b.termStopping, false);
 });
 
 test('backend start: 같은 판의 다른 백엔드가 먼저 떠서 포트를 못 열면 그 백엔드를 쓴다', async () => {

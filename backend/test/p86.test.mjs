@@ -55,7 +55,7 @@ test('web.level: 기기 연결 하나에 한 번, 이 PC 연결은 막는다. we
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p86-'));
   const store = new Store(path.join(dir, 'board.db'));
   const tailscale = { status: () => null, on: () => {}, off: () => {}, stop: () => {} };
-  const web = new WebServer({ cfg: { port: 1, dataDir: dir, profile: 'dev', herdrSession: 'atrium-dev-test' }, store, api: null, tailscale, settings: () => ({ remoteAccess: true }) });
+  const web = new WebServer({ cfg: { port: 1, dataDir: dir, profile: 'dev', terminalSession: 'atrium-dev-test' }, store, api: null, tailscale, settings: () => ({ remoteAccess: true }) });
   try {
     const H = web.handlers();
     const dev = () => ({ auth: { kind: 'device', device: { id: 'dev-1', name: 'iPhone' }, meta: { remote: true, addr: '100.64.0.2', browser: 'Safari 18 · iOS' }, tsNode: { id: 'n1', name: 'phone-a' } } });

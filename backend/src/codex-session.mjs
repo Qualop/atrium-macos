@@ -51,7 +51,7 @@ export function codexCollaboration(b, sessionId, { env = {}, prompt } = {}) {
     'This session runs on an Atrium board. Follow the existing user and developer instructions.',
     'When asked to delegate board work, use `atrium models` to inspect the current model catalog, then `atrium child <name> --kind codex --model <catalog-id>` (or the requested provider).',
     'Use the scoped ATRIUM_* environment to address this board; do not print tokens or change global settings.',
-    'herdr already targets this board. Do not pass --session, --machine, or --remote. Wake sleeping board peers with `atrium wake <name>` before contacting them.',
+    'Assign work to board peers with `atrium prompt <name> "<task>" --wait`, wait with `atrium wait <name>`, read their screen with `atrium read <name>`. Sleeping peers are woken by the board.', // P116: 일 시키기는 atrium 명령(터미널 엔진 명령이 아니다)
     ...(branchFile ? [`The scoped branch credential file is ${JSON.stringify(branchFile)}. If shell environment filtering removes ATRIUM_BRANCH_FILE, set it to this path for the atrium command. Do not display the file.`] : []),
   ].join('\n');
   return { env: out, context, branchFile, ...(typeof prompt === 'string' && prompt ? { prompt: `${context}\n\n${prompt}` } : {}) };
@@ -102,10 +102,10 @@ async function wake(b, s, why) {
   if (s.kind !== 'codex') throw codexError('bad_request');
   const runtime = s.rt, prev = structuredClone(runtime), sleep = prev.sleep;
   let created = null;
-  const current = () => !b.stopping && b.sessions.get(s.sessionId) === s && s.rt === runtime && (!created || s.paneId === created.paneId);
+  const current = () => !b.stopping && b.sessions.get(s.sessionId) === s && s.rt === runtime && (!created || (b.samePane ? b.samePane(s, created.paneId) : s.paneId === created.paneId));
   s.waking = { at: Date.now(), why };
   try {
-    b.requireHerdr();
+    b.requireTerminal();
     if (!s.cwd || !fs.statSync(s.cwd).isDirectory()) throw codexError('no_folder');
     const recovery = await verifyCodexResume(b, s);
     if (!current() || !s.rt.sleep || b.killing.has(s.sessionId)) throw codexError('closed');
@@ -114,17 +114,17 @@ async function wake(b, s, why) {
     await b.withNewPane(() => b.adapter.createWorkspace({ cwd: s.cwd, label: s.name, env }), (r) => {
       if (!current() || b.killing.has(s.sessionId)) throw codexError('closed');
       created = r;
-      s.paneId = r.paneId; s.herdrWorkspaceId = r.workspaceId;
+      s.paneId = r.paneId; s.termWorkspaceId = r.workspaceId;
       Object.assign(s.rt, { sleep: null, exit: null, phase: 'starting', launchedAt: Date.now(), sessionEnd: null, pendingAsk: null, lastError: null,
-        herdr: { status: null, launchPending: true, agentSessionId: null, present: false, at: Date.now() } });
-      b.store.updateSession(s.sessionId, { paneId: r.paneId, herdrWorkspaceId: r.workspaceId, settingsPath, runtime: s.rt });
+        term: { status: null, launchPending: true, agentSessionId: null, present: false, at: Date.now() } });
+      b.store.updateSession(s.sessionId, { paneId: r.paneId, termWorkspaceId: r.workspaceId, settingsPath, runtime: s.rt });
     });
     await b.adapter.refreshSubscription();
     if (await b.adapter.waitShellReady(s.paneId, 8000) === false) throw codexError('shell_not_ready');
     if (!current() || b.killing.has(s.sessionId)) throw codexError('closed');
-    const started = await b.adapter.startAgent({ name: s.agentName || s.name, paneId: s.paneId, args, kind: 'codex' });
+    const started = await b.adapter.startAgent({ name: s.agentName || s.name, paneId: s.paneId, args, kind: 'codex', env });
     if (!current() || b.killing.has(s.sessionId)) throw codexError('closed');
-    s.rt.herdr.launchPending = started.agent?.launchPending ?? true;
+    s.rt.term.launchPending = started.agent?.launchPending ?? true;
     b.store.saveRuntime(s.sessionId, s.rt);
     b.store.addEvent(s.sessionId, 'woke', { why, provider: 'codex', convId: recovery.id, paneId: s.paneId });
     return { woke: true, name: s.name, convId: recovery.id, paneId: s.paneId, state: 'starting' };
@@ -140,8 +140,8 @@ async function wake(b, s, why) {
     const ownsSession = current();
     if (ownsSession) {
       if (retained) { s.rt.sleep = null; s.rt.lastError = { code: 'codex_wake_cleanup_failed', at: Date.now() }; }
-      else { s.paneId = null; s.herdrWorkspaceId = null; s.rt = { ...prev, sleep: { ...sleep, error: { code: e.code || 'codex_wake_failed', at: Date.now() } } }; }
-      b.store.updateSession(s.sessionId, { paneId: s.paneId, herdrWorkspaceId: s.herdrWorkspaceId, runtime: s.rt });
+      else { s.paneId = null; s.termWorkspaceId = null; s.rt = { ...prev, sleep: { ...sleep, error: { code: e.code || 'codex_wake_failed', at: Date.now() } } }; }
+      b.store.updateSession(s.sessionId, { paneId: s.paneId, termWorkspaceId: s.termWorkspaceId, runtime: s.rt });
     }
     if (ownsSession) b.queue?.cancelSession(s.sessionId, 'Codex wake failed');
     throw e;

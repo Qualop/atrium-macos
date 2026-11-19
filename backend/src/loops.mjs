@@ -129,7 +129,7 @@ export function decideTarget(loop, per, t, now, { due = false } = {}) {
 //   store, now(), broadcast(event, data), log(msg),
 //   targetsOf(loop) → [t…] (위 decideTarget의 t, name 포함) | null(대상이 없어짐: 세션이 닫힘),
 //   enqueue(sessionId, text) → delivery, deliveryOf(id) → { status, reason } | null, cancel(id),
-//   readScreen(sessionId) → Promise<string>, thread({ text, targets, deliveries, loopId }), canRun() → herdr에 붙어 있는가,
+//   readScreen(sessionId) → Promise<string>, thread({ text, targets, deliveries, loopId }), canRun() → 터미널 서버에 붙어 있는가,
 // }
 export class LoopEngine {
   constructor(ctx) {

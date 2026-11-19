@@ -1,9 +1,10 @@
 // Atrium 창(Electron main). 창 하나에 판을 그린다(ARCH 1절).
 // - 프로필은 atrium CLI와 같은 방법으로 고른다: --dev 또는 ATRIUM_PROFILE=dev, ATRIUM_* 환경 변수(옛 이름 MTASK_*도)가 기본값을 덮는다(backend/src/config.mjs).
 // - P18: 실제 판 프로필은 처음 뜰 때 옛 창 프로필(multitask-app-real)을 새 프로필(atrium-app-real)로 복사한다(창 크기·사이드바 접힘 등 localStorage).
-// - 백엔드가 없으면 띄운다. 백엔드는 herdr 서버가 없으면 깨끗한 환경으로 띄운다. 창을 닫아도 백엔드와 herdr는 계속 돈다(ARCH 1절 "백엔드 수명", P2에서 정함).
+// - 백엔드가 없으면 띄운다. 백엔드는 터미널 서버(hc)가 없으면 깨끗한 환경으로 띄운다. 창을 닫아도 백엔드와 터미널 서버는 계속 돈다(ARCH 1절 "백엔드 수명", P2에서 정함).
 // - 창(renderer)은 백엔드 WebSocket API에 직접 붙는다. main은 주소와 토큰만 넘긴다.
-import { app, BrowserWindow, ipcMain, shell, Notification, dialog, Menu } from 'electron';
+// - P69: 업데이트로 백엔드를 바꿀 때(update.restart) 앱을 끝낸다. 그동안 옛 백엔드를 다시 띄우지 않고, 다시 실행돼도 창을 열지 않는다. 새 창은 바꾸기 프로세스가 띄운다.
+import { app, BrowserWindow, ipcMain, shell, Notification, dialog, Menu, clipboard, nativeImage, session } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -17,6 +18,10 @@ import { macCliDirectories } from './cli-paths.mjs';
 import { migrateAppProfile } from './profile.mjs'; // P18: 옛 창 프로필 옮기기
 import { noticeWay } from '../renderer/lib/remote.js'; // P58: 원격 붙음 알림은 창이 숨었을 때만 OS 알림
 import { windowTitle } from '../renderer/lib/update-notice.js'; // P71: 창 제목에 버전
+import { shouldPurgeOnClose, purgeAndDestroy } from './gpu-purge.mjs';
+import { permissionAllowed } from './media-permission.mjs'; // P165: 음성 입력 마이크 권한
+import { uriListPaths, splitFolders } from '../renderer/lib/desktop-paste.js'; // P162: 붙여 넣은 파일 목록
+import { uploadDirOf, uploadPath, cleanupUploads, UPLOAD_MAX_BYTES } from '../../../backend/src/uploads.mjs'; // P162: 붙여 넣은 그림 자리와 정리(P48 웹 업로드와 같은 곳·규칙) // P113: 창을 닫고 트레이에 남을 때 GPU 프로세스 메모리 돌려주기
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(HERE, '..', '..');
@@ -35,6 +40,9 @@ const NOTIFY_ICON = path.join(APP_ROOT, 'assets', 'atrium-icon-256.png');
 const cfg = loadConfig({ argv: process.argv });
 const APP_VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8')).version; } catch { return null; } })(); // P69
 let updating = false; // P69: 업데이트로 끝나는 중
+let quitting = false; // P113: 앱을 끝내는 중(트레이 끝내기 등). 이때 닫는 창은 GPU 메모리를 돌려주지 않고 바로 닫는다
+// P113: 창을 닫을 때 보낼 메모리 압박 단계. 기본 critical, 개발용 판의 비교 시험은 ATRIUM_GPU_PURGE=off|moderate
+const GPU_PURGE = envVar('GPU_PURGE') || 'critical';
 
 // 프로필마다 Electron 사용자 데이터를 따로 둔다(개발용 창과 실제 판 창이 섞이지 않게)
 app.setPath('userData', path.join(app.getPath('appData'), `${APP_ID}-app-${cfg.profile}`));
@@ -64,8 +72,8 @@ async function ensureBackend() {
   if (deferUpdateRestart()) return new Promise(() => {});
   if (live) return info;
   starting ||= startBackend(cfg, { nodePath: envVar('NODE') || (fs.existsSync(bundledNode) ? bundledNode : 'node') })
-    .then((r) => { if (deferUpdateRestart()) return new Promise(() => {}); log('backend', JSON.stringify({ ...r, herdr: r.herdr && r.herdr.compat })); return backendInfo(cfg); })
-    .catch((e) => { if (deferUpdateRestart()) return new Promise(() => {}); log('backend start failed', e.message); if (tray) tray.noteError(e.message); throw e; })
+    .then((r) => { if (deferUpdateRestart()) return new Promise(() => {}); log('backend', JSON.stringify({ ...r, terminal: r.terminal && r.terminal.compat })); return backendInfo(cfg); })
+    .catch((e) => { if (deferUpdateRestart()) return new Promise(() => {}); log('backend start failed', e.message); if (tray) tray.noteError(e.message); throw e; }) // P18: 옛 판을 옮기지 못한 까닭 등을 트레이에 보인다
     .finally(() => { starting = null; });
   return starting;
 }
@@ -73,7 +81,7 @@ async function ensureBackend() {
 ipcMain.handle('mt:backend', async () => {
   const info = await ensureBackend();
   return {
-    platform: process.platform, port: info.port, token: info.token, pid: info.pid, profile: cfg.profile, herdrSession: cfg.herdrSession,
+    platform: process.platform, port: info.port, token: info.token, pid: info.pid, profile: cfg.profile, terminalSession: cfg.terminalSession, herdrSession: cfg.terminalSession,
     // 새 세션 대화상자의 기본 폴더. 개발용은 시험 프로젝트(신뢰된 폴더 아래, 따로 git 저장소가 아님, P1 5절 11)
     defaultCwd: cfg.profile === 'dev' ? path.join(BACKEND_ROOT, '.dev', 'proj') : app.getPath('home'),
     defaultModel: cfg.profile === 'dev' ? 'haiku' : '',
@@ -86,8 +94,40 @@ ipcMain.handle('mt:metrics', () => app.getAppMetrics().map((m) => ({ pid: m.pid,
 ipcMain.on('mt:log', (_e, line) => log('[renderer]', String(line).slice(0, 2000)));
 // P5: "+ 리포 열기"의 폴더 고르기
 ipcMain.handle('mt:pickFolder', async () => {
-  const r = await dialog.showOpenDialog(win, { title: tr('main.pickFolder'), properties: ['openDirectory'] });
+  // macOS 판: 대화상자에 "새 폴더" 단추(createDirectory)를 둔다. 새 세션의 작업 폴더를 그 자리에서 만들 수 있게
+  const r = await dialog.showOpenDialog(win, { title: tr('main.pickFolder'), properties: ['openDirectory', 'createDirectory'] });
   return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+});
+
+// P162: 데스크톱 창의 붙여 넣기. 창은 클립보드에 글이 없고 파일이 있을 때만 부른다(lib/desktop-paste.js wantsDesktopPaste).
+// - 탐색기에서 복사한 파일 → { kind: 'files', paths, folders }. 폴더는 넣지 않고 수만 센다
+// - 캡처한 그림 → 데이터 폴더 uploads/에 PNG로 두고 { kind: 'image', path, thumb }(thumb: 미리보기용 작은 data URL)
+// - 둘 다 아니면 null
+ipcMain.handle('mt:clipPaste', async () => {
+  let items;
+  try { items = await clipboard.read(); } catch (e) { log('clipPaste read failed', e.message); return null; }
+  for (const it of items) {
+    if (!it.types.includes('text/uri-list')) continue;
+    const all = uriListPaths(await (await it.getType('text/uri-list')).text());
+    if (!all.length) continue;
+    return { kind: 'files', ...splitFolders(all, (p) => fs.statSync(p).isDirectory()) };
+  }
+  for (const it of items) {
+    if (!it.types.includes('image/png')) continue;
+    const buf = Buffer.from(await (await it.getType('image/png')).arrayBuffer());
+    if (!buf.length) continue;
+    if (buf.length > UPLOAD_MAX_BYTES) return { kind: 'error', code: 'too_big' };
+    const dir = uploadDirOf(cfg.dataDir);
+    fs.mkdirSync(dir, { recursive: true });
+    const file = uploadPath(dir, 'pasted.png', 'image/png');
+    fs.writeFileSync(file, buf);
+    try { cleanupUploads(dir, { keep: file }); } catch {}
+    let thumb = null;
+    try { const img = nativeImage.createFromBuffer(buf); const { width, height } = img.getSize(); const k = Math.min(1, 240 / Math.max(width, height, 1)); thumb = (k < 1 ? img.resize({ width: Math.max(1, Math.round(width * k)), height: Math.max(1, Math.round(height * k)) }) : img).toDataURL(); } catch {}
+    log(`clipPaste image ${path.basename(file)} ${buf.length}B`);
+    return { kind: 'image', path: file, thumb };
+  }
+  return null;
 });
 
 // A1 OS 알림(P3). 띄울지는 창(renderer)이 정한다(같은 대기에 한 번, 창에 초점이 있고 그 노드가 보이면 띄우지 않음).
@@ -125,14 +165,21 @@ function showNode(sessionId) {
   const w = win;
   if (sessionId) whenBoardReady(w.webContents).then((ok) => { if (ok && !w.isDestroyed()) w.webContents.send('mt:navigate', sessionId); });
 }
+// macOS 판: `--background`(예: open -g -a Atrium --args --background)로 띄우면 첫 창을 포커스 없이 뒤에 보인다.
+// 설치·업데이트 뒤 다시 띄울 때 사용자가 쓰던 앱 앞으로 튀어나오지 않게. 사람이 직접 열 때(인자 없음)는 예전과 같다
+let backgroundLaunch = process.argv.includes('--background');
+const quietUntil = backgroundLaunch ? Date.now() + 10000 : 0; // activate를 듣지 않는 끝 시각(아래 app.on('activate'))
 function createWindow() {
-  win = new BrowserWindow({
+  const quiet = backgroundLaunch; backgroundLaunch = false; // 첫 창만
+  const w = win = new BrowserWindow({
+    show: !quiet,
     width: 1600, height: 960, minWidth: 900, minHeight: 600, icon: WINDOW_ICON,
     title: windowTitle(APP_NAME, APP_VERSION, cfg.profile), // P71: "Atrium 0.1.2", 개발용 판은 " (dev)"
     backgroundColor: '#070705', // P11·P28: 판 바탕(renderer tokens.css --canvas). 창이 뜰 때 다른 색이 번쩍이지 않게
     webPreferences: { preload: path.join(HERE, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
   });
   win.setMenuBarVisibility(false);
+  if (quiet) w.once('ready-to-show', () => { if (!w.isDestroyed()) w.showInactive(); });
   win.on('page-title-updated', (e) => e.preventDefault()); // P9: HTML <title>이 개발용 표시("(dev)")를 덮어쓰지 않게
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('render-process-gone', (_e, d) => log('render-process-gone', JSON.stringify(d)));
@@ -142,13 +189,24 @@ function createWindow() {
   win.webContents.on('unresponsive', () => log('renderer unresponsive'));
   win.webContents.on('responsive', () => log('renderer responsive'));
   win.loadFile(path.join(APP_ROOT, 'dist', 'index.html'));
-  win.on('closed', () => { win = null; });
+  // P113: 트레이에 남으면 창을 없애기 전에 페이지를 내리고 GPU 프로세스에 메모리 압박을 알린다(gpu-purge.mjs).
+  // 그동안 창은 숨어 있고 win은 비워 둔다(트레이에서 다시 열면 새 창을 만든다)
+  win.on('close', (e) => {
+    if (w.mtPurging || !shouldPurgeOnClose({ keepRunning: tray && tray.keepRunning(), quitting, updating, level: GPU_PURGE })) return;
+    e.preventDefault();
+    w.mtPurging = true;
+    if (win === w) win = null;
+    purgeAndDestroy(w, { level: GPU_PURGE }).then((r) => log('window closed, gpu purge', JSON.stringify(r)));
+  });
+  win.on('closed', () => { if (win === w) win = null; });
 }
 
+app.on('before-quit', () => { quitting = true; }); // P113
 app.on('second-instance', () => { if (!updating) showNode(null); }); // 트레이에 남아 있을 때 다시 실행하면 창을 다시 연다(I7)
 // Windows 알림의 앱 이름. 실제 판과 개발용을 나눈다
 if (process.platform === 'win32') app.setAppUserModelId(`${APP_ID}.${cfg.profile}`);
-app.on('activate', () => showNode(null));
+// macOS 판: open -g로 뒤에 띄워도 Electron이 처음 뜰 때 activate를 보낼 때가 있다(2026-11-18 설치 뒤 창이 앞으로 나옴). 뒤에 띄운 직후 10초는 창이 있으면 앞으로 가져오지 않는다
+app.on('activate', () => { if (win && !win.isDestroyed() && Date.now() < quietUntil) return; showNode(null); });
 // P14: 트레이 메뉴의 확인창. 시험은 global.__mtTrayConfirm으로 답을 정한다
 const tr = (key, vars) => translate(tray ? tray.lang() : DEFAULT_LANGUAGE, key, vars);
 async function trayConfirm({ message, detail, ok }) {
@@ -172,6 +230,13 @@ app.whenReady().then(() => {
   }
   log(`app start profile=${cfg.profile} pid=${process.pid} version=${APP_VERSION} root=${path.basename(path.resolve(APP_ROOT, '..'))}`);
   for (const l of early) log(l);
+  // P165: 마이크는 판 창의 첫 쪽이 소리만 청할 때 허락한다(media-permission.mjs). 다른 권한은 기본 그대로
+  const boardFile = path.join(APP_ROOT, 'dist', 'index.html');
+  session.defaultSession.setPermissionRequestHandler((wc, permission, cb, details) => {
+    const ok = permissionAllowed({ permission, mediaTypes: details && details.mediaTypes, url: (details && (details.requestingUrl || details.securityOrigin)) || (wc && wc.getURL()), boardFile, fromBoard: !!(win && !win.isDestroyed() && wc === win.webContents) });
+    if (permission === 'media') log(`media permission ${ok ? 'allowed' : 'denied'} (${(details && details.mediaTypes || []).join(',') || '-'})`);
+    cb(ok);
+  });
   createWindow();
   tray = startTray({ cfg, log, hasWindow: () => !!win, showNode, quit: () => app.quit(), notifications, closeWindow: () => { if (win) win.close(); }, startBackend: ensureBackend, stopBackend: () => stopBackend(cfg), confirm: trayConfirm, onUpdateRestart, appVersion: APP_VERSION });
   global.__mtTray = tray;
@@ -179,7 +244,7 @@ app.whenReady().then(() => {
   if (appMigration && appMigration.failed.length) tray.noteError(tr('tray.profileCopyFailed', { n: appMigration.failed.length }));
 });
 app.on('child-process-gone', (_e, d) => log('child-process-gone', JSON.stringify(d))); // GPU 프로세스를 잃으면 모든 WebGL 컨텍스트를 잃는다
-// 창을 닫으면 앱만 끝난다. 백엔드와 herdr, 그 안의 claude 세션은 계속 돈다(C1). 트레이 상주(기본 켜짐)면 앱은 트레이에 남는다(I7, P14)
+// 창을 닫으면 앱만 끝난다. 백엔드와 터미널 서버, 그 안의 claude 세션은 계속 돈다(C1). 트레이 상주(기본 켜짐)면 앱은 트레이에 남는다(I7, P14)
 app.on('window-all-closed', () => {
   if (tray && tray.keepRunning()) { log('window closed, app stays in tray'); tray.onWindowClosed(); return; }
   log('window closed, app quits (backend keeps running)'); app.quit();

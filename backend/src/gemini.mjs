@@ -35,9 +35,12 @@ export function geminiContext({ sessionId, childScript = path.resolve(here, '../
   return [
     'You are a Gemini agent in an Atrium board. Other agents may be Claude Code, Codex or Gemini.',
     'Messages beginning [Atrium 보드] or [Atrium 판] describe your assigned colleagues and their roles. Follow those roles when delegating or reviewing. Use `atrium me` to check the current connections when an older notice disagrees.',
-    'Use run_shell_command to collaborate. The shell already targets this board through HERDR_SESSION and HERDR_SOCKET_PATH. Never add --session, --machine or --remote to herdr.',
-    'Assign work: herdr agent prompt <agent-name> "<specific task>" --wait',
-    'Read the result: herdr agent read <agent-name> --source recent-unwrapped --lines 100',
+    // P116: 일 시키기·기다리기·읽기는 판의 atrium 명령이다(PATH의 판 플러그인 bin). 터미널 엔진(hc) 명령을 직접 쓰라고 하지 않는다
+    'Use run_shell_command to collaborate through the `atrium` command, which already targets this board. Run `atrium help` for usage.',
+    'Assign work: atrium prompt <agent-name> "<specific task>" --wait',
+    'Wait for work you already assigned: atrium wait <agent-name>',
+    'Read the screen of another agent: atrium read <agent-name>',
+    'Send work to other agents only with these atrium commands.',
     'Ask a reviewer to inspect a specific change and report concrete defects. Read their answer, fix issues, and request another review when needed. Do not ask a reviewer to recursively delegate the same task back to you.',
     `Create a managed child: ${quote(nodePath)} ${quote(childScript)} child <name> --kind gemini --role reviewer --prompt "<task>"`,
     'Use --kind claude or --kind codex for another provider. Child count/depth limits apply. Do not assume other providers accept your model ID.',
@@ -47,7 +50,7 @@ export function geminiContext({ sessionId, childScript = path.resolve(here, '../
   ].join('\n');
 }
 
-export function writeGeminiSession({ dir, sessionId, hookUrl, token, branchEnv = {}, pluginDir, herdrPath, userHome = process.env.GEMINI_CLI_HOME || os.homedir(), executable = findExecutable('gemini') }) {
+export function writeGeminiSession({ dir, sessionId, hookUrl, token, branchEnv = {}, pluginDir, terminalPath, userHome = process.env.GEMINI_CLI_HOME || os.homedir(), executable = findExecutable('gemini') }) {
   if (!executable) throw Object.assign(new Error('Gemini CLI를 설치한 뒤 다시 시도하세요: npm install -g @google/gemini-cli'), { code: 'not_installed' });
   const profile = path.join(dir, `${sessionId}.gemini-profile`);
   const target = path.join(profile, '.gemini');
@@ -86,7 +89,7 @@ export function writeGeminiSession({ dir, sessionId, hookUrl, token, branchEnv =
   }
   privateJSON(bridgeFile, { sessionId, hookUrl, token, context: geminiContext({ sessionId }) });
   privateJSON(file, { ...base, hooks });
-  const dirs = [pluginDir && path.join(pluginDir, 'bin'), herdrPath && path.dirname(herdrPath), path.dirname(process.execPath), path.dirname(executable)].filter(Boolean);
+  const dirs = [pluginDir && path.join(pluginDir, 'bin'), terminalPath && path.dirname(terminalPath), path.dirname(process.execPath), path.dirname(executable)].filter(Boolean);
   const { ATRIUM_SESSION_TOKEN: _token, ...publicEnv } = branchEnv;
   return { settingsPath: file, env: { ...publicEnv, ATRIUM_BRANCH_FILE: branchFile, GEMINI_CLI_HOME: profile, PATH: [...dirs, process.env.PATH || ''].join(path.delimiter) } };
 }

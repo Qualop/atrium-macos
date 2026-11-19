@@ -34,10 +34,12 @@ test('P25: 보여줄 종류는 flavor가 먼저다(셸 패널에서 뜬 직접 �
   assert.equal(shownKind(null), 'claude');
 });
 
-test('P25: 화면 글은 두 언어 사전에 다 있다', () => {
-  const keys = [['rail', 'deepseek'], ['spawn', 'deepseekOption'], ['spawn', 'deepseekCommand'], ['spawn', 'deepseekNote'], ['spawn', 'deepseekDirectNote'], ['spawn', 'startedCommand'],
-    ['settings', 'deepseekModel'], ['settings', 'deepseekCommand'], ['settings', 'deepseekNote'], ['node', 'flavorHookedTitle'], ['node', 'flavorCommandTitle'], ['sidebar', 'kindDeepseek'],
-    ['backend', 'deepseekProxyDown'], ['backend', 'deepseekCommandLong'], ['backend', 'deepseekCommandLine'], ['backend', 'deepseekCommandNoPrompt']];
+// P115: 게이트웨이 전용 글(레일 단추, 새 세션 창, 설정, 프록시 오류)은 뺐다. 아이콘과 띄운 방법(flavor) 글만 남는다
+test('P25·P115: 아이콘·flavor 글은 두 언어 사전에 있고, 게이트웨이 전용 글은 없다', () => {
+  const keys = [['spawn', 'startedCommand'], ['node', 'flavorHookedTitle'], ['node', 'flavorCommandTitle'], ['sidebar', 'kindDeepseek'], ['backend', 'commandNoPrompt']];
   for (const [a, b] of keys) for (const [name, d] of [['en', en], ['ko', ko]]) assert.ok(d[a] && typeof d[a][b] === 'string' && d[a][b], `${name}.${a}.${b}`);
-  for (const d of [en, ko]) { assert.match(d.backend.deepseekProxyDown, /\{url\}/); assert.match(d.backend.deepseekProxyDown, /ocx start/); }
+  for (const d of [en, ko]) {
+    for (const [a, b] of [['rail', 'deepseek'], ['spawn', 'deepseekOption'], ['settings', 'deepseekModel'], ['backend', 'deepseekProxyDown']]) assert.equal(d[a][b], undefined, `${a}.${b}`);
+    assert.ok(!/opencodex|\bocx\b|10100/i.test(JSON.stringify(d)), '게이트웨이 도구 이름·포트가 없다');
+  }
 });

@@ -44,6 +44,19 @@ export function confirmKey(e) {
   return null;
 }
 
+// P140(#13): 어디에 초점이 있든 판이 먼저 받는 단축키. Ctrl+K = 명령 바에 초점, Ctrl+F = 찾기 바(H2).
+// 창의 키 잡기 단계(main.jsx onKeyCapture)에서 부른다. 터미널(xterm)이 키를 받으면 ^K를 프로그램에 보내고 퍼지기를 멈춰,
+// 퍼지는 단계의 처리기에는 오지 않았다(그 뒤 친 글이 그 터미널에 들어갔다). 그래서 터미널 안에서도 판이 먼저 받는다.
+// 잃는 것: 터미널 프로그램에 ^K(셸 줄 끝까지 지우기 등)를 이 키로 보낼 수 없다. Ctrl+F처럼 판의 단축키가 앞선다.
+// Ctrl+K는 예전처럼 Shift를 함께 눌러도 받고, Ctrl+F는 Shift 없이만 받는다. Alt를 함께 누르면 받지 않는다 → 'command' | 'search' | null
+export function boardShortcut(e) {
+  if (!e || e.type && e.type !== 'keydown' || !(e.ctrlKey || e.metaKey) || e.altKey) return null;
+  const k = String(e.key || '').toLowerCase();
+  if (k === 'k') return 'command';
+  if (k === 'f' && !e.shiftKey) return 'search';
+  return null;
+}
+
 // P43: 판에 키보드 초점이 있을 때의 방향키. 아래 = 명령 바에 초점, 위 = 찾기 바(Ctrl+F와 같다).
 // 왼쪽·오른쪽 = 이전·다음 워크스페이스로 가기(위 왼쪽 탭 순서, 끝에서 처음으로 돈다. 2026-11-07 사용자 요청, 고르기·잇기 바꾸기를 대신함).
 // 받으면 React Flow가 고른 노드를 방향키로 옮기지 않는다.

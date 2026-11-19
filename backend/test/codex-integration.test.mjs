@@ -15,7 +15,7 @@ import { Sleeper } from '../src/sleep.mjs';
 import { Recall } from '../src/recall.mjs';
 import { DesktopImport } from '../src/desktop-import.mjs';
 import { CodexHistory } from '../src/codex-import.mjs';
-import { newRuntime, applyAgentDetected, applyHerdrStatus, deriveState } from '../src/state.mjs';
+import { newRuntime, applyAgentDetected, applyTermStatus, deriveState } from '../src/state.mjs';
 import { transcriptPathFor } from '../src/launch.mjs';
 
 const ID = (n) => `${String(n).padStart(8, '0')}-0000-4000-8000-00000000c035`;
@@ -28,7 +28,7 @@ function fixture(t) {
   fs.mkdirSync(home, { recursive: true }); fs.mkdirSync(repo);
   const cfg = loadConfig({ argv: [], env: { ATRIUM_PROFILE: 'dev', ATRIUM_DATA_DIR: data, ATRIUM_CODEX_HOME: home, ATRIUM_CLAUDE_DESKTOP: 'none', ATRIUM_CLAUDE_SESSIONS: path.join(root, 'claude-sessions'), ATRIUM_CLAUDE_PROJECTS: path.join(root, 'claude-projects'), ATRIUM_HERDR_SESSION: 'atrium-dev-codex-integration', ATRIUM_PORT: '47991' } });
   cfg.claudeProjects = path.join(root, 'claude-projects'); cfg.claudeJson = path.join(root, 'claude-config.json');
-  const b = new Backend(cfg); b.store = new Store(cfg.dbFile); b.apiToken = 'synthetic-board-token'; b.herdrOk = true;
+  const b = new Backend(cfg); b.store = new Store(cfg.dbFile); b.apiToken = 'synthetic-board-token'; b.termOk = true;
   b.hookUrl = 'http://127.0.0.1:1/hooks/claude'; b.plugin = { pluginDir: path.join(data, 'plugin') };
   const calls = [], packets = [], native = new Map(), agents = new Map(); let pane = 0, nextNative = 100;
   const thread = (id, extra = {}) => ({ id, cwd: repo, updatedAt: 1, source: 'appServer', model: 'fixture-code', name: 'Synthetic history', preview: 'Synthetic history prompt', status: { type: 'notLoaded' }, ephemeral: false, historyMode: 'paginated', turns: [{ id: 'turn-one', startedAt: 1, items: [{ type: 'userMessage', content: [{ type: 'text', text: 'Synthetic history prompt' }] }, { type: 'agentMessage', text: 'Synthetic answer from history' }] }], ...extra });
@@ -69,7 +69,7 @@ function fixture(t) {
   b.sleeper = new Sleeper(b, { timers: false, staggerMs: 0, settleMs: 0 }); b.sleeper.measure = async () => ({ procs: [], memMB: 0 });
   b.desktopImport = new DesktopImport(b, { codex: history, list: () => [], live: () => new Map() });
   Object.assign(b.api.handlers, b.handlers(), b.features.handlers, b.sleeper.handlers, b.desktopImport.handlers);
-  const ready = async (s) => { applyAgentDetected(s.rt); applyHerdrStatus(s.rt, 'idle'); await b.refreshAgent(s); b.broadcastSession(s); };
+  const ready = async (s) => { applyAgentDetected(s.rt); applyTermStatus(s.rt, 'idle'); await b.refreshAgent(s); b.broadcastSession(s); };
   t.after(async () => { b.stopping = true; b.queue.items.clear(); await drain(b.queue); b.features.stop(); b.sleeper.stop(); b.store.close(); fs.rmSync(root, { recursive: true, force: true }); });
   return { b, root, repo, cfg, calls, packets, native, agents, ready };
 }
@@ -85,9 +85,11 @@ test('real handlers: launch → queued context → worker/reviewer delegation �
   assert.equal(s.rt.codexSessionId, undefined); assert.equal(b.queue.pending(s.sessionId), 1);
   await f.ready(s); await drain(b.queue);
   const sent = f.calls.filter(([k]) => k === 'prompt');
-  assert.equal(sent.length, 1); assert.equal(sent[0][2], s.rt.codexContext + '\n\nSynthetic first task');
-  assert.equal(s.rt.codexBriefed, true); assert.equal(s.rt.codexSessionId, f.agents.get('parent').agentSessionId);
-  const cred = JSON.parse(fs.readFileSync(s.settingsPath));
+  // P115: 새 Codex는 하네스 어댑터로 띄운다. 판 안내문은 띄울 때 하네스 값으로 주고(첫 지시 앞에 붙이지 않는다), 대화 ID는 터미널이 아는 것이나 하나뿐인 rollout에서 배운다
+  assert.equal(sent.length, 1); assert.equal(sent[0][2], 'Synthetic first task');
+  assert.ok(s.harnessPlan); assert.equal(s.rt.codexContext, undefined);
+  assert.equal(b.harnessSessionIdOf(s), f.agents.get('parent').agentSessionId);
+  const cred = { ATRIUM_SESSION_TOKEN: b.branch.token(s.sessionId) }; // P115: 하네스 세션의 자격 증명은 판 데이터 폴더의 토큰 파일(설정 파일 없음)
   assert.equal(b.branch.auth({ 'x-mt-session': s.sessionId, authorization: `Bearer ${cred.ATRIUM_SESSION_TOKEN}` }, 'child').s, s);
   const models = await b.branch.listModels(s);
   assert.ok(models.entries.some((m) => m.kind === 'codex' && m.model === 'fixture-code'));
@@ -144,6 +146,11 @@ test('successful first board prompt persists codexBriefed before any later state
 test('native UUID observed after idle event is persisted without another broadcast', async (t) => {
   const f = fixture(t), out = await launch(f), s = f.b.sessions.get(out.sessionId);
   await f.b.refreshAgent(s);
+  // P115: 새 Codex(하네스)는 터미널이 아는 대화 ID로 이어 간다
+  assert.equal(f.b.harnessSessionIdOf(s), f.agents.get('parent').agentSessionId);
+  // macOS 판의 옛 관리 Codex 행은 그 ID를 runtime에 남긴다
+  s.harnessPlan = null; s.rt.codexIntegration = true;
+  await f.b.refreshAgent(s);
   assert.equal(f.b.store.getSession(s.sessionId).runtime.codexSessionId, f.agents.get('parent').agentSessionId);
 });
 
@@ -198,7 +205,8 @@ test('redacted command placeholder cannot be replayed; legacy Codex env is passe
   const legacy = addClosed(f, { kind: 'codex', id: ID(901) });
   await f.b.recall.reopen({ session: legacy });
   assert.deepEqual(f.calls.find(([k]) => k === 'create')[1].env, { PRIVATE: 'synthetic-private-value' });
-  assert.deepEqual(f.calls.find(([k]) => k === 'start')[1].args, ['--sandbox', 'read-only']);
+  // P115: native 연동이 없는 Codex 행은 하네스 어댑터로 다시 연다(하네스 인자 + 저장한 인자)
+  assert.deepEqual(f.calls.find(([k]) => k === 'start')[1].args, ['-c', 'check_for_update_on_startup=false', '--sandbox', 'read-only']);
 });
 
 test('native output.save uses copied history without starting an agent', async (t) => {

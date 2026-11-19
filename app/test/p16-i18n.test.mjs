@@ -69,7 +69,8 @@ test('백엔드가 주는 화면 글 열쇠(m, mk, keyed)는 두 사전의 backe
     for (const m of src.matchAll(/\bkeyed\([^;]*?\),\s*'([\w.]+)'/g)) keys.add(m[1]);
   }
   assert.ok(keys.size > 20, `열쇠를 ${keys.size}개만 찾았다`);
-  const missing = [...keys].filter((k) => !EN.has(`backend.${k}`) || !KO.has(`backend.${k}`));
+  // P33: 기능 절의 열쇠(launchers.err.…)는 그 자리에 있으면 된다(errText가 그대로 찾는다). P97: 점이 든 열쇠는 모두 같다(launcherStart.failed 등)
+  const missing = [...keys].filter((k) => !(EN.has(`backend.${k}`) && KO.has(`backend.${k}`)) && !(k.includes('.') && EN.has(k) && KO.has(k)));
   assert.deepEqual(missing, []);
 });
 

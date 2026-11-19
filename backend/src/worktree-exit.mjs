@@ -20,9 +20,9 @@ export function worktreeOf(s, info = null) {
 
 // 화면에 질문이 있으면 고른 답(keep|remove)의 번호를 보낸다. → 보낸 선택지 | null. screen을 주면 화면을 다시 읽지 않는다(P105)
 export async function answerWorktreeExitOnScreen(b, s, choice, by, screen = null) {
-  const pane = s.paneId, rt = s.rt, agent = rt?.herdr?.agentSessionId;
+  const pane = s.paneId, rt = s.rt, agent = rt?.term?.agentSessionId;
   const w = parseWorktreeExit(screen != null ? screen : await visible(b, s));
-  if (!w || s.paneId !== pane || s.rt !== rt || rt?.herdr?.agentSessionId !== agent || (b.sessions && b.sessions.get(s.sessionId) !== s)) return null;
+  if (!w || s.paneId !== pane || s.rt !== rt || rt?.term?.agentSessionId !== agent || (b.sessions && b.sessions.get(s.sessionId) !== s)) return null;
   const c = choice === 'remove' ? w.remove : w.keep;
   await b.adapter.paneKeys(pane, [String(c.n)]);
   b.store.addEvent(s.sessionId, 'worktree_exit_answered', { choice, label: c.label, commits: w.commits, files: w.files, by });
@@ -34,24 +34,46 @@ export async function waitClaudeExit(b, s, ms, opts = {}) { return (await waitCl
 
 // P105: stopOn(화면 글 → 참 같은 값이면 멈춤)을 주면 기다리는 동안 화면을 계속 보고, 그 값이 나오면 그 자리에서 멈춘다
 // (잠재우기의 "뒤 일이 돈다" 확인 창). → { ms, stopped: stopOn이 돌려준 값 | null }
+// P119: 기다리는 동안 rt.boardExit를 두어(이미 있으면 그대로) 판이 답할 나가기 질문이 응답 필요로 보이지 않게 한다(state.mjs boardClosing).
+// 막혔는데 화면이 나가기 질문이 아닌 것을 두 번 연달아 보면 판이 모르는 질문이라 사람에게 남긴다(foreign → 다시 응답 필요).
 export async function waitClaudeExitOr(b, s, ms, { worktree = 'keep', by = 'close', steps = null, stopOn = null } = {}) {
   const t0 = Date.now();
   const pane = s.paneId, rt = s.rt;
-  const current = () => s.paneId === pane && s.rt === rt && (!b.sessions || b.sessions.get(s.sessionId) === s);
+  const current = () => (b.samePane ? b.samePane(s, pane) : s.paneId === pane) && s.rt === rt && (!b.sessions || b.sessions.get(s.sessionId) === s);
   const claude = (s.kind || 'claude') === 'claude';
-  let answered = !claude, readAt = 0;
-  while (current() && s.rt.herdr.present && Date.now() - t0 < ms) {
-    if (claude && (!answered || stopOn) && Date.now() - readAt >= 400) {
-      readAt = Date.now();
-      const screen = await visible(b, s);
-      if (!current()) break;
-      if (stopOn) { const hit = stopOn(screen); if (hit) return { ms: Date.now() - t0, stopped: hit }; }
-      if (!answered) {
-        const c = await answerWorktreeExitOnScreen(b, s, worktree === 'remove' ? 'remove' : 'keep', by, screen);
-        if (c) { answered = true; if (steps) steps.push(`worktree exit: ${c.n}. ${c.label}`); }
+  let answered = !claude, readAt = 0, strange = 0;
+  const own = beginBoardExit(b, s, by);
+  try {
+    while (current() && s.rt.term.present && Date.now() - t0 < ms) {
+      if (claude && (!answered || stopOn) && Date.now() - readAt >= 400) {
+        readAt = Date.now();
+        const screen = await visible(b, s);
+        if (!current()) break;
+        if (stopOn) { const hit = stopOn(screen); if (hit) return { ms: Date.now() - t0, stopped: hit }; }
+        if (!answered) {
+          const c = await answerWorktreeExitOnScreen(b, s, worktree === 'remove' ? 'remove' : 'keep', by, screen);
+          if (c) { answered = true; if (steps) steps.push(`worktree exit: ${c.n}. ${c.label}`); }
+          else if (s.rt.term.status === 'blocked' && !parseWorktreeExit(screen)) {
+            if (++strange >= 2 && s.rt.boardExit && !s.rt.boardExit.foreign) { s.rt.boardExit.foreign = true; if (steps) steps.push('unknown dialog: left to the human'); if (b.broadcastSession) b.broadcastSession(s, { cause: `${by}:unknown_dialog` }); }
+          } else strange = 0;
+        }
       }
+      await sleep(200);
     }
-    await sleep(200);
-  }
-  return { ms: Date.now() - t0, stopped: null };
+    return { ms: Date.now() - t0, stopped: null };
+  } finally { if (own) endBoardExit(b, s); }
+}
+
+// P119: 판이 /exit를 보내기 직전에 부른다. → 이번에 둔 것인가(그렇다면 끝에 endBoardExit)
+export function beginBoardExit(b, s, by) {
+  if (s.rt.boardExit) return false;
+  s.rt.boardExit = { by, at: Date.now() };
+  if (s.rt.term.status === 'blocked' && b.broadcastSession) b.broadcastSession(s, { cause: `${by}:board_exit` }); // 이미 떠 있는 나가기 질문을 바로 거둔다
+  return true;
+}
+export function endBoardExit(b, s) {
+  if (!s.rt.boardExit) return;
+  const shown = s.rt.term.present && s.rt.term.status === 'blocked';
+  delete s.rt.boardExit;
+  if (shown && b.broadcastSession) b.broadcastSession(s, { cause: 'board_exit:end' }); // 끝나지 않고 남은 질문은 사람에게 보인다
 }

@@ -74,8 +74,8 @@ test('P103 사이드바: CSS의 안내선 간격·줄 높이가 lib 값과 같�
   assert.equal(Number(guide[1]), TREE.pad);
   assert.equal(Number(guide[2]), TREE.step);
   assert.match(css, new RegExp(`repeating-linear-gradient\\(90deg, transparent 0 ${TREE.step / 2 - 1}px, var\\(--sb-guide\\) ${TREE.step / 2 - 1}px ${TREE.step / 2}px, transparent ${TREE.step / 2}px ${TREE.step}px\\)`), '선은 화살표 칸 가운데');
-  assert.equal(ROW_H.session, 28);
-  assert.equal(ROW_H.ws, 28);
+  assert.equal(ROW_H.session, 30); // P132: 글자를 키워 28 → 30
+  assert.equal(ROW_H.ws, 30);
   // 사람이 지은 이름을 대문자로 바꾸지 않는다(사이드바 줄·머리줄·메뉴 머리)
   for (const sel of ['.mt-sb2-row.grp', '.mt-sb2-row.ws', '.mt-sb2-row.sec', '.mt-sb2-mh', '.mt-sb-archive-head', '.mt-sb-sec-head']) {
     const rule = css.match(new RegExp(`${sel.replace(/\./g, '\\.')} \\{[^}]*\\}`));

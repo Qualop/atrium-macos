@@ -212,7 +212,7 @@ try {
   await call(page, 'workspace.sleep', { session: 's1' });
   await until(async () => (await sess(page, 's1')).state === 'sleeping', 30000);
   atrium('herdr', 'restart', '--yes');
-  await until(async () => page.evaluate(() => window.__mt.getState().herdr.connected), 60000, 500);
+  await until(async () => page.evaluate(() => window.__mt.getState().terminal.connected), 60000, 500);
   for (const n of ['s2', 's3']) await waitState(page, n, 'ready', 120000);
   const afterHerdr = await sess(page, 's1');
   const agents2 = herdr('agent.list');

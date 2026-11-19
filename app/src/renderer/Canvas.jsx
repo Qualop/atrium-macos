@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlow, Background, BackgroundVariant, useReactFlow, applyNodeChanges } from '@xyflow/react';
 import { shiftAreasLocal } from './store.js'; // P27
-import { useStore, getState, setNodeLocal, saveNode, setAttached, setCloseIds, setFocus, markSeen, toast, openDialog, selectWorkspace, noteWorkspace, setViewNow, setSelected, setPendingInput, dockOf, loadBoard, setMemoLocal, setKanbanLocal, setConvoLocal, wsName } from './store.js';
+import { useStore, getState, setNodeLocal, saveNode, setAttached, setCloseIds, setFocus, markSeen, toast, openDialog, selectWorkspace, noteWorkspace, matesNow, setViewNow, setSelected, setPendingInput, dockOf, loadBoard, setMemoLocal, setKanbanLocal, setConvoLocal, wsName } from './store.js';
 import { ConvoNode, WorktreeBox, SpawnEdge } from './ConvoNode.jsx'; // P13
 import { worktreeBoxes, boardSpawnDup } from '../../../backend/src/convo-canvas.mjs';
 import { decorateEdges, edgeGap, innerEnds } from './lib/link-labels.js'; // P67. P98: edgeGap, innerEnds
@@ -43,9 +43,11 @@ import { wsAt } from './lib/items.js';
 import { JunctionNode, DividerNode, GhostNode, DockGrip, DockEdge, DockLinks } from './Docks.jsx';
 import { LinkEdge, RepoEdge } from './Links.jsx';
 import { withBoundary } from './ErrorBoundary.jsx';
-import { pickAttached, DEFAULT_MAX_CONTROLLERS } from './lib/faces.js';
+import { pickAttached, termAllowed, veryClose, DEFAULT_MAX_CONTROLLERS } from './lib/faces.js';
 import { perfLog } from './perf.js';
-import { enterView, dockRect, isViewing, NAV_GAP } from './lib/nav.js'; // P10: 덩어리 안의 노드로 들어갈 때 덩어리 전체. P26: 85% 채우기, 이미 보고 있으면 그대로
+import { reuseNode, sameList, sameFields, sessionNode } from './lib/node-reuse.js'; // P146: 바뀐 노드만 다시 그리기
+import { noteRebuild } from './perf-trace.js'; // P146: 성능 기록
+import { enterView, dockRect, isViewing, NAV_GAP, navDuration } from './lib/nav.js'; // P10: 덩어리 안의 노드로 들어갈 때 덩어리 전체. P26: 85% 채우기, 이미 보고 있으면 그대로
 import { enterSession } from './touch.js';
 import { wakeSession } from './sleep.js'; // P21
 import { t as tr, errText, useT } from './lib/i18n.js'; // P16: 이 파일은 t를 메모·칸반 종류 이름으로도 쓴다
@@ -58,6 +60,7 @@ import { wsOfArea, areaAnchorList, areaResolverOf, isBoxKey, nestedRegions, regi
 import { memoEditView } from './lib/memo-edit.js'; // P50(#6)
 import { boardEmpty } from './lib/empty-board.js'; // P50(#6)
 import { oneFinger, releaseKind, pinchViewport, panViewport, mid, dist as gap2, tapTarget, movableId, tapAction, TAP_CONTROL, LONG_PRESS_MS } from './lib/touch-board.js'; // P76
+import { useBoardMotion } from './zoom-var.js'; // P127: 판을 움직이는 동안 작업 중 둘레를 멈춘다
 import { openFull, fullId, onFull } from './full-view.js'; // P76
 import { termBudgetNow, boardPlan, step } from './crash-watch.js'; // P84: 휴대폰 웹은 터미널을 적게. P86: 보드 단계(levelPlan)와 단계 기록
 import { tierOf } from './lib/overview.js'; // P85: 워크트리 상자 강조
@@ -217,7 +220,7 @@ function rederive(ns, ghost, ctrlId = null) {
   const content = ns.filter(isContent);
   const prev = new Map(ns.filter((n) => !isContent(n)).map((n) => [n.id, n]));
   const { regionsOut, backOut, extra } = backdrops(content, ghost, ctrlId);
-  const keep = (n) => { const o = prev.get(n.id); if (!o) return n; return o.dragging ? { ...o, data: n.data } : { ...o, ...n }; };
+  const keep = (n) => { const o = prev.get(n.id); if (!o) return n; return o.dragging ? reuseNode(o, { data: n.data }) : reuseNode(o, n); }; // P146: 값이 같으면 옛 객체(다시 그리지 않는다)
   return [...regionsOut.map(keep), ...backOut.map(keep), ...content, ...extra.map(keep)];
 }
 // 영역끼리 겹치는 워크스페이스 쌍(놓은 뒤 새로 겹치면 되돌린다). itemOver: 메모·칸반의 바꿔 볼 자리와 소속(P6c)
@@ -293,6 +296,7 @@ export function Canvas() {
   const currentWs = useStore((st) => (PLAN.allWs ? null : st.currentWs)); // P86 단계 4: 워크스페이스를 바꾸면 그 세션만 다시 그린다
   const initialViewport = useStore((st) => st.viewport);
   const rf = useReactFlow();
+  useBoardMotion(); // P127: 판을 움직이는 동안 작업 중 둘레를 멈춘다
   const wrapRef = useRef(null);
   const [nodes, setNodes] = useState([]);
   const nodesRef = useRef(nodes); // P76: 길게 눌러 옮길 노드를 찾는다
@@ -300,7 +304,8 @@ export function Canvas() {
   const [rev, setRev] = useState(0); // 바꾸면 저장소 자리로 다시 그린다(되돌리기)
   const [labelTick, setLabelTick] = useState(0); // P67: 선 이름표가 시간이 지나 물러나도록 다시 센다
   useEffect(() => { const i = setInterval(() => setLabelTick((n) => n + 1), 15000); return () => clearInterval(i); }, []);
-  const held = useRef(new Map()); // id → 마지막으로 붙일 대상이던 시각
+  const held = useRef(new Map()); // id → 붙일 대상에서 빠진 시각(대상인 동안 null). P124
+  const releaseTimer = useRef(null);
   const drag = useRef(null); // { id, type, mode, start, pointer, followers: [{ id, x, y }], live, snap }
   const ghostRef = useRef(null);
   const ctrlRef = useRef(null); // P17: Ctrl+끌기로 끄는 노드 ID
@@ -321,24 +326,28 @@ export function Canvas() {
         if (old && old.dragging) { sess.push(old); continue; }
         const d = dockOf(id);
         const p = live && live.get(id);
-        sess.push({ ...(old || {}), id, type: 'session', position: p || { x: r.x, y: r.y }, width: r.w, height: r.h, dragHandle: '.mt-drag', data: {}, zIndex: r.z || 0, className: d ? `docked dock-${d.dir}` : '' });
+        sess.push(sessionNode(old, id, r, p, d)); // P146: 값이 같으면 옛 객체(lib/node-reuse.js)
       }
       // P6c: 메모·칸반 노드
       const item = (fid, type, it, handle, data) => {
         const old = byId.get(fid);
         if (old && old.dragging) return old;
         const p = live && live.get(fid);
-        return { ...(old || {}), id: fid, type, position: p || { x: it.x, y: it.y }, width: it.w, height: it.h, dragHandle: handle, data, zIndex: 0 };
+        return reuseNode(old, { id: fid, type, position: p || { x: it.x, y: it.y }, width: it.w, height: it.h, dragHandle: handle, data, zIndex: 0 }); // P146
       };
       if (PLAN.items) { // P86 단계 2부터 메모·칸반·대화 노드를 뺀다
         for (const m of st.memos.values()) sess.push(item(`memo:${m.memoId}`, 'memo', m, '.mt-mdrag', { memoId: m.memoId }));
         for (const k of st.kanbans.values()) sess.push(item(`kanban:${k.kanbanId}`, 'kanban', k, '.mt-kdrag', { kanbanId: k.kanbanId }));
         for (const c of st.convoNodes.values()) sess.push(item(`convo:${c.convId}`, 'convo', c, '.mt-cdrag', { convId: c.convId })); // P13
       }
-      return rederive([...prev.filter((n) => !isContent(n)), ...sess], ghostRef.current, ctrlRef.current);
+      const next = rederive([...prev.filter((n) => !isContent(n)), ...sess], ghostRef.current, ctrlRef.current);
+      const same = sameList(prev, next); // P146: 바뀐 노드가 없으면 옛 배열 그대로(React Flow가 아무것도 다시 보지 않는다)
+      noteRebuild(prev, next, same); // P146: 성능 기록(켜져 있을 때만 센다)
+      return same ? prev : next;
     });
   }, [storeNodes, sessions, docks, links, workspaces, wsGroups, memos, kanbans, convoNodes, rev, currentWs]); // P23: links(덩어리 안 연결선). P91: wsGroups(묶음 테두리)
 
+  const edgesRef = useRef(null); // P146: 지난번 선(값이 같으면 다시 쓴다)
   // 연결선. 같은 덩어리 안 두 노드 사이의 연결은 노드 위에 겹친 선으로 보인다(H5, P23 DockLinks). 같은 저장소 선은 워크트리 세션이 있을 때만(F4)
   const edges = useMemo(() => {
     const out = [];
@@ -368,9 +377,14 @@ export function Canvas() {
     const linkedLive = (a, b) => [...links.values()].some((l) => l.from === a && l.to === b); // P67: 판의 연결이 있는 판 세션끼리의 띄움은 그 연결 하나로
     for (const e of convoEdges) if (hereAny(e.from) && hereAny(e.to) && !boardSpawnDup(e, linkedLive)) out.push({ id: e.id, source: e.from, target: e.to, ...sides(e.from, e.to), type: 'spawnc', data: { ...e, ...gapOf(e.from, e.to) }, selectable: false });
     // P86 단계 2부터: 선은 일 시키기 연결만, 이름표 없는 곧은 선으로
-    if (!PLAN.fancyEdges) return out.filter((e) => e.type === 'link').map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle, type: 'straight', selectable: false }));
-    return decorateEdges(out, { rectOf: rectId, links, sessions, now: Date.now() }); // P67: 한 쌍에 이름표 하나, 물러나기, 비켜 놓기
+    const made = !PLAN.fancyEdges ? out.filter((e) => e.type === 'link').map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle, type: 'straight', selectable: false }))
+      : decorateEdges(out, { rectOf: rectId, links, sessions, now: Date.now() }); // P67: 한 쌍에 이름표 하나, 물러나기, 비켜 놓기
+    // P146: 값이 같은 선은 옛 객체를 다시 쓴다(세션 갱신마다 선 전부를 다시 그리지 않게)
+    const prevById = new Map((edgesRef.current || []).map((e) => [e.id, e]));
+    const next = made.map((e) => { const o = prevById.get(e.id); return o && Object.keys(o).length === Object.keys(e).length && sameFields(o, e) ? o : e; });
+    return sameList(edgesRef.current, next) ? edgesRef.current : next;
   }, [links, sessions, storeNodes, docks, convoNodes, convoEdges, workspaces, labelTick, currentWs]);
+  edgesRef.current = edges;
 
   // 노드 손잡이를 끌어 이으면 역할을 묻는다(F2). 같은 쌍에 이미 역할이 있으면 고칠 수 있게 같은 대화상자를 연다
   const onConnect = useCallback((c) => { if (c.source && c.target && c.source !== c.target) openDialog({ kind: 'role', from: c.source, to: c.target }); }, []);
@@ -593,20 +607,33 @@ export function Canvas() {
     // P76: 전체 보기가 연 세션은 전체 보기가 터미널을 붙인다(한 창에서 한 패널을 두 번 붙이지 않는다)
     const full = fullId();
     for (const id of held.current.keys()) if (id === full) held.current.delete(id);
-    const list = [...st.nodes].filter(([id]) => st.sessions.has(id) && st.sessions.get(id).state !== 'sleeping' && id !== full).map(([id, r]) => ({ id, x: r.x, y: r.y, w: r.w, h: r.h }));
+    const list = [...st.nodes].filter(([id]) => st.sessions.has(id) && st.sessions.get(id).state !== 'sleeping' && id !== full).map(([id, r]) => ({ id, x: r.x, y: r.y, w: r.w, h: r.h, ws: st.sessions.get(id).workspaceKey || null }));
     // 이슈 #1-16: 상한보다 많이 보여도 고른 노드와 초점 노드는 터미널을 먼저 받는다
-    const want = pickAttached(list, vp, { width: el.clientWidth, height: el.clientHeight }, { max: MAX_CONTROLLERS, prev: new Set(st.attached), focus: st.focusId, selected: new Set(st.selected) });
+    // P121: 고른 워크스페이스(viewWs)의 노드, 초점·고른 노드, 아주 가까이 확대한 노드만 터미널을 받는다(lib/faces.js termAllowed)
+    const screen = { width: el.clientWidth, height: el.clientHeight };
+    const focus = st.focusId, selected = new Set(st.selected), wsLimit = { key: st.viewWs || null }, mates = matesNow(st); // P124: 초점·고른 노드와 같은 덩어리, 부모·자식
+    const want = pickAttached(list, vp, screen, { max: MAX_CONTROLLERS, prev: new Set(st.attached), focus, selected, wsLimit, mates });
     // P24: 가까이 얼굴로 보이는 노드 모두(잠든 노드, 제어기 상한 밖 포함)는 그 리포를 보고 있는 것이다(저절로 잠재우지 않는다)
     const all = [...st.nodes].filter(([id]) => st.sessions.has(id)).map(([id, r]) => ({ id, x: r.x, y: r.y, w: r.w, h: r.h }));
     setCloseIds(pickAttached(all, vp, { width: el.clientWidth, height: el.clientHeight }, { max: Infinity }).sort());
     const now = Date.now();
-    for (const id of want) held.current.set(id, now);
+    // P124: 놓기 기다림(HOLD_MS)은 붙일 대상에서 처음 빠진 때부터 센다. 예전에는 마지막으로 대상이던 계산 시각부터 세어, 다시 세는 주기(1.6초)에 따라
+    //   실제 기다림이 0~1.5초로 들쭉날쭉했다(휠로 단계 경계를 오갈 때 터미널을 숨겨 두는 것이 운에 달렸다). 대상인 동안은 null, 빠지면 그때 시각
+    for (const id of want) held.current.set(id, null);
     const keep = [...want];
-    for (const [id, t] of held.current) {
+    let leaving = false;
+    for (const [id, t0] of held.current) {
       if (keep.includes(id)) continue;
-      if (now - t < HOLD_MS && keep.length < MAX_CONTROLLERS && list.some((n) => n.id === id)) keep.push(id);
+      const t = t0 == null ? now : t0;
+      held.current.set(id, t);
+      const n = list.find((x) => x.id === id);
+      // P121: 다른 워크스페이스로 바꾸었거나 초점이 떠난 노드는 기다리지 않고 놓는다(아주 가까이는 붙어 있던 기준 30%로 본다)
+      const ok = n && termAllowed({ id, ws: n.ws, viewWs: wsLimit.key, focus, selected, mates, near: veryClose(n, vp, screen, true) });
+      if (now - t < HOLD_MS && keep.length < MAX_CONTROLLERS && ok) { keep.push(id); leaving = true; }
       else held.current.delete(id);
     }
+    clearTimeout(releaseTimer.current);
+    if (leaving) releaseTimer.current = setTimeout(() => recompute(), HOLD_MS + 50); // 기다림이 끝나면 놓는다
     if (full) keep.length = 0; // P84: 전체 보기가 화면을 덮는 동안 판의 터미널은 붙이지 않는다(가려진 터미널의 메모리)
     if (!PLAN.terms) keep.length = 0; // P86 단계 1부터: 보드에는 터미널을 붙이지 않는다(얼굴만, 전체 보기는 그대로)
     const prev = st.attached;
@@ -618,14 +645,26 @@ export function Canvas() {
   const schedule = useCallback((ms = 200) => { clearTimeout(timer.current); timer.current = setTimeout(recompute, ms); }, [recompute]);
   const focusId = useStore((st) => st.focusId);
   const selectedIds = useStore((st) => st.selected);
-  useEffect(() => { schedule(50); }, [storeNodes, sessions, focusId, selectedIds, schedule]);
+  const viewWs = useStore((st) => st.viewWs); // P121
+  const docksNow = useStore((st) => st.docks); // P124: 덩어리가 바뀌면 짝도 바뀐다
+  useEffect(() => { schedule(50); }, [storeNodes, sessions, focusId, selectedIds, viewWs, docksNow, schedule]);
   useEffect(() => {
     const t = setInterval(() => recompute(), HOLD_MS + 100);
     const resize = () => schedule(); window.addEventListener('resize', resize);
     return () => { clearInterval(t); clearTimeout(timer.current); window.removeEventListener('resize', resize); };
   }, [recompute, schedule]);
 
-  const sizeOf = () => { const el = wrapRef.current; return el ? { width: el.clientWidth, height: el.clientHeight } : null; };
+  // P112: 캔버스 크기는 ResizeObserver로 담아 둔다. 화면을 옮기는 프레임마다 clientWidth를 읽으면 그 프레임에 바뀐 스타일·레이아웃을 그 자리에서 다시 센다(강제 동기 레이아웃).
+  //   코드로 화면을 옮기면(터치 손가락, setViewport) d3가 프레임마다 이동 끝(onMoveEnd)을 낸다
+  const sizeRef = useRef(null);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => { sizeRef.current = { width: el.clientWidth, height: el.clientHeight }; });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const sizeOf = () => { const el = wrapRef.current; if (!el) return null; if (!sizeRef.current) sizeRef.current = { width: el.clientWidth, height: el.clientHeight }; return sizeRef.current; };
   const saveVp = useRef(null);
   const onMoveEnd = useCallback((e, vp) => {
     // 화면 이동이 사람 손(휠, 끌기)인지 코드인지 남긴다. 사람이 배율을 바꾸면 얼굴과 붙은 터미널이 바뀐다(E5 2.5 조사)
@@ -677,6 +716,8 @@ export function Canvas() {
   useEffect(() => {
     const st = getState();
     st.setViewport = (vp) => { rf.setViewport(vp); schedule(100); }; // 시험(E5)에서 쓴다
+    // P141(#16): 판을 화면 픽셀만큼 옮긴다(배율 그대로). 선택 막대가 고른 노드 머리줄을 덮을 때 쓴다
+    st.panBy = (dx, dy, duration = 150) => { const vp = rf.getViewport(); rf.setViewport({ x: vp.x + dx, y: vp.y + dy, zoom: vp.zoom }, { duration }); setTimeout(() => setViewNow(rf.getViewport(), sizeOf()), duration + 50); schedule(duration + 50); };
     st.viewCenter = () => { const el = wrapRef.current; const r = el.getBoundingClientRect(); return rf.screenToFlowPosition({ x: r.left + r.width / 2, y: r.top + r.height / 2 }); };
     st.fitAll = fitAll;
     // P11: 줌 알약의 − +. 화면 가운데를 축으로 배율만 바꾼다
@@ -720,14 +761,15 @@ export function Canvas() {
     st.clearSelection = () => setNodes((ns) => ns.map((n) => (n.selected ? { ...n, selected: false } : n)));
     // P26: 노드(덩어리 안이면 덩어리 전체)가 화면의 85%를 채우게(배율 상한 1, lib/nav.js). 이미 그 노드를 보고 있으면 화면은 그대로다.
     // viewOnly: 화면만 옮기고 터미널 초점은 건드리지 않는다(머리줄 누르기, 터미널 안 누르기)
-    st.navigateTo = (id, { focusTerminal = false, viewOnly = false } = {}) => {
+    // instant(P157): 날아가기 없이 한 번에(세션 맵에서 판의 세션으로 갈 때만)
+    st.navigateTo = (id, { focusTerminal = false, viewOnly = false, instant = false } = {}) => {
       clearTimeout(focusTimer.current);
       getState().pendingInput = null;
       const r = getState().nodes.get(id);
       if (!r) return;
       const el = wrapRef.current;
       const s = getState().sessions.get(id);
-      if (s) noteWorkspace(s.workspaceKey);
+      if (s) noteWorkspace(s.workspaceKey, { view: true }); // P124: 누른(초점을 준) 노드의 워크스페이스가 터미널을 갖는 워크스페이스가 된다
       if (focusTerminal) setPendingInput(id); // H4: 터미널이 붙기 전에 친 글을 모은다
       if (focusTerminal && s && s.state === 'sleeping') wakeSession(id, { why: 'click' }); // P21(D4): 눌러 들어가면 깨운다(깬 뒤 터미널이 붙는다)
       // P10: 덩어리 안의 노드면 덩어리 전체가 들어오게(lib/nav.js). 초점과 터미널 입력은 누른 노드로 간다
@@ -738,11 +780,14 @@ export function Canvas() {
       const inset = insetNow(NAV_GAP, true);
       const v = enterView({ node: r, dock, screen, inset }); // P73: 크롬(과 NAV_GAP 틈)을 뺀 남은 칸을 NAV_FILL까지 채운다
       const seen = isViewing({ node: r, dock, view: v, viewport: vp, screen, inset });
-      perfLog('navigate', { id, mode: v.mode, zoom: +v.zoom.toFixed(3), dock: d ? d.members.length : 0, seen, viewOnly });
+      perfLog('navigate', { id, mode: v.mode, zoom: +v.zoom.toFixed(3), dock: d ? d.members.length : 0, seen, viewOnly, instant });
       if (!seen) {
-        rf.setCenter(v.cx, v.cy, { zoom: v.zoom, duration: 250 });
-        setTimeout(() => setViewNow(rf.getViewport(), sizeOf()), 300);
-        schedule(300);
+        const duration = navDuration({ instant });
+        if (duration) {
+          rf.setCenter(v.cx, v.cy, { zoom: v.zoom, duration });
+          setTimeout(() => setViewNow(rf.getViewport(), sizeOf()), duration + 50);
+          schedule(duration + 50);
+        } else { rf.setCenter(v.cx, v.cy, { zoom: v.zoom }); setViewNow(rf.getViewport(), sizeOf()); schedule(0); }
       }
       enterSession(id);
       setFocus(id, { terminal: focusTerminal && !viewOnly });
@@ -767,7 +812,7 @@ export function Canvas() {
       if (tapAction({ width: window.innerWidth, height: window.innerHeight, coarse: true }) === 'full') {
         const nodeEl = target && target.closest ? target.closest('.react-flow__node') : null;
         const r = nodeEl ? nodeEl.getBoundingClientRect() : null;
-        noteWorkspace(s.workspaceKey); enterSession(id); setFocus(id); markSeen(id);
+        noteWorkspace(s.workspaceKey, { view: true }); enterSession(id); setFocus(id); markSeen(id);
         perfLog('touch_full', { id });
         openFull(id, r ? { x: r.left, y: r.top, w: r.width, h: r.height } : null);
         return;
@@ -899,7 +944,9 @@ export function Canvas() {
   const onNodeClick = useCallback((e, node) => {
     if (e.target.closest && e.target.closest('button, input, textarea, select, a, .mt-card, .mt-kill, .mt-interrupted, .mt-menu')) return;
     if (node.type === 'region' || node.type === 'wtarea') { selectWorkspace(node.data.wsKey); return; } // P27
-    if (node.type !== 'session' || e.ctrlKey || e.shiftKey || e.metaKey) return;
+    if (node.type !== 'session') return;
+    // P124: Ctrl·Shift로 고른 노드도 그 워크스페이스가 터미널을 갖는 워크스페이스가 된다(마지막에 고른 노드)
+    if (e.ctrlKey || e.shiftKey || e.metaKey) { const s = getState().sessions.get(node.id); if (s) noteWorkspace(s.workspaceKey, { view: true }); return; }
     // 터미널 안을 누르면 화면만 옮긴다(초점은 터미널이 스스로 잡는다)
     // P38: 끌어 고른 뒤의 click과 두세 번 누르기에서는 가지 않는다. 한 번 누르기도 잠깐 기다려 두 번째 누르기·선택이 없을 때만 간다
     if (e.target.closest && e.target.closest('.mt-term-wrap')) {

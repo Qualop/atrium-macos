@@ -37,3 +37,40 @@ export function alignLight(el) {
   for (const a of list) if (a.startTime !== 0) { try { a.startTime = 0; } catch { /* 옛 브라우저: 박자만 어긋난다 */ } }
 }
 export const onLightStart = (e) => alignLight(e.currentTarget);
+
+// P127: 판을 움직이는 동안(휠 확대·축소, 끌기, 코드·손가락 이동) 판 노드의 작업 중 둘레(.mt-node-run)를 멈춘다.
+//   P124 측정에서 일하는 노드 여섯의 도는 둘레가 끌기 바쁨의 약 18%(스타일·프리페인트·layerize)였다. 움직이는 동안에는 둘레가 돌아도 눈에 잘 들지 않는다.
+//   문서 뿌리 data-board-moving="1"을 달면 CSS가 회전판을 animation-play-state: paused로 둔다(회전판의 모양·색은 그대로라 작업 중 테두리는 보인다).
+//   마지막 움직임 뒤 MOTION_REST_MS가 지나면 떼어 멈춘 자리에서 이어서 돌린다(판 둘레는 박자를 맞추지 않는다. 화면 밖 둘레도 따로 멈춘다, SessionNode RunRing).
+//   workLight 끔·Windows 설정 따름(움직임 줄이기)·가벼운 판은 원래 돌지 않으므로 바뀌는 것이 없다. 미션 맵 카드의 빛(.mt-mm-light)은 건드리지 않는다
+// 다시 돌기까지 기다림. 휠은 칸 사이가 50~150ms라 그 사이에 돌았다 멈췄다 하지 않게 넉넉히 둔다
+export const MOTION_REST_MS = 400;
+export function motionPauser({ doc = defDoc(), rest = MOTION_REST_MS, now = () => performance.now(), setT = setTimeout, clearT = clearTimeout } = {}) {
+  const root = rootOf(doc);
+  let moving = false;
+  let last = 0; // 마지막 움직임 시각
+  let timer = 0;
+  const resume = () => {
+    if (timer) { clearT(timer); timer = 0; }
+    if (!moving) return;
+    moving = false;
+    if (root) delete root.dataset.boardMoving;
+  };
+  const tick = () => {
+    timer = 0;
+    const wait = last + rest - now();
+    if (wait > 1) { timer = setT(tick, wait); return; }
+    resume();
+  };
+  return {
+    // 판 화면 변환이 바뀔 때마다 부른다(매 프레임일 수 있어 타이머는 하나만 두고 시각만 적는다)
+    moved() {
+      if (!root) return;
+      last = now();
+      if (!moving) { moving = true; root.dataset.boardMoving = '1'; }
+      if (!timer) timer = setT(tick, rest);
+    },
+    get moving() { return moving; },
+    dispose: resume,
+  };
+}

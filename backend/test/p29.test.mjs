@@ -17,7 +17,7 @@ import { Backend } from '../src/backend.mjs';
 
 const CLIENT_URL = new URL('../src/client.mjs', import.meta.url).href;
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'atrium-issue1-'));
-const ready = () => ({ state: 'ready', agentPresent: true, herdrConnected: true });
+const ready = () => ({ state: 'ready', agentPresent: true, termConnected: true });
 const fakeStore = (rows = []) => ({ log: [], activeDeliveries: () => rows, insertDelivery() {}, updateDelivery(id, patch) { this.log.push(patch.status); } });
 const cfg = { submitConfirmMs: 30000, deliveryMaxWaitMs: 900000, inputQuietMs: 0 };
 const tick = () => new Promise((r) => setImmediate(r));
@@ -92,9 +92,9 @@ test('7 같은 이름의 spawn 두 개를 동시에 하면 하나만 만드는 �
   const dir = tmp();
   let reached = 0;
   const fake = {
-    herdrOk: true, adapter: { connected: true, agentKinds: async () => [] }, sessions: new Map(), spawningNames: new Set(), features: null, cfg: {},
+    termOk: true, adapter: { connected: true, agentKinds: async () => [] }, sessions: new Map(), spawningNames: new Set(), features: null, cfg: {},
     spawnReserved: Backend.prototype.spawnReserved,
-    requireHerdr: Backend.prototype.requireHerdr,
+    requireTerminal: Backend.prototype.requireTerminal,
     ensureWorkspace() { reached++; throw Object.assign(new Error('stop here'), { code: 'reached' }); },
   };
   const go = (p) => Backend.prototype.spawn.call(fake, p).catch((e) => e.code);
@@ -121,7 +121,7 @@ test('9 UNC 경로의 앞 이중 구분자를 지킨다', () => {
 test('10 자원 감시기를 start 직후 stop하면 첫 sample도 돌지 않는다', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   let samples = 0;
-  const m = new ResourceMonitor({ sessions: () => [], processInfo: async () => null, controllers: () => [], herdrServerPid: () => null, session: 'x', readTable: async () => { samples++; return null; } });
+  const m = new ResourceMonitor({ sessions: () => [], processInfo: async () => null, controllers: () => [], serverPid: () => null, readTable: async () => { samples++; return null; } });
   m.start(() => {}); m.stop();
   t.mock.timers.tick(5000);
   assert.equal(samples, 0);
@@ -131,8 +131,8 @@ test('11 에이전트 없는 셸 세션의 메모리를 센다', async () => {
   const procs = new Map([[10, { pid: 10, ppid: 1, ws: 1048576, name: 'pwsh.exe' }]]);
   const m = new ResourceMonitor({
     sessions: () => [{ sessionId: 's', name: 'sh1', paneId: 'p1', present: false, state: 'shell_idle' }],
-    processInfo: async () => ({ shell_pid: 10, foreground_processes: [] }), controllers: () => [], herdrServerPid: () => null, session: 'x',
-    readTable: async () => ({ procs, herdr: [] }),
+    processInfo: async () => ({ shell_pid: 10, foreground_processes: [] }), controllers: () => [], serverPid: () => null,
+    readTable: async () => ({ procs }),
   });
   const snap = await m.sample();
   assert.equal(snap.sessions[0].memMB, 1);
@@ -143,7 +143,7 @@ test('12 없는 nodePath로 startBackend하면 프로세스가 죽지 않고 실
   const script = `
     import { startBackend } from '${CLIENT_URL}';
     const d = ${JSON.stringify(dir.replace(/\\/g, '/'))};
-    const cfg = { profile: 'dev', herdrSession: 'atrium-dev-issue1', port: 47899, dataDir: d, backendFile: d + '/backend.json', logDir: d + '/logs' };
+    const cfg = { profile: 'dev', terminalSession: 'atrium-dev-issue1', port: 47899, dataDir: d, backendFile: d + '/backend.json', logDir: d + '/logs' };
     try { await startBackend(cfg, { nodePath: d + '/no-such-node.exe' }); console.log('RESOLVED'); } catch (e) { console.log('CAUGHT ' + e.message.slice(0, 60)); }
     process.exit(0);`;
   try {

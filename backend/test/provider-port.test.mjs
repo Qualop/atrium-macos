@@ -23,16 +23,15 @@ const launcher = (o = {}) => normalizeLauncher({ name: 'Worker', harness: 'claud
 test('spawn plan retains legacy no-launcher defaults and complete schema', () => {
   const b = { store: memoryStore({ settings: { claudeModel: 'vendor/model', claudeEffort: 'high', claudePermissionMode: 'acceptEdits', claudeAllowHerdr: true, codexArgs: '-m provider/model -c \'note="two words"\'', deepseekCommand: 'echo legacy' } }) };
   const p = spawnPlanOf(b, {});
-  assert.deepEqual([p.model, p.effort, p.permissionMode, p.allowHerdr], ['vendor/model', 'high', 'acceptEdits', true]);
-  assert.deepEqual(Object.keys(p).sort(), ['kind', 'flavor', 'launcher', 'launcherId', 'command', 'model', 'effort', 'permissionMode', 'allowHerdr', 'extraArgs', 'env', 'gateway', 'args', 'startCommand'].sort());
+  // P129: herdr 명령 자동 승인(allowHerdr)은 없어졌다. P115: 연결(connectionId), macOS 판: Claude 계정(account)
+  assert.deepEqual([p.model, p.effort, p.permissionMode, p.allowHerdr], ['vendor/model', 'high', 'acceptEdits', undefined]);
+  assert.deepEqual(Object.keys(p).sort(), ['kind', 'flavor', 'launcher', 'launcherId', 'command', 'model', 'effort', 'permissionMode', 'extraArgs', 'env', 'gateway', 'connectionId', 'account', 'args', 'startCommand'].sort());
   const c = spawnPlanOf(b, { kind: 'codex' });
   assert.equal(c.model, 'provider/model');
   assert.ok(c.args.includes('note="two words"'));
   assert.deepEqual(spawnPlanOf(b, { kind: 'codex', model: null }).args, ['-c', 'note="two words"']);
-  assert.equal(spawnPlanOf(b, { kind: 'deepseek' }).command, 'echo legacy');
-  const ds = spawnPlanOf(b, { kind: 'deepseek', command: '' });
-  assert.equal(ds.kind, 'claude'); assert.equal(ds.flavor, 'deepseek'); assert.equal(ds.effort, null);
-  assert.ok(ds.env.ANTHROPIC_BASE_URL);
+  // P115: DeepSeek는 Claude Code 런처 + 연결이다. 옛 deepseekCommand 설정은 런처 옮기기(launcher-migrate.mjs)만 읽고 새 세션 계획은 쓰지 않는다
+  assert.equal(spawnPlanOf(b, {}).command, '');
   assert.equal(spawnPlanOf({ store: {} }, {}).permissionMode, 'manual');
 });
 
@@ -40,12 +39,12 @@ test('quoted preset arguments retain literal content and provider model flags', 
   assert.deepEqual(splitArgs('--flag "a b" \'$(echo literal)\' ""'), ['--flag', 'a b', '$(echo literal)', '']);
   const c = spawnPlanOf({}, { launcherDef: launcher({ harness: 'codex', model: 'vendor/model', args: '-m old -c \'note="two words"\'' }), args: ['-c', 'note="a b"', '--model', 'old'] });
   assert.equal(c.model, 'vendor/model');
-  assert.deepEqual(c.args, ['-c', 'note="a b"', '--model', 'vendor/model']);
+  assert.deepEqual(c.args, ['-c', 'note="a b"']); // P115: Codex 모델은 따로 두고 하네스 어댑터가 -m을 붙인다(인자 안의 --model은 모델로 옮겨 뺀다)
   const g = resolveLauncher(launcher({ harness: 'gemini', model: 'vendor/model@1', args: '--sandbox' }));
   assert.deepEqual(g.args, ['--sandbox', '--model', 'vendor/model@1']);
   const a = resolveLauncher(launcher({ harness: 'agy', model: 'google/model' }));
   assert.deepEqual(a.args, ['--model', 'google/model']);
-  assert.throws(() => resolveLauncher(launcher(), { args: ['--settings', '/tmp/evil'] }), /판이 정하는 인자/);
+  assert.throws(() => resolveLauncher(launcher(), { args: ['--settings', '/tmp/evil'] }), /(?:판|보드)가? 정하는 인자/);
   assert.throws(() => launcher({ args: '--flag "unfinished' }), /Unclosed quote/);
   assert.throws(() => launcher({ harness: 'gemini', env: { GEMINI_CLI_HOME: '/tmp/other' } }), /(?:판|보드)가? 정하는 환경/);
 });
@@ -116,12 +115,12 @@ function board(t, { trusted = false, shellReady = true } = {}) {
     calls: [], modelCalls: [], hooked: (s) => s.kind === 'claude', log() {}, broadcastSession() {}, registerResume() {},
     agentModels: async ({ kind }) => { b.modelCalls.push(kind); return providers[kind]; },
     launchOf: (s) => ({ sessionId: s.sessionId, settingsPath: '/private/settings.json', permissionMode: 'manual' }),
-    adapter: { sendText: async () => b.calls.push('exit'), paneKeys: async () => { b.calls.push('enter'); child.rt.herdr.present = false; },
+    adapter: { sendText: async () => b.calls.push('exit'), paneKeys: async () => { b.calls.push('enter'); child.rt.term.present = false; },
       waitShellReady: async () => shellReady, startAgent: async (p) => b.calls.push(p) },
   };
   const branch = new Branch(b, { gateTrustWaitMs: 0 });
   const child = { sessionId: 'worker', name: 'worker', agentName: 'worker', paneId: 'w1:p1', cwd: dir, kind: 'claude', rt: newRuntime({ kind: 'claude' }) };
-  child.rt.herdr = { present: true, status: 'idle' }; child.rt.phase = 'running';
+  child.rt.term = { present: true, status: 'idle' }; child.rt.phase = 'running';
   b.sessions.set(child.sessionId, child); branch.noteChild(child.sessionId, { gate: 'trust', worktree: 'feature' });
   return { b, branch, child, dir };
 }
@@ -133,7 +132,9 @@ test('delegation discovers Codex/Gemini/agy through the backend and inherits par
   assert.equal(resolveModel('Next Code', cat).entry.model, 'openai/next-code');
   for (const kind of ['codex', 'gemini', 'agy']) assert.equal((await branch.routeOf({ ...child, kind }, {})).kind, kind);
   const route = await branch.routeOf(child, { model: 'Gemini Ultra' });
-  assert.equal(route.kind, 'agy'); assert.equal(route.model, 'google/ultra'); assert.equal(route.args, undefined);
+  assert.equal(route.kind, 'agy'); assert.equal(route.model, 'google/ultra');
+  assert.deepEqual(route.args, ['--model', 'google/ultra']); // P115: 길에 제공자의 모델 인자가 든다. 계획은 같은 인자를 두 번 붙이지 않는다
+  assert.deepEqual(spawnPlanOf({}, { kind: 'agy', model: route.model, args: route.args }).args, ['--model', 'google/ultra']);
 });
 
 test('trust gate leaves prompts held and sends no keys when trust is false or unreadable', async (t) => {
@@ -190,18 +191,16 @@ test('a blocked trust gate cannot sleep while herdr happens to report ready', ()
   assert.equal(sessionActivity(x), 'needs_you');
 });
 
-test('Codex branch authorization requires managed integration, origin and both tokens', (t) => {
+// P115: 하위 세션 명령은 hook·관리 연동이 아니라 판이 준 세션 토큰과 판 출처로 허용한다(하네스 Codex는 hook 토큰·관리 연동이 없다)
+test('Codex branch authorization requires the board session token and board origin', (t) => {
   const { b, branch, child } = board(t);
-  b.apiToken = 'synthetic-board-key'; child.kind = 'codex'; child.origin = 'board'; child.hookToken = 'synthetic-hook'; child.rt.codexIntegration = true;
+  b.apiToken = 'synthetic-board-key'; child.kind = 'codex'; child.origin = 'board';
   const headers = { 'x-mt-session': child.sessionId, authorization: `Bearer ${branch.token(child.sessionId)}` };
   assert.equal(branch.auth(headers, 'models').s, child);
-  for (const field of ['origin', 'hookToken']) {
-    const old = child[field]; child[field] = null;
-    assert.equal(branch.auth(headers, 'child').status, 403); child[field] = old;
-  }
-  child.rt.codexIntegration = false; assert.equal(branch.auth(headers, 'child').status, 403);
-  child.rt.codexIntegration = true;
+  child.origin = 'adopted'; assert.equal(branch.auth(headers, 'child').status, 403); child.origin = 'board';
+  child.kind = 'shell'; assert.equal(branch.auth(headers, 'child').status, 403); child.kind = 'codex';
   assert.equal(branch.auth({ ...headers, authorization: 'Bearer wrong' }, 'child').status, 401);
+  assert.equal(branch.auth({ ...headers, authorization: `Bearer ${b.apiToken}` }, 'child').status, 401, '보드 API 토큰은 세션 토큰이 아니다');
 });
 
 function sleepingCodex(t) {
@@ -218,7 +217,7 @@ function sleepingCodex(t) {
   b.branch = branch;
   b.resolve = () => child;
   b.summary = (s) => deriveState(s.rt);
-  b.requireHerdr = () => {};
+  b.requireTerminal = () => {};
   b.desktopImport = { codex: { read: async (id) => { assert.equal(id, nativeId); return { id, status: { type: 'notLoaded' } }; } } };
   b.withNewPane = async (create, register) => { const r = await create(); await register(r); return r; };
   b.adapter.connected = true;

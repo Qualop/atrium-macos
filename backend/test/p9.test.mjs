@@ -186,11 +186,11 @@ function recallBackend(workspaces) {
     store, bus: new EventEmitter(), sessions: new Map(), adapter, events, killing: new Set(),
     api: { broadcast: (ev, data) => events.push([ev, data]) },
     plugin: { pluginDir: 'P', systemPromptFile: 'S' }, hookUrl: 'http://127.0.0.1:1/hooks/claude',
-    log: () => {}, hooked: (s) => s.rt.hooked !== false, requireHerdr: () => {},
+    log: () => {}, hooked: (s) => s.rt.hooked !== false, requireTerminal: () => {},
     resolveWorkspace: async (r) => store.getWorkspace(r),
     ensureWorkspace: (ws) => { if (!store.getWorkspace(ws.key)) store.insertWorkspace({ ...ws, createdAt: Date.now() }); },
     withNewPane: async (create, register) => { const r = await create(); await register(r); return r; },
-    broadcastSession: () => {}, probeGit: () => {}, registerResume: () => {},
+    broadcastSession: () => {}, probeGit: () => {},
   };
   return b;
 }

@@ -9,27 +9,35 @@ import { spawn } from 'node:child_process';
 import { Backend } from '../src/backend.mjs';
 import { Store } from '../src/store.mjs';
 import { Branch } from '../src/branch.mjs';
-import { newRuntime, deriveState, applyHerdrStatus } from '../src/state.mjs';
+import { newRuntime, deriveState, applyTermStatus } from '../src/state.mjs';
 import { normalizeGeminiHook, writeGeminiSession, GEMINI_EVENTS, geminiAuthIssue } from '../src/gemini.mjs';
 import { Outputs } from '../src/outputs.mjs';
 import { decideTarget, goalReached } from '../src/loops.mjs';
+import { AgentVerbs } from '../src/agent-verbs.mjs';
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atrium-gemini-'));
   const b = new Backend({ logDir: dir, herdrSession: 'atrium-dev-gemini', adoptSpawnMatchMs: 60000 });
   b.store = new Store(path.join(dir, 'board.db')); b.api = { broadcast() {} }; b.log = () => {};
   b.apiToken = 'fixture-board'; b.probeGit = () => {};
-  b.queue = { enqueue: (id, text) => ({ deliveryId: 'test', sessionId: id, text }), onUserPromptSubmit() {}, onAgentWorking() {} };
+  b.queue = { enqueue: (id, text) => ({ deliveryId: 'test', sessionId: id, text }), onUserPromptSubmit() {}, onAgentWorking() {}, pending: () => [] };
   b.broadcastSession = (s) => { const next = deriveState(s.rt); b.onLinkTargetState(s, s.lastState, next); s.lastState = next.state; };
   for (const kind of ['claude', 'codex', 'gemini', 'agy']) {
-    const s = { sessionId: kind, kind, name: kind, agentName: kind, paneId: `${kind}:p1`, cwd: dir, origin: 'board', hookToken: `token-${kind}`, rt: newRuntime({ kind, hooked: kind === 'claude' }) };
-    s.rt.herdr = { status: 'idle', present: true }; s.rt.phase = 'running';
+    const s = { sessionId: kind, kind, name: kind, agentName: kind, paneId: `${kind}:p1`, cwd: dir, workspaceKey: dir, origin: 'board', hookToken: `token-${kind}`, rt: newRuntime({ kind, hooked: kind === 'claude' }) };
+    s.rt.term = { status: 'idle', present: true }; s.rt.phase = 'running';
     if (kind === 'gemini') Object.assign(s.rt, { geminiIntegration: true, geminiReady: true });
     b.sessions.set(kind, s);
   }
   t.after(() => { b.store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
   const hook = (kind, body) => b.processHook({ 'x-mt-session': kind, authorization: `Bearer token-${kind}` }, JSON.stringify(body), ['gemini', 'agy'].includes(kind) ? kind : 'claude');
-  return { b, dir, hook };
+  // P116: 에이전트끼리 일 시키기는 판의 atrium 명령이다(셸 도구 hook에서 herdr 명령을 읽던 길은 없어졌다). 판이 연결·지시를 바로 남긴다
+  const verbs = new AgentVerbs(b, { asleep: () => false, promptTagOf: () => null }, { settleMs: 0 });
+  const delegate = async (from, to, text) => {
+    const out = await verbs.prompt(b.sessions.get(from), { name: to, text });
+    verbs.onDeliveryEnd({ deliveryId: out.deliveryId, status: 'confirmed' }); // 받는 쪽 입력 칸에 들어감(B1 제출 확인)
+    return out;
+  };
+  return { b, dir, hook, verbs, delegate };
 }
 
 test('Gemini hooks preserve prompts/results but never enter Claude transcript handling', () => {
@@ -41,10 +49,10 @@ test('Gemini hooks preserve prompts/results but never enter Claude transcript ha
   assert.equal(normalizeGeminiHook({ hook_event_name: 'AfterTool', tool_name: 'run_shell_command', tool_response: { error: 'denied' } }).hook_event_name, 'PostToolUseFailure');
 });
 
-test('Claude → Gemini reviewer records submission, work, result and output history', (t) => {
-  const { b, hook } = fixture(t), gemini = b.sessions.get('gemini');
+test('Claude → Gemini reviewer records submission, work, result and output history', async (t) => {
+  const { b, hook, delegate } = fixture(t), gemini = b.sessions.get('gemini');
   b.linkCreate({ from: 'claude', to: 'gemini', role: '리뷰어' });
-  hook('claude', { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'c1', tool_input: { command: 'herdr agent prompt gemini "review addition" --wait' } });
+  await delegate('claude', 'gemini', 'review addition'); // atrium prompt gemini "review addition"
   hook('gemini', { hook_event_name: 'BeforeAgent', prompt: 'review addition', session_id: 'native-g', transcript_path: '/tmp/native-g.json' });
   assert.equal(deriveState(gemini.rt).state, 'working');
   hook('gemini', { hook_event_name: 'AfterAgent', prompt_response: 'BUG: addition returns subtraction' });
@@ -59,19 +67,20 @@ test('Claude → Gemini reviewer records submission, work, result and output his
   assert.equal(goalReached({ stop: { untilText: 'subtraction' }, lastRunAt: 1 }, gemini.rt), true);
 });
 
-test('Gemini → Codex delegation and reading a reply reuse the existing link protocol', (t) => {
-  const { b, hook } = fixture(t);
+test('Gemini → Codex delegation and reading a reply use the board atrium verbs', async (t) => {
+  const { b, delegate, verbs } = fixture(t);
+  b.adapter = { readScreen: async () => 'review complete' };
   b.linkCreate({ from: 'gemini', to: 'codex', role: 'reviewer' });
-  const tool = { tool_name: 'run_shell_command', tool_input: { command: 'herdr agent prompt codex "review patch" --wait' }, tool_use_id: 'g1' };
-  hook('gemini', { ...tool, hook_event_name: 'BeforeTool' });
+  await delegate('gemini', 'codex', 'review patch'); // atrium prompt codex "review patch"
   const codex = b.sessions.get('codex');
-  applyHerdrStatus(codex.rt, 'working'); b.broadcastSession(codex);
-  codex.rt.lastAnswer = 'review complete'; applyHerdrStatus(codex.rt, 'idle'); b.broadcastSession(codex);
-  hook('gemini', { ...tool, hook_event_name: 'AfterTool', tool_response: { llmContent: '{"result":{"type":"agent_prompted","agent":{"agent_status":"idle"}}}' } });
-  hook('gemini', { hook_event_name: 'AfterTool', tool_name: 'run_shell_command', tool_input: { command: 'herdr agent read codex' }, tool_response: { llmContent: 'review complete' } });
+  applyTermStatus(codex.rt, 'working'); b.broadcastSession(codex);
+  codex.rt.lastAnswer = 'review complete'; codex.rt.answerSource = 'screen'; applyTermStatus(codex.rt, 'idle'); b.broadcastSession(codex);
+  await verbs.read(b.sessions.get('gemini'), { name: 'codex' }); // atrium read codex
+  await new Promise((r) => setTimeout(r, 50));
   const events = b.store.linkEvents(b.store.linkByPair('gemini', 'codex').linkId, 50);
-  assert.ok(events.some((e) => e.kind === 'target_done'));
-  assert.ok(events.some((e) => e.kind === 'prompt_result' && e.data.ok));
+  assert.equal(events.find((e) => e.kind === 'prompt').text, 'review patch');
+  assert.ok(events.some((e) => e.kind === 'target_submitted'));
+  assert.ok(events.some((e) => e.kind === 'target_working'));
   assert.equal(events.find((e) => e.kind === 'reply').text, 'review complete');
 });
 
@@ -80,7 +89,7 @@ test('Untrusted hooks cannot change runtime; blocked Gemini never triggers an id
   b.processHook({ 'x-mt-session': 'gemini', authorization: 'Bearer wrong' }, JSON.stringify({ hook_event_name: 'AfterAgent', prompt_response: 'fake' }), 'gemini');
   assert.equal(s.rt.lastAnswer, null);
   s.rt.geminiReady = false; assert.equal(deriveState(s.rt).state, 'starting');
-  s.rt.herdr.status = 'blocked'; assert.equal(deriveState(s.rt).state, 'waiting');
+  s.rt.term.status = 'blocked'; assert.equal(deriveState(s.rt).state, 'waiting');
   assert.notEqual(decideTarget({ trigger: { type: 'idle' } }, {}, { kind: 'gemini', state: 'waiting' }, Date.now()).action, 'fire');
 });
 
@@ -112,7 +121,8 @@ test('Per-session config preserves defaults; bridge sends authenticated JSON and
   let stdout = ''; child.stdout.on('data', (c) => stdout += c);
   child.stdin.end(JSON.stringify({ hook_event_name: 'BeforeAgent', prompt: '검토해' }));
   assert.equal(await new Promise((r) => child.on('exit', r)), 0);
-  assert.match(JSON.parse(stdout).hookSpecificOutput.additionalContext, /herdr agent prompt/);
+  assert.match(JSON.parse(stdout).hookSpecificOutput.additionalContext, /atrium prompt/); // P116: 안내는 판의 atrium 명령
+  assert.doesNotMatch(JSON.parse(stdout).hookSpecificOutput.additionalContext, /herdr/);
   assert.equal(received.headers.authorization, 'Bearer secret-fixture'); assert.equal(received.body.prompt, '검토해');
 });
 
@@ -122,10 +132,10 @@ test('Google personal-account refusal explains the supported client instead of r
 });
 
 test('Claude → Antigravity reviewer records work and terminal result without inventing hook text', async (t) => {
-  const { b, hook } = fixture(t);
+  const { b, hook, delegate } = fixture(t);
   b.adapter = { readScreen: async () => 'REVIEW_RESULT: fix the off-by-one' };
   b.linkCreate({ from: 'claude', to: 'agy', role: 'reviewer' });
-  hook('claude', { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'a1', tool_input: { command: 'herdr agent prompt agy "review patch" --wait' } });
+  await delegate('claude', 'agy', 'review patch'); // atrium prompt agy "review patch"
   hook('agy', { atriumEvent: 'PreInvocation', conversationId: 'native-agy' });
   assert.equal(deriveState(b.sessions.get('agy').rt).state, 'working');
   hook('agy', { atriumEvent: 'Stop', fullyIdle: true, conversationId: 'native-agy' });
@@ -136,9 +146,9 @@ test('Claude → Antigravity reviewer records work and terminal result without i
   assert.equal(b.sessions.get('agy').rt.claudeSessionId, null);
 });
 
-test('Antigravity can delegate to Codex through observed run_command hooks', (t) => {
-  const { b, hook } = fixture(t);
-  hook('agy', { atriumEvent: 'PreToolUse', conversationId: 'native', stepIdx: 2, toolCall: { name: 'run_command', args: { CommandLine: 'herdr agent prompt codex "review" --wait' } } });
+test('Antigravity can delegate to Codex through the board atrium prompt verb', async (t) => {
+  const { b, delegate } = fixture(t);
+  await delegate('agy', 'codex', 'review'); // atrium prompt codex "review" (agy run_command)
   const link = b.store.linkByPair('agy', 'codex');
   assert.equal(b.store.linkEvents(link.linkId, 20).find((e) => e.kind === 'prompt').text, 'review');
 });

@@ -78,7 +78,7 @@ export async function featureCommand(cmd, rest, { c, flags, out, ts, json }) {
         console.log(`${k.kanbanId} "${k.title}" (${k.x},${k.y}) ws=${k.workspaceKey || '-'}`);
         for (const col of k.columns) {
           console.log(`  [${col.name}] ${col.columnId}`);
-          for (const x of col.cards) console.log(`    ${x.cardId} ${one(x.text, 60)}${x.session ? `  → @${x.session.name} ${x.session.open ? x.session.state : '(닫힘)'}${x.session.unseen ? ' 확인할 결과' : ''}${x.session.ask ? ` 묻는 중: ${x.session.ask}` : ''}` : ''}`);
+          for (const x of col.cards) console.log(`    ${x.cardId} ${one(x.text, 60)}${x.session ? `  → @${x.session.name} ${x.session.open ? x.session.state : '(닫힘)'}${x.session.unseen ? ' 작업 완료' : ''}${x.session.ask ? ` 묻는 중: ${x.session.ask}` : ''}` : ''}`);
         }
       }
       return true;

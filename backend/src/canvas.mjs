@@ -336,7 +336,7 @@ export function packRegions(blocks) {
 // P17부터 덩어리는 분할 나무다. 나무 계산(늘어놓기, 넣기·빼기, 비율, 틀, 붙을 자리)은 dock-tree.mjs에 있다.
 export { sideDir } from './dock-tree.mjs';
 
-// herdr 탭 레이아웃(pane.layout의 패널 사각형, 글자 칸 단위)에서 child가 parent의 어느 쪽에 나뉘었는가 → 'right' | 'bottom' | 'left' | 'top'
+// 터미널 탭 레이아웃(pane.layout의 패널 사각형, 글자 칸 단위)에서 child가 parent의 어느 쪽에 나뉘었는가 → 'right' | 'bottom' | 'left' | 'top'
 export function splitSide(parentRect, childRect) {
   if (!parentRect || !childRect) return null;
   if (childRect.x >= parentRect.x + parentRect.width) return 'right';

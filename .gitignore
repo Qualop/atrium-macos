@@ -16,3 +16,6 @@ backend/.dev/
 
 # 판 목업 비교용 symvibe 데모 프레임과 캡처(남의 화면이라 저장소에 넣지 않는다)
 app/design/board-mock/ref/
+
+# Claude Code 개인 권한 설정
+.claude/settings.local.json

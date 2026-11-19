@@ -161,7 +161,7 @@ function fakeBackend() {
   b.log = () => {};
   b.sent = sent; b.events = events;
   const add = (name, ws, rect, extra = {}) => {
-    const s = { sessionId: 'id-' + name, name, kind: extra.kind || 'claude', workspaceKey: ws, cwd: extra.cwd || `C:/${ws}`, rt: newRuntime({ kind: extra.kind || 'claude', hooked: true }), origin: 'board', createdAt: Date.now(), paneId: extra.paneId || null, herdrWorkspaceId: extra.hw || null, ...extra };
+    const s = { sessionId: 'id-' + name, name, kind: extra.kind || 'claude', workspaceKey: ws, cwd: extra.cwd || `C:/${ws}`, rt: newRuntime({ kind: extra.kind || 'claude', hooked: true }), origin: 'board', createdAt: Date.now(), paneId: extra.paneId || null, termWorkspaceId: extra.hw || null, ...extra };
     b.sessions.set(s.sessionId, s);
     b.store.insertSession({ ...s, permissionMode: 'manual', runtime: s.rt });
     if (rect) b.store.setNode({ session_id: s.sessionId, ...rect, z: 0 });
@@ -257,14 +257,14 @@ test('H5: 덩어리 — 붙이기(덩어리 옆 새 칸), 다른 워크스페이
   b.store.close();
 });
 
-test('H5: herdr에서 같은 탭에 나뉜 패널은 나눈 방향대로 처음부터 붙인다(다른 탭이면 그대로)', async () => {
+test('H5: 터미널에서 같은 탭에 나뉜 패널은 나눈 방향대로 처음부터 붙인다(다른 탭이면 그대로)', async () => {
   const { b, add } = fakeBackend();
   const p = add('lead', 'ws-a', R(0, 0), { paneId: 'w1:p1', hw: 'w1' });
   const c = add('sh-w1p2', 'ws-a', R(760, 0), { paneId: 'w1:p2', hw: 'w1', kind: 'shell', origin: 'adopted' });
   const o = add('other', 'ws-a', R(0, 900), { paneId: 'w1:p3', hw: 'w1' });
   b.adapter = { paneLayout: async (pane) => (pane === 'w1:p2' ? { tab_id: 'w1:t1', panes: [{ pane_id: 'w1:p1', rect: { x: 0, y: 0, width: 80, height: 40 } }, { pane_id: 'w1:p2', rect: { x: 0, y: 41, width: 80, height: 39 } }] } : { tab_id: 'w1:t2', panes: [{ pane_id: 'w1:p3', rect: { x: 0, y: 0, width: 160, height: 40 } }] }) };
   const d = await ops.autoDockSplit(b, c, p);
-  assert.deepEqual([d.dir, d.members, d.origin], ['col', ['id-lead', 'id-sh-w1p2'], 'herdr']);
+  assert.deepEqual([d.dir, d.members, d.origin], ['col', ['id-lead', 'id-sh-w1p2'], 'split']);
   assert.deepEqual(rectOf(b, 'sh-w1p2'), { x: 0, y: NODE.h, w: NODE.w, h: NODE.h });
   assert.equal(await ops.autoDockSplit(b, o, p), null, '다른 탭');
   b.store.close();

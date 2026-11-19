@@ -51,6 +51,8 @@ try {
   try { atrium('ws', 'open', WS); } catch {}
   for (const n of names()) if (/^(p97-|sh\d)/.test(n)) { try { atrium('kill', n, '--yes'); } catch {} }
   atrium('spawn', WS, '--kind', 'shell', '--name', 'p97-taken');
+  // P122: 새 판에는 셸 런처가 없다. 사람이 "+"로 만들듯 하나 만든다
+  const SH = (call('launcher.list').launchers.find((x) => x.harness === 'shell') || call('launcher.create', { launcher: { name: 'Shell', harness: 'shell' }, favorite: true }).launcher).id;
   sim = startTsSim({ listen: SIM, target: PORT, name: NAME, login: LOGIN, keepOrigin: true }); sim.cfg.ip = LAPTOP_A;
   await sim.ready;
   const pwDir = path.join(process.env.LOCALAPPDATA || '', 'ms-playwright');
@@ -68,7 +70,7 @@ try {
   await sleep(1500);
   await pg.tap('[data-action=phone-new]');
   await pg.waitForSelector('[data-role=phone-spawn]');
-  await pg.tap('[data-role=phone-launchers] [data-launcher=shell]');
+  await pg.tap(`[data-role=phone-launchers] [data-launcher="${SH}"]`);
   await sleep(300);
   const hasName = await pg.$('[data-field=phone-spawn-name]');
   check('휴대폰 새 세션 시트에 세션 이름 칸이 있다(비우면 판이 짓는다)', !!hasName && /비우면/.test(await pg.textContent('[data-role=phone-spawn-note]')));
@@ -93,7 +95,7 @@ try {
   if (await pg.$('[data-action=phone-back]')) { await pg.tap('[data-action=phone-back]'); await sleep(800); } // 시작하면 그 세션으로 들어간다. 목록으로
   await pg.tap('[data-action=phone-new]');
   await pg.waitForSelector('[data-role=phone-spawn]');
-  await pg.tap('[data-role=phone-launchers] [data-launcher=shell]');
+  await pg.tap(`[data-role=phone-launchers] [data-launcher="${SH}"]`);
   await pg.tap('[data-action=phone-spawn-go]');
   await until(() => names().length > before, 20000, 500).catch(() => null);
   check('빈칸이면 판이 이름을 짓는다', names().some((n) => /^sh\d+$/.test(n)), names());

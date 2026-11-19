@@ -5,6 +5,13 @@
 // 판에 올린 에이전트(F3)의 parent_session_id는 그대로 두고, 깊이를 셀 때만 같이 따라간다. backend/test/p8.test.mjs가 P7 모양의 board.db로 확인한다.
 
 export const BRANCH_COLUMNS = { sessions: { branch: 'TEXT' } };
+// P156: 세션 사이 일 관계(relations.mjs). 쌍마다 한 줄(a, b는 넣은 순서 그대로. 하위면 a가 위). 줄이 없으면 자동이다.
+// P157: link_events_kind_t는 assignSenders(최근 지시만 훑기)용. 옛 board.db에도 IF NOT EXISTS로 생긴다
+// 옮기기: CREATE TABLE IF NOT EXISTS라 옛 board.db에는 빈 표가 생기고 옛 기록은 모두 자동(띄움·역할 선 = 하위)이다
+export const BRANCH_SCHEMA = `
+CREATE TABLE IF NOT EXISTS relations (a TEXT NOT NULL, b TEXT NOT NULL, relation TEXT NOT NULL, source TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (a, b)) STRICT;
+CREATE INDEX IF NOT EXISTS link_events_kind_t ON link_events(kind, t);
+`;
 
 const P = (s) => { if (s == null) return null; try { return JSON.parse(s); } catch { return null; } };
 
@@ -15,6 +22,19 @@ export function installBranch(Store) {
     branchRows() {
       return this.st('SELECT session_id, name, parent_session_id, branch, closed_at, origin FROM sessions').all()
         .map((r) => ({ sessionId: r.session_id, name: r.name, parentSessionId: r.parent_session_id ?? null, branch: P(r.branch), closedAt: r.closed_at ?? null, origin: r.origin || 'board' }));
+    },
+    // P157: since 이후 하위에게 지시(꼬리표 assign)를 보낸 세션과 그 마지막 시각. 받는 세션이 닫혔어도 센다(세션 맵의 솔로 판정)
+    assignSenders(since = 0) {
+      return this.st(`SELECT l.from_session AS s, MAX(e.t) AS at FROM link_events e JOIN links l ON l.link_id = e.link_id WHERE e.kind = 'prompt' AND e.t >= ? AND e.data LIKE '%"tag":"assign"%' GROUP BY l.from_session`).all(since)
+        .map((r) => ({ sessionId: r.s, at: Number(r.at) }));
+    },
+    // P156: 일 관계. 쌍마다 한 줄이라 넣기 전에 두 차례(a,b·b,a)를 모두 지운다
+    relationRows() { return this.st('SELECT a, b, relation, source, at FROM relations').all().map((r) => ({ a: r.a, b: r.b, relation: r.relation, source: r.source, at: r.at })); },
+    setRelation(a, b, relation, source, at = Date.now()) {
+      this.tx(() => {
+        this.st('DELETE FROM relations WHERE (a = ? AND b = ?) OR (a = ? AND b = ?)').run(a, b, b, a);
+        if (relation) this.st('INSERT INTO relations (a, b, relation, source, at) VALUES (?, ?, ?, ?, ?)').run(a, b, relation, source, at);
+      });
     },
   });
 }

@@ -14,7 +14,7 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p104-'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test('허용 목록: 방향키, enter, esc, tab, space, 숫자만 받는다', () => {
-  assert.deepEqual([...KEY_NAMES], ['up', 'down', 'left', 'right', 'enter', 'esc', 'tab', 'space', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']);
+  assert.deepEqual([...KEY_NAMES], ['up', 'down', 'left', 'right', 'enter', 'esc', 'tab', 'space', 'backspace', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']);
   assert.deepEqual(checkKeys(['down', 'down', 'enter']), ['down', 'down', 'enter']);
   assert.deepEqual(checkKeys(['left', 'right', 'up', 'esc', 'tab', 'space']), ['left', 'right', 'up', 'esc', 'tab', 'space']);
   assert.deepEqual(checkKeys([1, '2', 9]), ['1', '2', '9'], '숫자는 수로 와도 받는다');
@@ -23,7 +23,7 @@ test('허용 목록: 방향키, enter, esc, tab, space, 숫자만 받는다', ()
 
 test('허용 목록: 그 밖의 키, 글, ctrl·shift 조합, 빈 목록, 너무 많은 키는 거부한다', () => {
   const rejects = (keys, key) => assert.throws(() => checkKeys(keys), (e) => e.code === 'bad_request' && e.key === key, JSON.stringify(keys));
-  for (const k of ['ctrl+c', 'ctrl+g', 'shift+tab', 'alt+x', 'backspace', 'f5', 'home', 'pageup', 'a', 'y', '/', 'hello', '10', '-1', 'Enter', ' enter', '\r', '\x1b[A', '']) rejects([k], 'keysBad');
+  for (const k of ['ctrl+c', 'ctrl+g', 'shift+tab', 'alt+x', 'f5', 'home', 'pageup', 'a', 'y', '/', 'hello', '10', '-1', 'Enter', ' enter', '\r', '\x1b[A', '']) rejects([k], 'keysBad');
   rejects(['down', 'ctrl+c'], 'keysBad'); // 하나라도 틀리면 하나도 보내지 않는다
   for (const k of [null, undefined, {}, [], 1.5, true]) rejects([k], 'keysBad');
   rejects([], 'keysEmpty');
@@ -64,7 +64,7 @@ function fakeB({ paneId = 'p1', delay = () => 0 } = {}) {
     sessions: new Map([['s1', s]]),
     keyChain: keyChain(), killing: new Set(), currentSession: Backend.prototype.currentSession,
     resolve: (q) => { if (q !== 's1' && q !== 'w1') throw Object.assign(new Error('no session'), { code: 'not_found' }); return s; },
-    requireHerdr: () => {},
+    requireTerminal: () => {},
     touch: (x) => touched.push(x.sessionId),
     peers: { touch: (c) => touched.push(c ? 'peer' : 'none') },
     store: { addEvent: (sid, kind, data) => events.push({ sid, kind, data }) },
@@ -111,7 +111,7 @@ test('session.keys: 겹쳐 불러도 부른 순서대로 패널에 닿는다(앞
 test('session.keys는 판 API에 있고, 원격 기기에도 막지 않는다(web.mjs에 같은 이름의 localOnly가 없다)', async () => {
   const dir = tmp();
   const store = new Store(path.join(dir, 'board.db'));
-  const web = new WebServer({ cfg: { port: 47999, dataDir: dir, profile: 'dev', herdrSession: 'atrium-dev-test' }, store, api: null });
+  const web = new WebServer({ cfg: { port: 47999, dataDir: dir, profile: 'dev', terminalSession: 'atrium-dev-test' }, store, api: null });
   try {
     const wh = web.handlers();
     assert.equal(wh['session.keys'], undefined, 'web.mjs가 session.keys를 덮지 않는다');

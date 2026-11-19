@@ -76,7 +76,7 @@ async function setup() {
   log(JSON.stringify(view));
   check('Claude Code 권한 질문(Bash mkdir)을 기다린다', byName(N.perm).state === 'waiting' && byName(N.perm).ask && byName(N.perm).ask.tool === 'Bash', byName(N.perm).ask);
   check('Claude Code AskUserQuestion을 기다린다', byName(N.ask).state === 'waiting' && byName(N.ask).ask && byName(N.ask).ask.kind === 'question', byName(N.ask).ask);
-  check('Codex가 승인 질문을 기다린다(herdr blocked)', byName(N.codex).state === 'waiting', { state: byName(N.codex).state, herdr: byName(N.codex).herdrStatus });
+  check('Codex가 승인 질문을 기다린다(herdr blocked)', byName(N.codex).state === 'waiting', { state: byName(N.codex).state, term: byName(N.codex).termStatus });
   fs.writeFileSync(path.join(OUT, 'screen-codex-setup.txt'), screenText(N.codex));
   fs.writeFileSync(path.join(OUT, 'screen-ask-setup.txt'), screenText(N.ask));
   fs.writeFileSync(path.join(OUT, 'screen-perm-setup.txt'), screenText(N.perm));

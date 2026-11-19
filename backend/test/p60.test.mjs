@@ -132,7 +132,7 @@ async function boot() {
   const srv = http.createServer();
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const port = srv.address().port;
-  const web = new WebServer({ cfg: { remoteEnabled: true, port, dataDir: dir, profile: 'dev', herdrSession: 'atrium-dev-test' }, store, api: null, settings: () => ({}), log: () => {}, tailscale: null });
+  const web = new WebServer({ cfg: { remoteEnabled: true, port, dataDir: dir, profile: 'dev', terminalSession: 'atrium-dev-test' }, store, api: null, settings: () => ({}), log: () => {}, tailscale: null });
   const apiToken = 'board-api-token-for-test';
   const api = new ApiServer({ token: apiToken, handlers: { ...web.handlers(), 'events.subscribe': (p, cl) => { cl.subscribed = true; return {}; } }, authorize: (req) => web.authorize(req, apiToken), onClose: () => {} });
   web.api = api;

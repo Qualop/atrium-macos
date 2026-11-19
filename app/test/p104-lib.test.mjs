@@ -30,7 +30,7 @@ test('답하기 UI가 없다: ApprovalCard, 승인 줄과 휴대폰 카드의 �
 });
 
 test('키 패드의 키는 백엔드 허용 목록(keys.mjs) 안에 있고, 한 요청에 담는 수도 같다', () => {
-  assert.deepEqual(PAD_KEYS, ['esc', '1', '2', '3', '4', 'up', 'tab', 'space', 'enter', 'left', 'down', 'right']);
+  assert.deepEqual(PAD_KEYS, ['esc', '1', '2', '3', '4', 'up', 'backspace', 'tab', 'space', 'enter', 'left', 'down', 'right']);
   for (const k of PAD_KEYS) assert.ok(KEY_NAMES.includes(k), k);
   assert.equal(PAD_MAX, KEYS_MAX);
   for (const k of ['up', 'down', 'left', 'right', 'enter', 'esc', 'tab']) assert.ok(PAD_KEYS.includes(k), `필수 키 ${k}`);
@@ -120,10 +120,10 @@ test('새 CSS 클래스(mt-ph-pad, mt-ph-pk, mt-ph-padopen, mt-ph-padicon)는 ph
   for (const c of NEW) assert.equal(phone.slice(0, at).match(new RegExp(`\\.${c}(?![\\w-])`)), null, `${c}는 P104 덩어리 앞에 없다`);
   const jsx = fs.readdirSync(path.join(ROOT, 'src', 'renderer')).filter((f) => f.endsWith('.jsx') && f !== 'Phone.jsx');
   for (const f of jsx) for (const c of NEW) assert.ok(!new RegExp(`['" ]${c}['" ]`).test(R(f)), `${f} ${c}`);
-  // 칸 배치: 키마다 자리가 있고 Enter는 두 칸
+  // 칸 배치: 키마다 자리가 있다(2026-11-15 백스페이스를 더하며 Enter는 한 칸)
   const block = phone.slice(at);
   for (const k of PAD_KEYS.filter((x) => x !== 'enter')) assert.match(block, new RegExp(`\\[data-pad-key="${k}"\\]`), k);
-  assert.match(block, /"esc k1 k2 k3 k4 up tab" "close space enter enter left down right"/);
+  assert.match(block, /"esc k1 k2 k3 k4 up bksp" "close tab space enter left down right"/);
   assert.match(block, /min-height: 44px/);
   assert.match(block, /\.mt-ph-pk \{[^}]*touch-action: manipulation/);
   assert.match(block, /\.mt-ph-padopen \{[^}]*touch-action: manipulation/);

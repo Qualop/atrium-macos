@@ -26,7 +26,7 @@ try {
   result.realCmd.backend = JSON.parse(fs.readFileSync(path.join(ENV.ATRIUM_DATA_DIR, 'backend.json'), 'utf8'));
   delete result.realCmd.backend.token;
   result.realCmd.appLog = appLog().split('\n').filter((l) => l.includes(`pid=${r1.pid}`));
-  result.realCmd.info = await page.evaluate(() => ({ profile: window.__mt.api.info.profile, herdrSession: window.__mt.api.info.herdrSession, port: window.__mt.api.info.port }));
+  result.realCmd.info = await page.evaluate(() => ({ profile: window.__mt.api.info.profile, terminalSession: window.__mt.api.info.terminalSession, port: window.__mt.api.info.port }));
   log('real.cmd 창', JSON.stringify(result.realCmd));
   await shot(page, 'real-1-real-profile-no-dev-badge', log);
 
@@ -54,7 +54,7 @@ try {
   const npm = spawn('cmd.exe', ['/d', '/c', 'npm', 'run', 'real', '--', '--remote-debugging-port=9392'], { cwd: APP_ROOT, env: { ...process.env, ...ENV, ATRIUM_APP_USERDATA: path.join(DEV, 'app-npm') }, stdio: 'ignore', windowsHide: true });
   const n = await attachCdp(9392, log);
   await sleep(1000);
-  result.npmReal = { badge: await badge(n.page), info: await n.page.evaluate(() => ({ profile: window.__mt.api.info.profile, herdrSession: window.__mt.api.info.herdrSession, port: window.__mt.api.info.port })) };
+  result.npmReal = { badge: await badge(n.page), info: await n.page.evaluate(() => ({ profile: window.__mt.api.info.profile, terminalSession: window.__mt.api.info.terminalSession, port: window.__mt.api.info.port })) };
   log('npm run real 창', JSON.stringify(result.npmReal));
   await shot(n.page, 'real-3-npm-run-real', log);
   await n.page.evaluate(() => window.close()).catch(() => {});

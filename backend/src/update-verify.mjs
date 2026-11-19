@@ -1,5 +1,6 @@
 import { assertMacosVersions } from './update-version.mjs';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -46,7 +47,13 @@ export async function verifyBundle(bundle, { version, arch = process.arch, proto
     const node = path.join(root, 'runtime/node');
     const probe = readProbe(exec(node, ['--input-type=module', '-e', "import {DatabaseSync} from 'node:sqlite';const d=new DatabaseSync(':memory:');d.close();console.log(JSON.stringify({node:process.versions.node,arch:process.arch}))"], { encoding: 'utf8', env: cleanEnv(), timeout: 15000 }));
     if (!supportedNode(probe.node) || probe.arch !== arch || probe.node !== metadata.node) throw Error('Bundled Node does not match release metadata.');
-    if (protocol != null && !metadata.herdrProtocols?.includes(protocol)) throw Error('New bundle does not support the running herdr protocol.');
+    // 지금 도는 터미널 서버의 세대(hc) 또는 옛 herdr 프로토콜을 새 번들이 받아야 한다. v0.5부터 hc 고정 tar.gz를 싣는다(SHA-256을 manifest와 맞춘다)
+    if (protocol != null && !(metadata.hcGenerations || []).includes(protocol) && !metadata.herdrProtocols?.includes(protocol)) throw Error('New bundle does not support the running terminal server.');
+    if (metadata.hc) {
+      const archive = path.join(root, '.tools/hc', `${metadata.hc}-${metadata.hcTarget}.tar.gz`);
+      if (!fs.statSync(archive).isFile() || !fs.realpathSync(archive).startsWith(fs.realpathSync(bundle) + path.sep)) throw Error('Missing bundled herdr-core archive.');
+      if (crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex') !== metadata.hcSha256) throw Error('Bundled herdr-core archive does not match release metadata.');
+    }
     info.signature = team && team !== 'not set' ? `team:${team}` : 'adhoc'; info.node = probe.node; info.herdr = metadata.herdr;
   } catch (e) { problems.push(String(e.message || e).slice(0, 700)); }
   return { ok: problems.length === 0, problems, info };

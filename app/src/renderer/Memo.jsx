@@ -28,11 +28,18 @@ export function InlineConfirm({ message, onYes, onNo, yes }) {
   );
 }
 
+// 먼 얼굴의 제목(글자는 화면 기준 크기). P112: 배율은 이 얼굴만 구독한다(메모 전체는 배율로 다시 그리지 않는다)
+function MemoFar({ h, title, onDoubleClick, children }) {
+  const zoom = useFlowStore(zoomSel);
+  return <div className="mt-memo-far" title={title} onDoubleClick={onDoubleClick} style={{ fontSize: Math.min(14 / Math.max(zoom, 0.02), h * 0.3) }}>{children}</div>;
+}
+
 function MemoNodeInner({ data, selected }) {
   const t = useT();
   const id = data.memoId;
   const m = useStore((st) => st.memos.get(id));
-  const zoom = useFlowStore(zoomSel);
+  const mw = m ? m.w : 0;
+  const far = useFlowStore((st) => !!m && memoFar(mw, st.transform[2])); // P112: 배율은 먼 얼굴 단계로만 구독한다(먼 얼굴 글자는 MemoFar가)
   const [edit, setEdit] = useState(() => !!m && !m.text);
   const [draft, setDraft] = useState(m ? m.text : '');
   const [confirm, setConfirm] = useState(null);
@@ -41,7 +48,6 @@ function MemoNodeInner({ data, selected }) {
   const wantFocus = useRef(!!m && !m.text);
   const startEdit = () => { wantFocus.current = true; setEdit(true); };
   const asked = useStore((st) => st.memoEdit === id);
-  const far = !!m && memoFar(m.w, zoom);
   useEffect(() => { if (asked) { takeMemoEdit(id); startEdit(); } }, [asked]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!edit && m) setDraft(m.text); }, [m && m.text, edit]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -82,7 +88,7 @@ function MemoNodeInner({ data, selected }) {
         {!far && <button className="mt-x nodrag" data-action="memo-delete" title={t('memo.deleteTitle')} onClick={() => del()}>×</button>}
       </div>
       {far
-        ? <div className="mt-memo-far" title={t('memo.editTitle')} onDoubleClick={() => editMemo(id)} style={{ fontSize: Math.min(14 / Math.max(zoom, 0.02), m.h * 0.3) }}>{title || t('memo.title')}</div>
+        ? <MemoFar h={m.h} title={t('memo.editTitle')} onDoubleClick={() => editMemo(id)}>{title || t('memo.title')}</MemoFar>
         : edit
           ? <textarea ref={ta} className="mt-memo-edit nodrag nowheel" data-field="memo-text" value={draft} spellCheck={false} placeholder={t('memo.placeholder')}
               onChange={(e) => setDraft(e.target.value)} onBlur={() => save()}

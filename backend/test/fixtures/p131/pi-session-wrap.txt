@@ -1,0 +1,10 @@
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+next draft line long wrapped 한글도 섞인 draft words go here and keep going until the line wraps past the input box width of the harness so we can see how it folds into the next row of the box ok
+end long wrapped 한글도 섞인 draft words go here and keep going until the line wraps past the input box width of the harness so we can see how it folds into the next row of the box ok end
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+C:\work\demo
+↑10 ↓5 0.0%/128k (auto)                                                                                                                                             (atrium_c0nn) demo-model

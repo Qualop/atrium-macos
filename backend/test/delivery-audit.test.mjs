@@ -7,7 +7,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((a, b)
 function fixture(send) {
   const rows = new Map();
   const store = { activeDeliveries: () => [], insertDelivery: (d) => rows.set(d.deliveryId, { ...d }), updateDelivery: (id, p) => Object.assign(rows.get(id), p) };
-  const q = new DeliveryQueue({ store, cfg: { submitConfirmMs: 30000, deliveryMaxWaitMs: 60000 }, view: () => ({ state: 'ready', agentPresent: true, herdrConnected: true }), send });
+  const q = new DeliveryQueue({ store, cfg: { submitConfirmMs: 30000, deliveryMaxWaitMs: 60000 }, view: () => ({ state: 'ready', agentPresent: true, termConnected: true }), send });
   return { q, rows };
 }
 

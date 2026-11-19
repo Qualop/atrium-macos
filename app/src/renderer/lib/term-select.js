@@ -1,8 +1,8 @@
 // P42: 터미널 노드의 웹 같은 글 고르기(ARCH 7.2, E12). 순수 함수만 둔다(단위 시험 p42-lib).
-// 터미널 노드의 화면은 herdr가 다시 그린 프레임이라 xterm의 scrollback이 비어 있고, Claude Code 전체 화면 렌더러는
+// 터미널 노드의 화면은 터미널 서버가 다시 그린 프레임이라 xterm의 scrollback이 비어 있고, Claude Code 전체 화면 렌더러는
 // 휠(SGR)로 스스로 대화를 스크롤한다. 그래서 선택을 화면 칸이 아니라 "문서" 줄에 붙인다.
 // - claude 같은 앱(live): 프레임마다 앞 화면과 새 화면을 견줘 글이 몇 줄 움직였는지(findShift) 찾고, 본 줄을 문서(TermDoc)에 모은다.
-// - 셸(buffer): herdr 기록(pane.read recent)을 xterm scrollback에 넣고, 새 출력으로 밀려난 줄도 scrollback으로 보낸다(TerminalView).
+// - 셸(buffer): 터미널 기록(pane.read recent)을 xterm scrollback에 넣고, 새 출력으로 밀려난 줄도 scrollback으로 보낸다(TerminalView).
 //   문서 줄 = xterm 버퍼의 절대 줄이다.
 // 선택은 문서 줄과 칸 경계({ line, col })로 들고, 보이는 부분만 xterm select()로 그린다.
 
@@ -184,7 +184,7 @@ export function lineRange(cells) {
 export function stripAnsi(s) {
   return String(s ?? '').replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-9;:?]*[A-Za-z]/g, '').replace(/\x1b[()][A-Z0-9]/g, '');
 }
-// herdr 기록 줄(history, 화면 너비로 감긴 줄, 화면 줄 포함, 끝 빈 줄은 빠짐) 가운데 지금 화면(screen) 위에 있는 줄 수.
+// 터미널 기록 줄(history, 화면 너비로 감긴 줄, 화면 줄 포함, 끝 빈 줄은 빠짐) 가운데 지금 화면(screen) 위에 있는 줄 수.
 // 화면의 글이 기록 끝부분과 줄마다 같아야 한다. 맞는 자리가 없으면 -1(넣지 않는다)
 export function historyAbove(history, screen) {
   const H = history.map(keyOf), S = screen.map(keyOf);
@@ -204,7 +204,7 @@ export function historyPrefill(lines, rows) {
   if (!lines.length) return '';
   return lines.map((l) => `\x1b[0m${l}\x1b[0m`).join('\r\n') + '\r\n'.repeat(rows);
 }
-// 화면이 움직인 줄 수로 설명되지 않게 많이 바뀌었는가(빠른 출력이 한 프레임에 지나감, cls). 그러면 판 안 기록을 herdr 기록으로 다시 맞춘다
+// 화면이 움직인 줄 수로 설명되지 않게 많이 바뀌었는가(빠른 출력이 한 프레임에 지나감, cls). 그러면 판 안 기록을 터미널 기록으로 다시 맞춘다
 export function bigChange(prev, next, min = 3) {
   if (!prev || !next || prev.length !== next.length) return false;
   let n = 0;

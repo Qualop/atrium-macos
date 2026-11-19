@@ -22,7 +22,7 @@ await sleep(1500);
 const s = await page.evaluate((n) => [...window.__mt.getState().sessions.values()].find((x) => x.name === n), N);
 if (!s) throw new Error(`${N} 노드가 생기지 않았다`);
 const parent = await page.evaluate((id) => window.__mt.getState().sessions.get(id), s.parentSessionId);
-log('새 노드', { name: s.name, kind: s.kind, origin: s.origin, parent: parent && parent.name, paneId: s.paneId, herdrWorkspaceId: s.herdrWorkspaceId, state: s.state, hooked: s.hooked, lastAnswer: s.lastAnswer });
+log('새 노드', { name: s.name, kind: s.kind, origin: s.origin, parent: parent && parent.name, paneId: s.paneId, termWorkspaceId: s.termWorkspaceId, state: s.state, hooked: s.hooked, lastAnswer: s.lastAnswer });
 const rect = await page.evaluate((id) => window.__mt.getState().nodes.get(id), s.sessionId);
 const aRect = await page.evaluate((id) => window.__mt.getState().nodes.get(id), await sid(page, A));
 const overlaps = before.filter((n) => n.id !== s.sessionId && rect.x < n.x + n.w && n.x < rect.x + rect.w && rect.y < n.y + n.h && n.y < rect.y + rect.h).length;
@@ -50,7 +50,7 @@ log('끄기 확인 문구', await page.evaluate((n) => document.querySelector(`.
 await shot(page, 'f3-4-kill-confirm', log);
 await page.click(`.mt-node[data-name="${N}"] .mt-kill .mt-btn.danger`);
 await until(async () => !(await page.evaluate((n) => [...window.__mt.getState().sessions.values()].some((x) => x.name === n), N)), 30000);
-log('끈 뒤', { aState: await page.evaluate((n) => [...window.__mt.getState().sessions.values()].find((x) => x.name === n).state, A), panes: herdr('pane.list', { workspace_id: s.herdrWorkspaceId }).panes.map((p) => `${p.pane_id}:${p.agent || 'shell'}`) });
+log('끈 뒤', { aState: await page.evaluate((n) => [...window.__mt.getState().sessions.values()].find((x) => x.name === n).state, A), panes: herdr('pane.list', { workspace_id: s.termWorkspaceId }).panes.map((p) => `${p.pane_id}:${p.agent || 'shell'}`) });
 log('이벤트', execFileSync(process.execPath, [path.join(REPO, 'backend', 'bin', 'atrium.mjs'), '--dev', 'events', '--limit', '400'], { encoding: 'utf8' }).split('\n').filter((l) => l.includes('closed') || l.includes('adopted')).slice(-4));
 await frame(page, [A], { maxZoom: 0.5 });
 await shot(page, 'f3-5-after-kill', log);

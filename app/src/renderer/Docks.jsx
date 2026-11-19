@@ -7,10 +7,11 @@
 // - P30: 덩어리 안 세션끼리의 연결은 터미널 위를 지나지 않는다. 맞닿은 칸은 경계 위 다리, 같은 바깥 변에 닿는 칸은 괄호, 그 밖은 둘레 길,
 //   둘레에 닿지 않는 칸은 칩(DockLinks). 누르면 오간 기록. 그 덩어리 안에 연결이 있을 때만 그린다.
 //   잇기는 지금처럼 잇기 모드에서 가운데 점(SessionNode의 가운데 잇기 손잡이)끼리 끈다. 점은 잇기 모드에서만 보인다.
-// - herdr 레이아웃과 패널 크기는 바꾸지 않는다. 제어기는 지금처럼 노드 크기로 화면을 받는다.
+// - 터미널 서버의 레이아웃과 패널 크기는 바꾸지 않는다. 제어기는 지금처럼 노드 크기로 화면을 받는다.
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { useStore as useFlowStore } from '@xyflow/react';
+import { useStore as useFlowStore, useStoreApi } from '@xyflow/react';
 import { api } from './api.js';
+import { useZoomStyle } from './zoom-var.js'; // P112: 화면 기준 굵기를 렌더 없이
 import { useStore, getState, setNodesLocal, setDockLocal, openDialog, toast, loadBoard, beginLayoutEdit } from './store.js';
 import { STATE_LABEL } from './lib/labels.js';
 import { dt } from './lib/dock-text.js';
@@ -66,20 +67,23 @@ function applyNow(dockId, f, key) {
   setNodesLocal([...layoutTree(t2, outer).rects]);
   saveTree(dockId, key);
 }
+// P112: 분할선·테두리·손잡이의 화면 기준 굵기는 배율이 바뀔 때마다 useZoomStyle이 요소에 바로 쓴다(프레임마다 다시 그리지 않는다). 끌 때의 배율은 누른 때 읽는다
 const hitStyle = (zoom) => ({ '--hit': `${HIT / Math.max(zoom, 0.02)}px`, '--line': `${1.5 / Math.max(zoom, 0.02)}px` });
+const gripStyle = (zoom) => { const s = Math.max(22, 22 / Math.max(zoom, 0.02)); return { width: s, height: s, left: 1 - s / 2, top: 1 - s / 2 }; };
 
 function DividerNodeInner({ data }) {
   const dragWith = useDrag(data.dockId);
   const { dockId, path, index, dir } = data;
   useT();
-  const zoom = useFlowStore(zoomSel);
+  const flow = useStoreApi();
+  const ref = useZoomStyle(hitStyle); // P112: 굵기는 배율이 바뀔 때 요소에 바로 쓴다. 끌 때의 배율은 누른 때 읽는다
   const onPointerDown = (e) => {
     if (e.button !== 0) return;
     const d = getState().docks.get(dockId);
     if (!d) return;
     const base = d.tree, outer = dockOuterNow(d);
     if (!outer) return;
-    dragWith(e, zoom, (dx, dy) => {
+    dragWith(e, flow.getState().transform[2], (dx, dy) => {
       const t2 = moveDivider(base, outer, path, index, dir === 'row' ? dx : dy);
       setDockLocal(dockId, { tree: t2 });
       setNodesLocal([...layoutTree(t2, outer).rects]);
@@ -87,7 +91,7 @@ function DividerNodeInner({ data }) {
   };
   const onDoubleClick = (e) => { e.stopPropagation(); applyNow(dockId, (tr, o) => evenDivider(tr, o, path, index), 'dividerError'); };
   return (
-    <div className={`mt-divider ${dir} nodrag nopan`} style={hitStyle(zoom)} onPointerDown={onPointerDown} onDoubleClick={onDoubleClick} data-dock={dockId} data-path={path.join('.')} data-index={index} title={dt('dividerTitle')} />
+    <div className={`mt-divider ${dir} nodrag nopan`} ref={ref} onPointerDown={onPointerDown} onDoubleClick={onDoubleClick} data-dock={dockId} data-path={path.join('.')} data-index={index} title={dt('dividerTitle')} />
   );
 }
 export const DividerNode = memo(DividerNodeInner);
@@ -97,7 +101,8 @@ function DockEdgeInner({ data }) {
   const dragWith = useDrag(data.dockId);
   const { dockId, side } = data;
   useT();
-  const zoom = useFlowStore(zoomSel);
+  const flow = useStoreApi();
+  const ref = useZoomStyle(hitStyle);
   const onPointerDown = (e) => {
     if (e.button !== 0) return;
     const d = getState().docks.get(dockId);
@@ -105,7 +110,7 @@ function DockEdgeInner({ data }) {
     const outer = dockOuterNow(d);
     if (!outer) return;
     let last = null;
-    dragWith(e, zoom, (dx, dy) => {
+    dragWith(e, flow.getState().transform[2], (dx, dy) => {
       last = dragOuter(d.tree, outer, side, side === 'left' || side === 'right' ? dx : dy);
       setNodesLocal([...layoutTree(d.tree, last).rects]);
     }, (moved) => {
@@ -114,7 +119,7 @@ function DockEdgeInner({ data }) {
     });
   };
   const dir = side === 'left' || side === 'right' ? 'row' : 'col';
-  return <div className={`mt-dockedge ${dir} s-${side} nodrag nopan`} style={hitStyle(zoom)} onPointerDown={onPointerDown} data-role="dock-edge" data-dock={dockId} data-side={side} title={t('sizeBar.edgeTitle')} />;
+  return <div className={`mt-dockedge ${dir} s-${side} nodrag nopan`} ref={ref} onPointerDown={onPointerDown} data-role="dock-edge" data-dock={dockId} data-side={side} title={t('sizeBar.edgeTitle')} />;
 }
 export const DockEdge = memo(DockEdgeInner);
 
@@ -149,7 +154,8 @@ function DockGripInner({ data }) {
   const dragWith = useDrag(data.dockId);
   const { dockId } = data;
   useT();
-  const zoom = useFlowStore(zoomSel);
+  const flow = useStoreApi();
+  const ref = useZoomStyle(gripStyle);
   const onPointerDown = (e) => {
     if (e.button !== 0) return;
     const d = getState().docks.get(dockId);
@@ -158,7 +164,7 @@ function DockGripInner({ data }) {
     if (!outer) return;
     const need = minSize(d.tree);
     let last = outer;
-    dragWith(e, zoom, (dx, dy) => {
+    dragWith(e, flow.getState().transform[2], (dx, dy) => {
       last = { ...outer, w: Math.max(need.w, Math.round(outer.w + dx)), h: Math.max(need.h, Math.round(outer.h + dy)) };
       setNodesLocal([...layoutTree(d.tree, last).rects]);
     }, () => {
@@ -166,8 +172,7 @@ function DockGripInner({ data }) {
       api.call('dock.update', { dock: dockId, w: last.w, h: last.h }).catch(fail('gripError'));
     });
   };
-  const s = Math.max(22, 22 / Math.max(zoom, 0.02));
-  return <div className="mt-dockgrip nodrag nopan" style={{ width: s, height: s, left: 1 - s / 2, top: 1 - s / 2 }} data-role="dock-grip" data-dock={dockId} onPointerDown={onPointerDown} title={dt('gripTitle')} />;
+  return <div className="mt-dockgrip nodrag nopan" ref={ref} data-role="dock-grip" data-dock={dockId} onPointerDown={onPointerDown} title={dt('gripTitle')} />;
 }
 export const DockGrip = memo(DockGripInner);
 

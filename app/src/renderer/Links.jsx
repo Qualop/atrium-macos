@@ -13,6 +13,7 @@ import { linkLabelLevel, shifted, linkLabelHidden } from './lib/link-labels.js';
 import { DOCK_LABEL_ZOOM, dockLabelParts } from './lib/dock-links.js';
 import { useT, tMsg, errText, fmtTime } from './lib/i18n.js';
 import { linkLabel } from '../../../backend/src/links.mjs';
+import { shownRole } from './lib/roles.js'; // P141(#17)
 import { useDialog } from './dialog.js';
 
 const ACTIVE_MS = 30 * 60 * 1000;
@@ -41,7 +42,7 @@ export function LinkEdge({ id, sourceX, sourceY, targetX, targetY, sourcePositio
   const [lx, ly] = shifted(lx0, ly0, data);
   const active = to && to.state === 'working' && link.lastAt && Date.now() - link.lastAt < ACTIVE_MS && ['prompt', 'target_submitted', 'target_working'].includes(link.lastKind);
   const kind = link.role ? 'role' : link.observed ? 'observed' : 'spawned';
-  const label = !link.role && link.spawned && !link.lastText ? t('links.spawned') : linkLabel(link); // 띄움만 있는 선은 사전의 글
+  const label = !link.role && link.spawned && !link.lastText ? t('links.spawned') : linkLabel({ ...link, role: shownRole(link.role) }); // 띄움만 있는 선은 사전의 글
   const fit = labelFit(data);
   const hot = hover || !!selected || dialogOn;
   const level = lab ? linkLabelLevel({ zoom, awake: lab.awake, hot, compact: fit.compact }) : null;
@@ -124,7 +125,8 @@ export function RoleDialog({ from, to, onClose }) {
 }
 
 const EVENT_KINDS = ['role', 'notice', 'unlink', 'prompt', 'prompt_result', 'wait_result', 'keys', 'reply', 'spawn', 'target_submitted', 'target_working', 'target_waiting', 'target_done', 'target_exited'];
-const eventLabel = (t, kind) => (EVENT_KINDS.includes(kind) ? t(`links.event.${kind}`) : kind);
+const eventLabel = (t, kind) => (EVENT_KINDS.includes(kind) ? t(`links.event.${kind}`) : kind === 'relation' ? t('relations.eventRelation') : kind); // P156: 관계 바뀜
+const REL_TAGS = ['assign', 'report', 'share']; // P156: 지시 꼬리표(위 → 하위 지시, 하위 → 위 보고, 동료끼리 공유)
 
 // 선을 누르면 뜨는 오간 기록과 끊기
 export function LinkPanel({ linkId, onClose }) {
@@ -160,19 +162,19 @@ export function LinkPanel({ linkId, onClose }) {
     <div className="mt-linkpanel nowheel" data-role="link-panel" data-link={linkId}>
       <div className="mt-linkpanel-head">
         <b>@{a ? a.name : '?'} → @{b ? b.name : '?'}</b>
-        {link.role && <span className="mt-edge-tag role">{link.role}</span>}
+        {link.role && <span className="mt-edge-tag role">{shownRole(link.role)}</span>}
         {link.spawned && <span className="mt-edge-tag">{t('links.spawned')}</span>}
         {b && <Pill s={b} />}
         <span className="mt-node-sp" />
         <button className="mt-btn small ghost" onClick={() => { onClose(); getState().navigateTo && b && getState().navigateTo(b.sessionId); }} data-action="link-go">{t('links.goTo', { name: b ? b.name : '' })}</button>
         <button className="mt-x" onClick={onClose} title={t('common.close')}>×</button>
       </div>
-      <div className="mt-linkpanel-sub">{t('links.herdrName')} <span className="mono">{link.toAgentName}</span> · {t('links.panelInfo', { pane: link.toPaneId, n: link.count })}</div>
+      <div className="mt-linkpanel-sub">{t('links.agentName')} <span className="mono">{link.toAgentName}</span> · {t('links.panelInfo', { pane: link.toPaneId, n: link.count })}</div>
       <div className="mt-linkpanel-body">
         {events === null && <div className="mt-chat-empty">{t('common.loading')}</div>}
         {events && events.map((e) => (
           <div key={e.id} className={`mt-linkev k-${e.kind}`} data-kind={e.kind}>
-            <div className="mt-linkev-head"><span className="mt-linkev-t">{fmtTime(e.t)}</span> <b>{eventLabel(t, e.kind)}</b>{e.data && e.data.status ? <span className="mt-card-sub"> · {e.data.status}</span> : null}{e.data && e.data.ok === false ? <span className="mt-card-sub bad"> · {t('delivery.failed')}</span> : null}</div>
+            <div className="mt-linkev-head"><span className="mt-linkev-t">{fmtTime(e.t)}</span> <b>{eventLabel(t, e.kind)}</b>{e.data && REL_TAGS.includes(e.data.tag) ? <span className={`mt-edge-tag tag-${e.data.tag}`} data-tag={e.data.tag}>{t(`relations.tag.${e.data.tag}`)}</span> : null}{e.kind === 'relation' && e.data && e.data.after ? <span className="mt-card-sub"> · {t(`relations.rel.${e.data.after.relation}`)}{e.data.relation === 'auto' ? ` (${t('relations.rel.auto')})` : ''}</span> : null}{e.data && e.data.status ? <span className="mt-card-sub"> · {e.data.status}</span> : null}{e.data && e.data.ok === false ? <span className="mt-card-sub bad"> · {t('delivery.failed')}</span> : null}</div>
             {e.text && <pre className="mt-linkev-text">{e.text}</pre>}
           </div>
         ))}

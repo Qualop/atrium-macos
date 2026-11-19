@@ -1,4 +1,4 @@
-// P14 창 시험: 트레이 아이콘은 늘 있고(트레이 상주 기본 켜짐), 메뉴로 백엔드를 다시 띄우고, 끄고(창을 닫음), 켜고, herdr까지 끄고(확인), 백엔드도 끄고 끝낸다.
+// P14 창 시험: 트레이 아이콘은 늘 있고(트레이 상주 기본 켜짐), 메뉴로 백엔드를 다시 띄우고, 끄고(창을 닫음), 켜고, 터미널까지 끄고(확인), 백엔드도 끄고 끝낸다.
 // 판: herdr 세션 atrium-dev-p14, 포트 47829, backend/.dev/p14. 세션은 띄우지 않는다. 대화 목록은 빈 폴더만 읽는다(실제 기록으로 영역을 열지 않게).
 // 사용: MT_E2E_OUT=p14 node test/e2e/p14-tray.mjs
 import fs from 'node:fs';
@@ -26,8 +26,14 @@ const env = { ...cleanEnv(), ...ENV };
 const atrium = (...a) => execFileSync(process.execPath, [path.join(REPO, 'backend', 'bin', 'atrium.mjs'), '--dev', ...a], { encoding: 'utf8', env });
 const backendFile = path.join(ENV.ATRIUM_DATA_DIR, 'backend.json');
 const backendPid = () => { try { return JSON.parse(fs.readFileSync(backendFile, 'utf8')).pid; } catch { return null; } };
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const healthy = async () => { try { const r = await fetch(`http://127.0.0.1:${ENV.ATRIUM_PORT}/health`); return r.ok; } catch { return false; } };
-const herdrRunning = () => { const out = execFileSync('herdr', ['session', 'list'], { encoding: 'utf8' }); const line = out.split('\n').find((l) => l.startsWith(`${ENV.ATRIUM_HERDR_SESSION} `)); return !!line && /\brunning\b/.test(line); };
+// P129: 터미널 서버(hc)는 백엔드가 알려 준 서버 pid로 본다(백엔드가 꺼져 있으면 마지막으로 본 pid)
+let termPid = null;
+const termRunning = () => {
+  if (!termPid) { try { termPid = JSON.parse(atrium('status', '--json')).terminal.serverPid || null; } catch {} }
+  return !!termPid && alive(termPid);
+};
 
 const results = [];
 const step = (name, ok, detail) => { results.push({ name, ok: !!ok, detail }); log(`${ok ? '통과' : '실패'} ${name}`, detail ?? ''); };
@@ -39,7 +45,6 @@ const idle = () => until(async () => !(await tray()).busy, 60000, 300);
 const windows = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
 // 앱이 끝났는지는 main pid로 본다. 백엔드가 물려받은 출력 파이프 때문에 Playwright의 close 이벤트는 늦거나 오지 않는다(harness closeApp 참고)
 const mainPid = await app.evaluate(() => process.pid);
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 let exited = false;
 try {
   const page = await app.firstWindow();
@@ -51,7 +56,7 @@ try {
   await page.evaluate(() => window.__mt.api.call('settings.set', { key: 'language', value: 'ko' }));
   await until(async () => (await tray()).lang === 'ko', 5000).catch(() => {});
   const tk = await tray();
-  step('언어를 한국어로 바꾸면 트레이 메뉴와 툴팁이 한국어', tk.menu.some((m) => m.startsWith('백엔드 켜짐')) && tk.menu.includes('열기') && /내 차례/.test(tk.tooltip), { menu: tk.menu, tooltip: tk.tooltip });
+  step('언어를 한국어로 바꾸면 트레이 메뉴와 툴팁이 한국어', tk.menu.some((m) => m.startsWith('앱 연결 서비스 실행 중')) && tk.menu.includes('열기') && /응답 필요/.test(tk.tooltip), { menu: tk.menu, tooltip: tk.tooltip });
 
   // 1. 백엔드 다시 띄우기: pid가 바뀌고 창이 다시 붙는다
   const pid1 = backendPid();
@@ -65,7 +70,7 @@ try {
   await run('backend-stop'); await sleep(300); await idle();
   await until(async () => !(await tray()).connected, 15000).catch(() => {});
   const t2 = await tray();
-  step('백엔드 끄기: 창이 닫히고 백엔드가 꺼지며 앱은 트레이에 남는다', (await windows()) === 0 && !(await healthy()) && !exited && t2.menu.some((m) => m.startsWith('백엔드 꺼짐')) && t2.menu.includes('백엔드 켜기'), { windows: await windows(), menu: t2.menu });
+  step('백엔드 끄기: 창이 닫히고 백엔드가 꺼지며 앱은 트레이에 남는다', (await windows()) === 0 && !(await healthy()) && !exited && t2.menu.some((m) => m.startsWith('앱 연결 서비스 중지됨')) && t2.menu.includes('앱 연결 서비스 시작'), { windows: await windows(), menu: t2.menu });
   await sleep(4000);
   step('창이 없으면 꺼진 백엔드를 다시 띄우지 않는다', !(await healthy()));
 
@@ -82,23 +87,24 @@ try {
   step('열기: 창이 다시 뜬다', true);
   await shot(page2, 'p14-tray-reopened', log);
 
-  // 5. herdr까지 모두 끄기: 확인에서 취소하면 그대로, 확인하면 창, herdr, 백엔드가 꺼진다
+  // 5. 터미널 모두 끄기: 확인에서 취소하면 그대로, 확인하면 창, 터미널 서버, 백엔드가 꺼진다
   await app.evaluate(() => { global.__mtTrayConfirm = () => false; });
-  await run('herdr-stop'); await sleep(800);
-  step('herdr까지 끄기를 취소하면 그대로다', herdrRunning() && (await healthy()) && (await windows()) === 1);
+  await run('terminal-stop'); await sleep(800);
+  step('터미널 모두 끄기를 취소하면 그대로다', termRunning() && (await healthy()) && (await windows()) === 1);
   await app.evaluate(() => { global.__mtTrayConfirm = (q) => { global.__mtTrayAsked = q; return true; }; });
-  await run('herdr-stop'); await sleep(300); await idle();
+  await run('terminal-stop'); await sleep(300); await idle();
   const asked = await app.evaluate(() => global.__mtTrayAsked || null);
-  await until(async () => !herdrRunning(), 15000).catch(() => {});
-  step('herdr까지 끄기: 확인을 묻고, 창, herdr, 백엔드가 꺼진다', asked && /herdr/.test(asked.message) && !herdrRunning() && !(await healthy()) && (await windows()) === 0, { asked: asked && asked.message, herdr: herdrRunning() });
+  await until(async () => !termRunning(), 15000).catch(() => {});
+  step('터미널 모두 끄기: 확인을 묻고, 창, 터미널 서버, 백엔드가 꺼진다', asked && !!asked.message && !termRunning() && !(await healthy()) && (await windows()) === 0, { asked: asked && asked.message, terminal: termRunning() });
+  termPid = null;
 
-  // 6. 다시 열면 백엔드와 herdr가 다시 뜬다
+  // 6. 다시 열면 백엔드와 터미널 서버가 다시 뜬다
   const wp3 = app.waitForEvent('window');
   await run('open');
   const page3 = await wp3;
   await page3.waitForFunction(() => window.__mt && window.__mt.getState().boardLoaded, null, { timeout: 90000 });
-  await until(() => herdrRunning(), 30000).catch(() => {});
-  step('다시 열면 백엔드와 herdr가 다시 뜬다', (await healthy()) && herdrRunning());
+  await until(() => { if (!termRunning()) termPid = null; return !!termPid; }, 30000).catch(() => {});
+  step('다시 열면 백엔드와 터미널 서버가 다시 뜬다', (await healthy()) && termRunning());
 
   // 7. 백엔드도 끄고 끝내기
   await run('quit-all');
@@ -110,7 +116,7 @@ try {
 } finally {
   if (!exited) await Promise.race([app.close().catch(() => {}), sleep(8000)]);
   try { if (await healthy()) atrium('backend', 'stop'); } catch {}
-  try { execFileSync('herdr', ['--session', ENV.ATRIUM_HERDR_SESSION, 'server', 'stop'], { encoding: 'utf8' }); } catch {}
+  try { if (termPid && alive(termPid)) process.kill(termPid); } catch {} // 이 시험 판의 터미널 서버(직접 본 pid)만
 }
 fs.writeFileSync(path.join(OUT, 'p14-tray.json'), JSON.stringify(results, null, 2));
 log(`결과 ${results.filter((r) => r.ok).length}/${results.length}`);

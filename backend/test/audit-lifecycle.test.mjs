@@ -6,8 +6,8 @@ import { newRuntime } from '../src/state.mjs';
 const defer = () => { let resolve; const promise = new Promise((r) => resolve = r); return { promise, resolve }; };
 function fixture(t, kind='shell') {
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'atrium-audit-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
- const b=new Backend({logDir:dir,killWaitMs:0}); const s={sessionId:'s',name:'s',agentName:'s',kind,paneId:'w1:p1',herdrWorkspaceId:'w1',rt:newRuntime({kind,hooked:false})};
- b.sessions.set('s',s); b.requireHerdr=()=>{}; b.broadcastSession=()=>{};
+ const b=new Backend({logDir:dir,killWaitMs:0}); const s={sessionId:'s',name:'s',agentName:'s',kind,paneId:'w1:p1',termWorkspaceId:'w1',rt:newRuntime({kind,hooked:false})};
+ b.sessions.set('s',s); b.requireTerminal=()=>{}; b.broadcastSession=()=>{};
  b.closed=[];b.closeSession=(x)=>{b.closed.push(x.sessionId);b.sessions.delete(x.sessionId);};
  b.adapter={workspacePanes:async()=>[],closePane:async()=>{},closeWorkspace:async()=>{}};
  return {b,s};
@@ -63,11 +63,7 @@ test('Claude recovery uses the current conversation after clear, keeping the boa
  const{b,s}=fixture(t,'claude');s.rt.claudeSessionId='new-native';s.settingsPath='/fixture/settings.json';s.resumeArgv=['claude','--resume','s','--settings',s.settingsPath];
  assert.equal(b.launchOf(s).sessionId,'new-native');assert.equal(s.sessionId,'s');
 });
-test('resume registration reports the current Claude conversation ID',async(t)=>{
- const{b,s}=fixture(t,'claude');s.rt.claudeSessionId='new-native';s.rt.herdr={status:'idle',present:true};s.resumeArgv=['claude','--resume','new-native','--settings','fixture'];
- let captured;b.adapter.registerResume=async args=>{captured=args;};b.store={addEvent(){}};b.verifyResume=async()=>true;
- await b.registerResume(s);assert.equal(captured.sessionId,'new-native');
-});
+// P129: 터미널에 이어 가기를 등록하던 단계(registerResume)는 hc에 없어 뺐다. 지금 대화 ID로 이어 가는 것은 위 launchOf 시험이 본다
 for(const kind of ['codex','gemini','agy'])test(`${kind} explicit default model is not stored as the literal null string`,async(t)=>{
  const{b}=fixture(t,kind);const cwd=b.cfg.logDir;let model;
  b.adapter.agentKinds=async()=>[];b.ensureWorkspace=()=>{};b.geminiSettings=b.agySettings=()=>({settingsPath:'fixture',env:{}});b.codexSettings=(_id,opts)=>({args:opts.args,env:{},hookToken:'fixture',settingsPath:'',runtime:{}});

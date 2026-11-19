@@ -1,0 +1,14 @@
+
+
+
+
+
+
+  ┃
+  ┃  next draft line long wrapped 한글도 섞인 draft words go here and keep going until the line wraps past the input box width of the harness so we can
+  ┃  see how it folds into the next row of the box ok end long wrapped 한글도 섞인 draft words go here and keep going until the line wraps past the input
+  ┃  box width of the harness so we can see how it folds into the next row of the box ok end
+  ┃
+  ┃  Build · demo-model demo connection
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  C:\work\demo                                                                                                        15 (0%)  ctrl+p commands    C:\work\demo

@@ -3,6 +3,7 @@
 //   node scripts/release-check.mjs <태그>            정식 v0.2.0: main이 dev와 같은 커밋인지, main의 두 version이 태그와 같은지, 태그가 있으면 main을 가리키는지
 //                                                    dev 빌드 v0.2.1-dev.1: main이 dev의 조상인지, dev의 두 version이 태그와 같은지, 그 버전이 main의 version(지금 정식)보다 높은지, 태그가 있으면 dev를 가리키는지
 //   node scripts/release-check.mjs <태그> --remote   origin/main·origin/dev로 본다(git fetch 뒤)
+//   P117: 늘 고정 herdr-core(backend/src/hc/pin.mjs)를 받아 SHA-256·버전·서명자(CN=herdr)를 확인한다. --no-hc는 그 단계를 건너뛴다(오프라인일 때만)
 // 종료 코드: 0 통과, 1 맞지 않음, 2 실행 불가(인자, git 오류)
 // 릴리즈 절차(작업은 dev에서 한다):
 //   1. dev에서 app/package.json·backend/package.json과 두 잠금 파일 맨 위의 version을 새 버전으로 올려 커밋하고 푸시한다.
@@ -15,6 +16,7 @@
 //   2. node scripts/release-check.mjs v<x.y.z-dev.n>이 통과하면 dev 커밋에 git tag -a v<x.y.z-dev.n>을 달고 태그를 푸시한다(main은 그대로).
 //   3. gh release create v<x.y.z-dev.n> --prerelease로 사전 릴리즈를 만든다. node scripts/release-check.mjs v<x.y.z-dev.n> --remote로 원격을 확인한다.
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 import { compareVersions } from '../backend/src/update.mjs';
 
 export const STABLE_TAG_RE = /^v\d+\.\d+\.\d+$/;
@@ -67,6 +69,14 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
   const problems = devBuild
     ? checkDevRelease({ tag, main, dev, tagCommit, appVersion: dev && versionAt(devRef, 'app/package.json'), backendVersion: dev && versionAt(devRef, 'backend/package.json'), stableVersion: main && versionAt(mainRef, 'app/package.json'), mainIsAncestor: !!(main && dev && isAncestor(main, dev)) })
     : checkRelease({ tag, main, dev, tagCommit, appVersion: main && versionAt(mainRef, 'app/package.json'), backendVersion: main && versionAt(mainRef, 'backend/package.json') });
+  // P117: 판이 받는 고정 herdr-core(backend/src/hc/pin.mjs)를 그 주소에서 받아 SHA-256, 버전, Authenticode 서명자(CN=herdr)를 확인한다.
+  // 서명은 hc 릴리스마다 조건부라(P114) 고정 버전을 올릴 때 바뀔 수 있다. 약 3.8MB를 받는다. --no-hc로 건너뛴다(네트워크가 없을 때만)
+  if (!args.includes('--no-hc')) {
+    const { verifyPinnedHc, HC_PIN } = await import('../backend/src/hc/pin.mjs');
+    const r = await verifyPinnedHc({ pin: HC_PIN, tmpRoot: os.tmpdir() });
+    for (const p of r.problems) problems.push(`herdr-core ${HC_PIN.version}: ${p}`);
+    if (!r.problems.length) console.log(`고정 herdr-core ${HC_PIN.version} 확인: SHA-256 ${r.sha256.slice(0, 12)}…, 버전 ${r.version}, 서명 ${r.signature.status} (${r.signature.subject})`);
+  }
   if (problems.length) { console.error(`릴리즈 확인 실패 (${tag}):`); for (const p of problems) console.error(`- ${p}`); process.exit(1); }
   if (devBuild) console.log(`dev 빌드 확인 통과: ${tag}, ${devRef} = ${dev.slice(0, 8)}, ${mainRef}(${main.slice(0, 8)})는 그 조상${tagCommit ? ', 태그가 dev를 가리킴' : ', 태그 아직 없음'}`);
   else console.log(`릴리즈 확인 통과: ${tag}, ${mainRef} = ${devRef} = ${main.slice(0, 8)}${tagCommit ? ', 태그가 main을 가리킴' : ', 태그 아직 없음'}`);

@@ -1,5 +1,5 @@
-// P18 이름 옮기기(multitask → Atrium): 옮길 옛 판 고르기, 기록 속 경로 고치기, 폴더 옮기기(통째로, 항목마다, 복사), 옛 백엔드 끄기, herdr 옮기기 판단, 다시 켜도 두 번 옮기지 않기.
-// herdr와 claude 없이 돈다. 옛 백엔드는 이 시험이 띄운 가짜 서버(자식 프로세스)다. 실제 판 폴더(%LOCALAPPDATA%\multitask, atrium)는 건드리지 않는다
+// P18 이름 옮기기(multitask → Atrium): 옮길 옛 판 고르기, 기록 속 경로 고치기, 폴더 옮기기(통째로, 항목마다, 복사), 옛 백엔드 끄기, 다시 켜도 두 번 옮기지 않기.
+// 터미널 서버와 claude 없이 돈다. 옛 백엔드는 이 시험이 띄운 가짜 서버(자식 프로세스)다. 실제 판 폴더(%LOCALAPPDATA%\multitask, atrium)는 건드리지 않는다
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, legacyOf, legacyAppUserData, profileEnv, LEGACY_REAL } from '../src/config.mjs';
-import { pathFixer, moveDataDir, migrateLegacyData, fixLegacyRecords, shutdownLegacyBackend, checkLegacyDevHerdr, LegacyBlocked, MARKER, PANE_PREFIX } from '../src/rename-migrate.mjs';
+import { pathFixer, moveDataDir, migrateLegacyData, fixLegacyRecords, shutdownLegacyBackend, LegacyBlocked, MARKER } from '../src/rename-migrate.mjs';
 import { Store } from '../src/store.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -17,12 +17,12 @@ const write = (f, t) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs
 
 test('P18 옮길 옛 판: 실제 판 기본값일 때만 진짜 옛 판, 덮은 판은 ATRIUM_LEGACY_*를 둘 다 줘야, dev는 없음', () => {
   const real = loadConfig({ argv: [], env: {} });
-  assert.deepEqual(real.legacy, { herdrSession: 'multitask', dataDir: LEGACY_REAL.dataDir });
+  assert.deepEqual(real.legacy, { terminalSession: 'multitask', dataDir: LEGACY_REAL.dataDir });
   assert.equal(loadConfig({ argv: ['--dev'], env: {} }).legacy, null);
   // 시험 판(판 값을 덮음): 옛 값을 주지 않으면 옮기지 않는다(진짜 multitask를 끄지 않게)
   for (const env of [{ ATRIUM_HERDR_SESSION: 'atrium-dev-x' }, { ATRIUM_DATA_DIR: 'C:/t/d' }, { MTASK_PORT: '47900' }]) assert.equal(loadConfig({ argv: [], env }).legacy, null, JSON.stringify(env));
   const t = loadConfig({ argv: [], env: { ATRIUM_HERDR_SESSION: 'atrium-dev-p18-new', ATRIUM_DATA_DIR: 'C:/t/new', ATRIUM_LEGACY_HERDR_SESSION: 'atrium-dev-p18-old', ATRIUM_LEGACY_DATA_DIR: 'C:/t/old' } });
-  assert.deepEqual(t.legacy, { herdrSession: 'atrium-dev-p18-old', dataDir: path.resolve('C:/t/old') });
+  assert.deepEqual(t.legacy, { terminalSession: 'atrium-dev-p18-old', dataDir: path.resolve('C:/t/old') });
   assert.equal(loadConfig({ argv: [], env: { ATRIUM_LEGACY_HERDR_SESSION: 'x' } }).legacy, null); // 하나만 주면 옮기지 않는다
   // 백엔드 자식에게 넘기는 값: 옮길 판을 그대로 넘기고, 없으면 빈 글(자식도 옮기지 않는다)
   const child = loadConfig({ argv: [], env: profileEnv(t) });
@@ -44,7 +44,7 @@ test('P18 경로 고치기: 역슬래시, 슬래시, JSON 두 역슬래시 꼴, 
   const argv = JSON.stringify(['claude', '--resume', 'id', '--settings', 'C:/Users/u/AppData/Local/multitask/sessions/id.json', '--plugin-dir', 'C:/Users/u/AppData/Local/multitask/plugin/multitask-herdr', '--append-system-prompt-file', 'C:/Users/u/AppData/Local/multitask/plugin/board-system-prompt.md']);
   const out = JSON.parse(fix(argv));
   assert.equal(out[4], 'C:/Users/u/AppData/Local/atrium/sessions/id.json');
-  assert.equal(out[6], 'C:/Users/u/AppData/Local/atrium/plugin/atrium-herdr');
+  assert.equal(out[6], 'C:/Users/u/AppData/Local/atrium/plugin/atrium'); // P132: 플러그인 이름 atrium
   assert.equal(out[8], 'C:/Users/u/AppData/Local/atrium/plugin/board-system-prompt.md');
   const json = JSON.stringify({ env: { MTASK_DATA_DIR: 'C:\\Users\\u\\AppData\\Local\\multitask' } });
   assert.equal(JSON.parse(fix(json)).env.MTASK_DATA_DIR, 'C:\\Users\\u\\AppData\\Local\\atrium');
@@ -106,72 +106,52 @@ test('P18 폴더 옮기기: 판 기록을 옮기지도 복사하지도 못하면
   assert.ok(fs.existsSync(path.join(a, 'sessions', 's1.json')));
 });
 
-// 가짜 herdr 세션들: { 이름: { exists, running } }
-function fakeHerdr(state) {
-  const calls = [];
-  const mk = (session) => ({
-    exists: () => !!(state[session] && state[session].exists),
-    probe: async () => ({ running: !!(state[session] && state[session].running) }),
-    stopServer: async () => { calls.push(['stop', session]); if (state[session].stuck) return { stopped: false }; state[session].running = false; return { stopped: true }; },
-  });
-  return { mk, calls };
-}
 function testCfg(d) {
   return loadConfig({ argv: [], env: { ATRIUM_HERDR_SESSION: 'atrium-dev-p18-new', ATRIUM_PORT: '47834', ATRIUM_DATA_DIR: path.join(d, 'new'), ATRIUM_LEGACY_HERDR_SESSION: 'atrium-dev-p18-old', ATRIUM_LEGACY_DATA_DIR: path.join(d, 'old') } });
 }
 
 test('P18 옮기기: 옛 백엔드를 끄지 못하면 옮기지 않고 멈춘다(다음에 다시)', async () => {
   const d = tmp(); const cfg = testCfg(d); oldBoard(cfg.legacy.dataDir);
-  const h = fakeHerdr({ 'atrium-dev-p18-old': { exists: true, running: true } });
-  await assert.rejects(migrateLegacyData(cfg, { herdr: h.mk, shutdown: async () => ({ stopped: false, pid: 1, error: 'busy' }) }), (e) => e instanceof LegacyBlocked && e.code === 'legacy_backend_running');
+  await assert.rejects(migrateLegacyData(cfg, { shutdown: async () => ({ stopped: false, pid: 1, error: 'busy' }) }), (e) => e instanceof LegacyBlocked && e.code === 'legacy_backend_running');
   assert.ok(fs.existsSync(path.join(cfg.legacy.dataDir, 'board.db'))); assert.ok(!fs.existsSync(cfg.dbFile));
-  assert.deepEqual(h.calls, []); // herdr도 그대로
 });
 
-test('P18 옮기기: 옛 판과 옛 herdr를 옮기고, 옛 폴더에 표시와 새 백엔드를 가리키는 backend.json. 다시 켜면 옮기지 않는다', async () => {
+test('P18 옮기기: 옛 판을 옮기고, 옛 폴더에 표시와 새 백엔드를 가리키는 backend.json. 다시 켜면 옮기지 않는다(P129: 옛 herdr 세션은 옮기지 않는다)', async () => {
   const d = tmp(); const cfg = testCfg(d); oldBoard(cfg.legacy.dataDir);
-  const st = { 'atrium-dev-p18-old': { exists: true, running: true } };
-  const h = fakeHerdr(st);
   let shut = 0;
-  const r = await migrateLegacyData(cfg, { herdr: h.mk, shutdown: async () => { shut++; return { stopped: true, pid: 123 }; } });
+  const r = await migrateLegacyData(cfg, { shutdown: async () => { shut++; return { stopped: true, pid: 123 }; } });
   assert.equal(r.data, 'moved'); assert.equal(r.move.method, 'rename');
   assert.equal(shut, 1);
-  assert.deepEqual(h.calls, [['stop', 'atrium-dev-p18-old']]); // 폴더를 옮기기 전에 끈다
-  assert.equal(r.herdr.pending, true); assert.equal(r.herdr.stopped, true);
+  assert.equal('herdr' in r, false);
   assert.ok(fs.existsSync(cfg.dbFile));
   const mark = JSON.parse(fs.readFileSync(path.join(cfg.legacy.dataDir, MARKER), 'utf8'));
   assert.equal(mark.movedTo, cfg.dataDir);
   const tomb = JSON.parse(fs.readFileSync(path.join(cfg.legacy.dataDir, 'backend.json'), 'utf8'));
   assert.equal(tomb.pid, process.pid); assert.equal(tomb.port, 47834);
-  // 다시 켬: 판 기록이 이미 있다. 새 herdr 세션도 생겼다
-  st['atrium-dev-p18-new'] = { exists: true, running: true };
-  const again = await migrateLegacyData(cfg, { herdr: h.mk, shutdown: async () => { shut++; return { running: false }; } });
-  assert.equal(again.data, 'already'); assert.equal(again.herdr.pending, false); assert.equal(shut, 1);
+  // 다시 켬: 판 기록이 이미 있다
+  const again = await migrateLegacyData(cfg, { shutdown: async () => { shut++; return { running: false }; } });
+  assert.equal(again.data, 'already'); assert.equal(shut, 1);
 });
 
-test('P18 옮기기: 옛 herdr가 없으면 판 기록만 옮긴다. 옛 판이 없으면 아무것도 하지 않는다', async () => {
-  const d = tmp(); const cfg = testCfg(d); oldBoard(cfg.legacy.dataDir);
-  const h = fakeHerdr({});
-  const r = await migrateLegacyData(cfg, { herdr: h.mk, shutdown: async () => ({ running: false }) });
-  assert.equal(r.data, 'moved'); assert.equal(r.herdr.pending, false); assert.deepEqual(h.calls, []);
+test('P18 옮기기: 옛 판이 없으면 아무것도 하지 않는다', async () => {
   const d2 = tmp(); const cfg2 = testCfg(d2);
-  const r2 = await migrateLegacyData(cfg2, { herdr: fakeHerdr({ 'atrium-dev-p18-old': { exists: true, running: true } }).mk, shutdown: async () => { throw new Error('부르면 안 된다'); } });
-  assert.equal(r2.data, 'none'); assert.equal(r2.herdr.pending, false); // 판 기록 없이 옛 herdr만 끄지 않는다
+  const r2 = await migrateLegacyData(cfg2, { shutdown: async () => { throw new Error('부르면 안 된다'); } });
+  assert.equal(r2.data, 'none');
   assert.equal(await migrateLegacyData(loadConfig({ argv: ['--dev'], env: {} })), null);
 });
 
 test('P18 옮기기: 복사로 옮겼으면 옛 폴더에 남은 원본이 있어도 표시 파일 때문에 다시 옮기지 않는다', async () => {
   const d = tmp(); const cfg = testCfg(d); oldBoard(cfg.legacy.dataDir);
   const rename = (x, y) => { if (/old$|board\.db$/.test(x)) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }); fs.renameSync(x, y); };
-  const r = await migrateLegacyData(cfg, { herdr: fakeHerdr({}).mk, shutdown: async () => ({ running: false }), rename });
+  const r = await migrateLegacyData(cfg, { shutdown: async () => ({ running: false }), rename });
   assert.equal(r.move.method, 'merge'); assert.ok(r.move.copied.includes('board.db'));
   assert.ok(fs.existsSync(path.join(cfg.legacy.dataDir, 'board.db')));
   fs.rmSync(cfg.dbFile); // 새 판 기록이 없어져도
-  const again = await migrateLegacyData(cfg, { herdr: fakeHerdr({}).mk, shutdown: async () => { throw new Error('부르면 안 된다'); } });
+  const again = await migrateLegacyData(cfg, { shutdown: async () => { throw new Error('부르면 안 된다'); } });
   assert.equal(again.data, 'none');
 });
 
-test('P18 기록 고치기: 세션 행의 설정 파일·이어 가기 인자, 세션 설정 파일의 경로, 옛 패널 ID 표시(한 번만)', async () => {
+test('P18 기록 고치기: 세션 행의 설정 파일·이어 가기 인자, 세션 설정 파일의 경로(P129: 패널 ID는 그대로)', async () => {
   const d = tmp(); const cfg = testCfg(d); oldBoard(cfg.legacy.dataDir);
   fs.rmSync(path.join(cfg.legacy.dataDir, 'board.db')); fs.rmSync(path.join(cfg.legacy.dataDir, 'board.db-wal'));
   const old = cfg.legacy.dataDir, slash = (p) => p.split(path.sep).join('/');
@@ -181,30 +161,19 @@ test('P18 기록 고치기: 세션 행의 설정 파일·이어 가기 인자, �
   st0.updateSession('closed', { closedAt: 5 });
   st0.close();
   write(path.join(old, 'sessions', 'a.json'), JSON.stringify({ env: { MTASK_DATA_DIR: old } }));
-  const mig = await migrateLegacyData(cfg, { herdr: fakeHerdr({}).mk, shutdown: async () => ({ running: false }) });
+  const mig = await migrateLegacyData(cfg, { shutdown: async () => ({ running: false }) });
   const store = new Store(cfg.dbFile);
   try {
     const fixed = fixLegacyRecords(store, cfg, mig);
-    assert.equal(fixed.sessions, 3); assert.equal(fixed.settingsFiles, 1); assert.equal(fixed.panes, 2); // 닫힌 세션의 패널은 그대로
+    assert.equal(fixed.sessions, 3); assert.equal(fixed.settingsFiles, 1); assert.equal('panes' in fixed, false);
     const a = store.getSession('a');
     assert.equal(a.settingsPath, slash(path.join(cfg.dataDir, 'sessions', 'a.json')));
-    assert.equal(a.resumeArgv[4], a.settingsPath); assert.equal(a.resumeArgv[6], slash(path.join(cfg.dataDir, 'plugin', 'atrium-herdr')));
-    assert.equal(a.paneId, `${PANE_PREFIX}w1:p1`);
+    assert.equal(a.resumeArgv[4], a.settingsPath); assert.equal(a.resumeArgv[6], slash(path.join(cfg.dataDir, 'plugin', 'atrium')));
+    assert.equal(a.paneId, 'w1:p1');
     assert.equal(store.getSession('closed').paneId, 'w1:p6');
     assert.equal(JSON.parse(fs.readFileSync(path.join(cfg.sessionsDir, 'a.json'), 'utf8')).env.MTASK_DATA_DIR, cfg.dataDir);
     assert.equal(store.getMeta('renamedFrom').from, old);
-    assert.equal(store.markPanesGone(PANE_PREFIX), 0); // 두 번 붙이지 않는다
   } finally { store.close(); }
-});
-
-test('P18 개발용 기본 판: 옛 개발용 herdr(multitask-dev)가 돌면 뜨지 않는다. 멈췄거나 없거나 덮은 판이면 그대로', async () => {
-  const dev = loadConfig({ argv: ['--dev'], env: {} });
-  const mk = (state) => fakeHerdr(state).mk;
-  await assert.rejects(checkLegacyDevHerdr(dev, { herdr: mk({ 'multitask-dev': { exists: true, running: true } }) }), (e) => e.code === 'legacy_dev_herdr_running' && /multitask-dev/.test(e.message));
-  assert.equal(await checkLegacyDevHerdr(dev, { herdr: mk({ 'multitask-dev': { exists: true, running: false } }) }), null);
-  assert.equal(await checkLegacyDevHerdr(dev, { herdr: mk({}) }), null);
-  assert.equal(await checkLegacyDevHerdr(loadConfig({ argv: ['--dev'], env: { ATRIUM_HERDR_SESSION: 'atrium-dev-p18' } }), { herdr: mk({ 'multitask-dev': { exists: true, running: true } }) }), null);
-  assert.equal(await checkLegacyDevHerdr(loadConfig({ argv: [], env: {} }), { herdr: mk({ 'multitask-dev': { exists: true, running: true } }) }), null);
 });
 
 test('P18 옛 백엔드 끄기: backend.json의 pid가 살아 있으면 backend.shutdown으로 끄고 꺼질 때까지 기다린다', async () => {

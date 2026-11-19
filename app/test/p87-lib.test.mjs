@@ -77,7 +77,7 @@ test('미션 맵: 강조 등급(일함, 내 차례, 쉼, 잠듦, 끝남)과 판�
   const m = phoneMission(graph(), { order: ['wa', 'wb', 'wc'] });
   const tier = Object.fromEntries(m.groups.flatMap((g) => g.rows).map((r) => [r.name, r.tier]));
   assert.deepEqual(tier, { lead: 'work', w1: 'rest', w1a: 'rest', w2: 'turn', solo: 'sleep', far: 'rest', old: 'done' });
-  assert.deepEqual(m.counts, { all: 7, work: 1, turn: 1 });
+  assert.deepEqual(m.counts, { all: 7, work: 1, turn: 1, review: 0 }); // P119: review = 작업 완료
   assert.deepEqual([m.groups[0].count, m.groups[0].work, m.groups[0].turn], [4, 1, 1]);
   // 판의 세션 요약이 더 새롭다: w1이 일하기 시작, 셸은 명령이 돌면 일함
   const live = new Map([['w1', { sessionId: 'w1', name: 'w1', state: 'working' }], ['solo', { sessionId: 'solo', name: 'solo', kind: 'shell', state: 'ready', shell: { atPrompt: false } }]]);

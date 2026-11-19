@@ -30,7 +30,7 @@ test('full-auto provider args override conflicting launcher modes without changi
     ['codex', ['--sandbox=read-only', '-a', 'on-request', '-c', 'approval_policy="never"', '-c=sandbox_mode="read-only"', '-c', 'model_reasoning_effort="high"', '--model', 'provider/model', '--profile', 'two words'], ['-c', 'model_reasoning_effort="high"', '--model', 'provider/model', '--profile', 'two words', '--dangerously-bypass-approvals-and-sandbox']],
     ['gemini', ['--approval-mode', 'plan', '--no-yolo', '-dymfixture', '--include-directories', 'two words'], ['-dmfixture', '--include-directories', 'two words', '--approval-mode', 'yolo']],
     ['agy', ['--mode=plan', '--dangerously-skip-permissions=false', '--model', 'fixture-model', '--project', 'two words'], ['--model', 'fixture-model', '--project', 'two words', '--dangerously-skip-permissions']],
-    ['claude', ['--resume', 'exact-id', '--permission-mode', 'plan', '--model', 'haiku'], ['--resume', 'exact-id', '--model', 'haiku', '--permission-mode', 'bypassPermissions']],
+    ['claude', ['--resume', 'exact-id', '--permission-mode', 'plan', '--model', 'haiku'], ['--resume', 'exact-id', '--model', 'haiku', '--permission-mode', 'auto']], // macOS 판: Claude는 자동 권한 검토(auto)
   ];
   for (const [kind, args, expected] of cases) {
     const before = [...args];
@@ -61,9 +61,9 @@ test('launch planning forces the same policy for all managed providers and leave
   const b = { features: { settings: { get: () => ({ agentAutoApprove: true }) } } };
   for (const kind of ['claude', 'codex', 'gemini', 'agy']) {
     const p = spawnPlanOf(b, { kind, permissionMode: 'plan' });
-    assert.equal(p.permissionMode, 'bypassPermissions', kind);
+    assert.equal(p.permissionMode, kind === 'claude' ? 'auto' : 'bypassPermissions', kind); // macOS 판: Claude는 auto
     if (kind !== 'claude') assert.deepEqual(p.args, providerPermissionArgs(kind, [], 'manual', { autoApprove: true }));
-    else assert.ok(buildStartArgs({ sessionId: 'fixture', settingsPath: '/tmp/fixture.json', ...p }).includes('bypassPermissions'));
+    else { const a = buildStartArgs({ sessionId: 'fixture', settingsPath: '/tmp/fixture.json', ...p }); assert.ok(a.includes('auto') && !a.includes('bypassPermissions')); }
   }
   const l = normalizeLauncher({ name: 'fixture', harness: 'codex', args: '--sandbox read-only --profile "two words"' });
   const p = spawnPlanOf(b, { launcherDef: l });
@@ -93,9 +93,11 @@ test('quoted wrapper and pasted argv round-trip through resume and POSIX executi
   }
   assert.deepEqual(splitArgs(parseCommandLine("claude --x 'one''two'", { platform: 'darwin' }).launcher.args), ['--x', 'onetwo']);
   const c = parseCommandLine('TOKEN="private value" codex --profile "work account"');
-  assert.equal(c.launcher.harness, 'codex');
+  // P115: Codex 하네스 런처는 env 칸이 없다. env가 붙은 Codex 줄은 명령 런처가 되고, env는 원문 명령과 따로 둔다(값을 명령에 섞지 않는다)
+  assert.equal(c.launcher.harness, 'command'); assert.equal(c.recognized.why, 'envNotClaude');
   assert.deepEqual(c.launcher.env, { TOKEN: 'private value' });
-  assert.deepEqual(splitArgs(c.launcher.args), ['--profile', 'work account']);
+  assert.deepEqual(splitArgs(c.launcher.command), ['codex', '--profile', 'work account']);
+  assert.ok(!c.launcher.command.includes('private value'));
   assert.deepEqual(c.recognized.env, ['TOKEN']);
 });
 
@@ -119,7 +121,7 @@ test('background tool processes use POSIX inspection on Mac/Linux and distinguis
 
 const tick = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r)); };
 function queueRig({ send, inspect } = {}) {
-  const v = { state: 'ready', herdrConnected: true, agentPresent: true, kind: 'claude', hooked: true };
+  const v = { state: 'ready', termConnected: true, agentPresent: true, kind: 'claude', hooked: true };
   const rows = new Map(), sent = [];
   const q = new DeliveryQueue({ cfg: { inputQuietMs: 3000, deliveryMaxWaitMs: 900000, submitConfirmMs: 30000 },
     view: () => v, store: { activeDeliveries: () => [], insertDelivery: (d) => rows.set(d.deliveryId, { ...d }), getDelivery: (id) => rows.get(id), updateDelivery: (id, p) => Object.assign(rows.get(id), p) },

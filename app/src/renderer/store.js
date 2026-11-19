@@ -3,6 +3,7 @@
 // currentWs는 "판을 바꾸는" 값이 아니라 마지막에 고른(가 본) 워크스페이스다. 새 세션 대화상자와 그룹의 기본 폴더에 쓴다.
 // P6c: 메모·칸반 노드(I3·I4), Thread(I2), 루프(I5), 설정(I7), 출력 보기(I1)와 미션 맵(I6) 창을 연 상태.
 import { useSyncExternalStore } from 'react';
+import { matesOf } from './lib/faces.js'; // P124
 import { api } from './api.js';
 import { step } from './crash-watch.js'; // P86: 단계 기록
 import { setLanguage, t, errText } from './lib/i18n.js';
@@ -13,7 +14,8 @@ import { applyWorkLight, applyMissionOpen } from './lib/work-light.js'; // P107:
 const state = {
   conn: 'connecting',
   connDetail: null,
-  herdr: { connected: null },
+  terminal: { connected: null }, // 터미널 서버(hc) 상태(terminal.status, terminal 이벤트)
+  migration: null, // 옛 판(herdr)을 herdr-core로 옮기는 진행(terminal.migrate). 없으면 null
   sessions: new Map(), // sessionId → summary(backend summary)
   nodes: new Map(), // sessionId → { x, y, w, h, z, size }
   boardLoaded: false,
@@ -28,7 +30,6 @@ const state = {
   // P3
   boardSeenAt: null, // A3: 판을 마지막으로 본 시각(백엔드 기록)
   resources: null, // D1
-  clients: null, // D3: 판 전용 herdr 세션에 붙은 다른 화면
   peers: null, // P47: 이 백엔드에 붙은 창·웹 클라이언트 { clients, notify(알림 받을 클라이언트 ID), me }
   links: new Map(), // P4: linkId → 연결(누가 누구에게 시켰는지, 역할, 띄움)
   dialog: null, // { kind: 'spawn' | 'role' | 'link' | 'wsopen' | 'wsclose' | 'close', from?, to?, linkId?, cwd?, ids? }
@@ -38,6 +39,7 @@ const state = {
   workspaces: [], // [{ key, name, kind, root, createdAt, counts, x, y }] 처음 생긴 순서
   groups: [], // P44: 가상 그룹 [{ id, name, members: [워크스페이스 키] }](판 데이터 meta wsGroups)
   currentWs: null, // 마지막에 고른(가 본) 워크스페이스의 키
+  viewWs: null, // P121: 위 바·영역·사이드바·찾기·←→로 고른 워크스페이스. 이 워크스페이스의 세션만 터미널을 갖는다(lib/faces.js termAllowed). P124: 세션 노드를 누르거나 초점을 주어도(navigateTo) 그 노드의 워크스페이스로 바뀐다
   vpNow: null, // 지금 캔버스의 뷰포트
   canvasSize: null,
   // P6a
@@ -57,6 +59,7 @@ const state = {
   threadOpen: false,
   loops: new Map(), // loopId → 루프
   settings: null, // { tray, language, … }. language를 받으면 화면 언어를 바꾼다(P16)
+  accounts: [], // macOS 판: Claude 계정 [{ id, name, configDir, builtin, loggedIn, email, sessions }]
   launchers: null, // P33 호출자: { launchers: [{ id, name, harness, …, favorite, preview }], favorites: [id], harnesses }
   outputView: null, // { sessionId, turn } 출력 보기 창
   missionOpen: false, // 미션 맵 덮개
@@ -134,6 +137,7 @@ export async function loadBoard() {
     if (state.convoEdges === before.convoEdges) state.convoEdges = b.convoEdges || [];
   }
   if (!state.boardLoaded || !state.workspaces.some((w) => w.key === state.currentWs)) state.currentWs = b.current || (state.workspaces[0] || {}).key || null;
+  if (!state.boardLoaded || !state.workspaces.some((w) => w.key === state.viewWs)) state.viewWs = state.currentWs; // P121: 판을 열면 판이 기억한 지금 워크스페이스
   if (!state.boardLoaded) { state.viewport = b.viewport || null; state.boardSeenAt = b.seenAt || null; }
   // P86: 판 상태 적용(종류별 수, 그리기 전). 웹 화면만 적는다
   step('board', { n: state.nodes.size, ss: state.sessions.size, cv: state.convoNodes.size, ce: state.convoEdges.length, m: state.memos.size, kb: state.kanbans.size, l: state.links.size, ws: state.workspaces.length });
@@ -148,6 +152,7 @@ export function selectWorkspace(key) {
   if (!key) return;
   const moved = key !== state.currentWs;
   state.currentWs = key;
+  state.viewWs = key; // P121
   changed();
   if (moved) api.call('workspace.select', { workspace: key }).catch(() => {});
   if (state.fitWorkspace) state.fitWorkspace(key);
@@ -157,16 +162,23 @@ export function selectGroup(keys, pick) {
   if (!pick) return;
   const moved = pick !== state.currentWs;
   state.currentWs = pick;
+  state.viewWs = pick; // P121: 묶음을 골라도 터미널은 그 안의 워크스페이스 하나(지금 구성)만. 묶음 전체는 노드가 많아 부하를 줄이려는 뜻에 맞지 않는다
   changed();
   if (moved) api.call('workspace.select', { workspace: pick }).catch(() => {});
   if (state.fitWorkspaces) state.fitWorkspaces(keys && keys.length ? keys : [pick]);
   else if (state.fitWorkspace) state.fitWorkspace(pick);
 }
 // 노드로 갔을 때 그 워크스페이스를 기본으로(새 세션 대화상자의 폴더)
-export function noteWorkspace(key) {
-  if (!key || key === state.currentWs) return;
-  state.currentWs = key; changed();
-  api.call('workspace.select', { workspace: key }).catch(() => {});
+// P124 view: 세션 노드를 누르거나 초점을 주면(navigateTo) 그 워크스페이스가 고른 워크스페이스(viewWs, 터미널을 갖는 곳·위 바의 켜진 칩)도 된다
+export function noteWorkspace(key, { view = false } = {}) {
+  if (!key) return;
+  const viewMoved = view && key !== state.viewWs;
+  if (key === state.currentWs && !viewMoved) return;
+  const moved = key !== state.currentWs;
+  state.currentWs = key;
+  if (view) state.viewWs = key;
+  changed();
+  if (moved) api.call('workspace.select', { workspace: key }).catch(() => {});
 }
 export const wsOf = (id) => { const s = state.sessions.get(id); return s ? s.workspaceKey || null : null; };
 export const wsName = (key) => { const w = state.workspaces.find((x) => x.key === key); return w ? w.name : key ? String(key).split('/').filter(Boolean).slice(-2, -1)[0] || key : '?'; };
@@ -228,10 +240,24 @@ export const askKey = (ask) => (ask ? ask.toolUseId || String(ask.since || '') :
 
 export function markSeen(id) {
   const s = state.sessions.get(id);
-  if (s && s.unseen) api.call('session.markSeen', { session: id }).catch(() => {});
+  if (s && (s.unseen || s.unseenSub)) api.call('session.markSeen', { session: id }).catch(() => {});
 }
 
 // P6a
+// P124: 초점·고른 노드의 짝(같은 덩어리, 부모·자식). 이 노드들도 터미널을 가질 수 있다(lib/faces.js matesOf). 같은 값이면 같은 Set을 돌려준다(구독용)
+let matesMemo = { key: '', set: new Set() };
+let matesIn = null; // 마지막으로 센 입력(초점, 고른 목록, 덩어리, 세션 맵). 같으면 다시 세지 않는다(노드마다 구독한다)
+export function matesNow(st = state) {
+  if (matesIn && matesIn[0] === st.focusId && matesIn[1] === st.selected && matesIn[2] === st.docks && matesIn[3] === st.sessions) return matesMemo.set;
+  matesIn = [st.focusId, st.selected, st.docks, st.sessions];
+  const seeds = [st.focusId, ...st.selected].filter(Boolean);
+  if (!seeds.length) { if (matesMemo.key) matesMemo = { key: '', set: new Set() }; return matesMemo.set; }
+  const parentOf = (id) => { const s = st.sessions.get(id); return s ? s.parentSessionId || (s.branch && s.branch.parentSessionId) || null : null; };
+  const set = matesOf({ seeds, docks: [...st.docks.values()], parentOf, ids: [...st.sessions.keys()] });
+  const key = [...set].sort().join(',');
+  if (key !== matesMemo.key) matesMemo = { key, set };
+  return matesMemo.set;
+}
 export const dockOf = (id) => { for (const d of state.docks.values()) if (d.members.includes(id)) return d; return null; };
 // P17: 고른 순서를 지킨다(배치 틀이 그 순서로 칸을 채운다). 한 번에 새로 고른 것(상자 고르기)은 화면 왼쪽 위부터
 export function setSelected(ids) {
@@ -314,10 +340,9 @@ api.on('$open', async (r) => {
       state.deliveries = mergeSnapshot(before.deliveries, state.deliveries, new Map([...recent.slice().reverse(), ...active].filter((d) => state.sessions.has(d.sessionId)).map((d) => [d.deliveryId, d])));
       changed();
     })(),
-    read('herdr.status', (st) => { if (state.herdr === before.herdr) state.herdr = herdrStateOf(st); }),
+    read('terminal.status', (st) => { if (state.terminal === before.terminal) state.terminal = terminalStateOf(st); if ('migration' in st) state.migration = st.migration || null; }),
     read('resources.get', (v) => { if (state.resources === before.resources) state.resources = v; }),
-    read('herdr.clients', (v) => { if (state.clients === before.clients) state.clients = v; }),
-    loadThread().catch(() => {}), loadLoops().catch(() => {}), loadLaunchers(),
+    loadThread().catch(() => {}), loadLoops().catch(() => {}), loadLaunchers(), loadAccounts(),
     read('settings.get', (v) => { if (state.settings === before.settings) putSettings(v.settings); }).catch(() => {}),
   ]);
   const failed = results.find((v) => v.status === 'rejected');
@@ -346,14 +371,16 @@ api.on('delivery', (d) => {
 // P13: 판 밖 대화 노드가 바뀌었다(새 대화, 자리, 보관, 판 세션이 됨, 묶임 표시)
 export function setConvoNodes(nodes, edges) { state.convoNodes = new Map((nodes || []).map((c) => [c.convId, c])); state.convoEdges = edges || []; changed(); }
 api.on('convo.nodes', (d) => setConvoNodes(d.nodes, d.edges));
-api.on('herdr', (d) => { state.herdr = { ...state.herdr, ...herdrEventOf(d) }; changed(); });
-// P40: herdr 상태(herdr.status 결과, herdr 이벤트) → 창이 쓰는 값. 띠(못 찾음, 다른 프로토콜, 검증하지 않은 버전, 새 버전)와 알약이 읽는다
-export function herdrStateOf(st) {
-  return { connected: st.connected, running: st.running, session: st.session, version: (st.compat && st.compat.version) || null, ...herdrEventOf(st) };
+api.on('terminal', (d) => { state.terminal = { ...state.terminal, ...terminalEventOf(d) }; if (d && 'migration' in d) state.migration = d.migration || null; changed(); });
+// P129: 옛 판 옮기기 진행(판 위 띠와 설정 › 터미널 표가 읽는다)
+api.on('terminal.migrate', (v) => { state.migration = v || null; changed(); });
+// 터미널 상태(terminal.status 결과, terminal 이벤트) → 창이 쓰는 값. hc 띠와 알약이 읽는다
+export function terminalStateOf(st) {
+  return { connected: st.connected, running: st.running, session: st.session, version: (st.compat && st.compat.version) || null, ...terminalEventOf(st) };
 }
-export function herdrEventOf(d) {
+export function terminalEventOf(d) {
   const out = { connected: d.connected };
-  for (const k of ['missing', 'level', 'warning', 'problems', 'protocols', 'tested', 'update', 'path', 'find']) if (k in d) out[k] = d[k];
+  for (const k of ['missing', 'level', 'warning', 'problems', 'path', 'backend', 'hcVersion', 'terminals']) if (k in d) out[k] = d[k]; // P117: 터미널 백엔드(hc 띠, 설정 › 터미널의 hc 버전)
   if (d.version) out.version = d.version;
   if (d.protocol != null) out.protocol = d.protocol;
   return out;
@@ -366,9 +393,15 @@ api.on('workspace.updated', (d) => {
   state.workspaces = d.workspaces || [];
   if (d.groups) state.groups = d.groups; // P44
   if (!state.workspaces.some((w) => w.key === state.currentWs)) state.currentWs = d.current || (state.workspaces[0] || {}).key || null;
+  if (!state.workspaces.some((w) => w.key === state.viewWs)) state.viewWs = state.currentWs; // P121: 고른 워크스페이스가 닫히거나 키가 바뀌면
   changed();
 });
-api.on('herdr.clients', (v) => { state.clients = v; changed(); });
+// P120: 판이 폴더가 없어진 빈 프로젝트 영역을 치웠다. 한 번 알린다(영역이 소리 없이 사라지면 사람이 찾게 된다)
+api.on('workspace.pruned', (d) => {
+  const list = (d && d.workspaces) || [];
+  if (list.length === 1) toast(t('regionPrune.single', { name: list[0].name, root: list[0].root }));
+  else if (list.length > 1) toast(t('regionPrune.multiple', { n: list.length }));
+});
 api.on('clients.updated', (v) => { state.peers = { ...v, me: api.clientId }; changed(); }); // P47
 // P47: 다른 창이 노드를 옮기거나 크기를 바꿨다(board.setNode). 이 창이 보낸 것은 이미 그렸다
 api.on('board.node', (d) => { if (!d || (d.by && d.by === api.clientId) || !state.nodes.has(d.sessionId)) return; setNodeLocal(d.sessionId, { x: d.x, y: d.y, w: d.w, h: d.h, ...(d.z != null ? { z: d.z } : {}) }); });
@@ -402,6 +435,26 @@ export async function loadLaunchers() {
   } catch { /* Older backends may not expose launchers. */ }
 }
 api.on('launchers.updated', (v) => putLaunchers(v));
+// macOS 판: Claude 계정 목록(설정 › Claude 계정, 새 세션·런처의 계정 고르기). 옛 백엔드면 기본 계정 하나
+let accountsRequest = 0;
+export async function loadAccounts() {
+  const request = ++accountsRequest, generation = api.generation;
+  try {
+    const value = await api.call('accounts.list');
+    if (request === accountsRequest && generation === api.generation) { state.accounts = Array.isArray(value) ? value : []; changed(); }
+  } catch { /* Older backends do not expose accounts. */ }
+  return state.accounts;
+}
+api.on('accounts.changed', () => { loadAccounts().catch(() => {}); });
+// macOS 판: Claude 계정 자동 전환 결과(backend account-failover.mjs). 넘겼으면 알리고, 넘길 계정이 없으면 경고한다
+api.on('account.failover', (e) => {
+  if (!e) return;
+  const acct = (id) => { const a = (state.accounts || []).find((x) => x.id === id); return a ? (a.builtin ? t('accounts.defaultName') : a.name) : id || '?'; };
+  if (e.ok && e.why === 'hand') toast(t('accounts.moved', { name: e.name, from: acct(e.from), to: acct(e.to) }));
+  else if (e.ok) toast(t('accounts.switched', { name: e.name, from: acct(e.from), to: acct(e.to) }));
+  else if (e.why === 'none') toast(t('accounts.noOtherToast', { name: e.name, from: acct(e.from) }), 'error');
+  else toast(t('accounts.switchFailed', { name: e.name, error: e.why || '' }), 'error');
+});
 
 // P45: 터미널 글자 배율과 화면 배율(lib/scale.js). 이 창(프로필)의 localStorage에 두어 다시 켜도 남는다.
 // 화면 배율은 preload가 창을 그리기 전에 먼저 맞추고(preload.cjs), 바꾸면 여기서 다시 맞춘다

@@ -51,7 +51,8 @@ test('E5 2.5 방어: 얼굴 경계에 이력을 두어 배율이 조금 흔들�
   assert.equal(faceFor(720, (360 - FACE_HYSTERESIS_PX - 1) / 720, 'close'), 'middle');
   assert.equal(faceFor(720, 0.27, 'middle'), 'middle'); // 194px, 중간 경계도 같다
   const nodes = Array.from({ length: 8 }, (_, i) => ({ id: `n${i}`, x: (i % 4) * 760, y: Math.floor(i / 4) * 500, w: 720, h: 460 }));
-  const vp = { x: 40, y: 140, zoom: 0.4999 };
+  // P124: 터미널 붙이기는 거리 단계(터미널 240px, 경계 여유 88%)를 따른다. 경계 바로 아래(239.9px)
+  const vp = { x: 40, y: 140, zoom: 239.9 / 720 };
   const screen = { width: 1584, height: 828 };
   assert.equal(pickAttached(nodes, vp, screen).length, 0);
   assert.equal(pickAttached(nodes, vp, screen, { prev: new Set(nodes.map((n) => n.id)) }).length, 8);

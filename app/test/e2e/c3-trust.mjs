@@ -21,7 +21,7 @@ try {
   await waitState(page, 't', 'trust_wait', 60000);
   await sleep(1500);
   const t = (await sessionsOf(page)).find((s) => s.name === 't');
-  log('t', { state: t.state, herdr: t.herdr });
+  log('t', { state: t.state, term: t.term });
   await page.evaluate((id) => window.__mt.getState().navigateTo(id), t.id);
   await sleep(2500);
   log('필', await page.evaluate(() => document.querySelector('.mt-node[data-name="t"] .mt-pill').dataset.state), '칩', await page.evaluate(() => [...document.querySelectorAll('.mt-chip.need')].map((c) => c.textContent)));

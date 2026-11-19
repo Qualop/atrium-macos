@@ -15,11 +15,10 @@ async function keyBoard(t, { remote = true, uniquePids = false } = {}) {
   const f = await isolatedBackend(t);
   const calls = [];
   let onSend = async () => {};
-  const adapterCall = f.b.adapter.call;
-  // 외부 herdr 경계만 흉내 낸다. paneKeys, RPC 처리기, keyChain, relay 검사는 운영 코드를 그대로 쓴다.
-  t.mock.method(f.b.adapter, 'call', async function (method, params) {
-    if (method !== 'pane.send_keys') return adapterCall.call(this, method, params);
-    calls.push(structuredClone(params));
+  // 터미널(hc) 경계만 흉내 낸다: 어댑터의 paneKeys(hc terminal.keys·attach 입력). RPC 처리기, keyChain, relay 검사는 운영 코드를 그대로 쓴다.
+  t.mock.method(f.b.adapter, 'paneKeys', async function (paneId, keys) {
+    const params = { pane_id: paneId, keys: structuredClone(keys) };
+    calls.push(params);
     await onSend(params);
     return {};
   });

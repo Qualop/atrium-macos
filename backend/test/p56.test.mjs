@@ -249,7 +249,7 @@ async function boot({ c = clock(), hosts = '', ts = false } = {}) {
   const logs = [];
   const tailscale = ts ? fakeTs(port) : null;
   if (tailscale) await tailscale.refresh();
-  const web = new WebServer({ cfg: { remoteEnabled: true, port, dataDir: dir, profile: 'dev', herdrSession: 'atrium-dev-test' }, store, api: null, now: c.now, settings: () => st, log: (m) => logs.push(m), tailscale });
+  const web = new WebServer({ cfg: { remoteEnabled: true, port, dataDir: dir, profile: 'dev', terminalSession: 'atrium-dev-test' }, store, api: null, now: c.now, settings: () => st, log: (m) => logs.push(m), tailscale });
   delete process.env.ATRIUM_WEB_HOSTS;
   const apiToken = 'board-api-token-for-test';
   const api = new ApiServer({ token: apiToken, handlers: { ...web.handlers(), whoami: (p, cl) => ({ kind: cl.auth.kind, device: cl.auth.device || null }), 'events.subscribe': (p, cl) => { cl.subscribed = true; return {}; } }, authorize: (req) => web.authorize(req, apiToken), onClose: () => {} });

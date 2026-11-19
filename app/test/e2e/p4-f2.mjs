@@ -14,8 +14,7 @@ async function spawnFromDialog(name, { allowHerdr = false, shotName = null } = {
   if (await page.evaluate((n) => [...window.__mt.getState().sessions.values()].some((s) => s.name === n), name)) { log(`${name}: 이미 있음`); return; }
   await page.click('[data-action=spawn]');
   await page.fill('[data-field=name]', name);
-  if (allowHerdr) await page.check('[data-field=allow-herdr]');
-  log(`${name}: 대화상자`, await page.evaluate(() => ({ kind: document.querySelector('[data-field=kind]').value, kinds: [...document.querySelectorAll('[data-field=kind] option')].map((o) => `${o.value}${o.disabled ? '(없음)' : ''}`), model: document.querySelector('[data-field=model]').value, allowHerdr: document.querySelector('[data-field=allow-herdr]').checked })));
+  log(`${name}: 대화상자`, await page.evaluate(() => ({ kind: document.querySelector('[data-field=kind]').value, kinds: [...document.querySelectorAll('[data-field=kind] option')].map((o) => `${o.value}${o.disabled ? '(없음)' : ''}`), model: document.querySelector('[data-field=model]').value })));
   if (shotName) await shot(page, shotName, log);
   await page.click('[data-action=spawn-submit]');
   await page.waitForSelector(`.mt-node[data-name="${name}"]`, { timeout: 30000 });

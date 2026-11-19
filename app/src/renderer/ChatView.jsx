@@ -15,6 +15,7 @@ function ScreenView({ s }) {
   return (
     <div className="mt-chat nowheel">
       <div className="mt-chat-empty">{t('chat.screenHead', { kind: s.kind || t('ask.agent') })}</div>
+      {s.lastPrompt && <div className="mt-msg user" data-role="screen-prompt">{String(s.lastPrompt).slice(0, 600)}</div>}{/* P124: 마지막 요청도(답 위에) */}
       {s.lastAnswer ? <pre className="mt-msg assistant mono">{s.lastAnswer}</pre> : <div className="mt-chat-empty">{t('chat.noTurn')}</div>}
     </div>
   );

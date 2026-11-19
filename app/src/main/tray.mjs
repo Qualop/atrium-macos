@@ -1,7 +1,7 @@
 // I7 트레이 상주(P6b, ARCH 4절 I7). Electron main에서 돈다.
 // - 트레이 아이콘은 앱이 도는 동안 늘 있다(P14). 판 설정 tray(기본 켜짐)는 창을 닫아도 앱이 트레이에 남는지다. 끄면 창을 닫을 때 앱이 끝난다.
-// - 트레이 메뉴(P14): 열기, 내 차례 수(누르면 그 세션), 백엔드 상태와 켜기·끄기·다시 띄우기, herdr까지 모두 끄기(확인), 앱 끝내기, 백엔드도 끄고 끝내기.
-//   백엔드를 끌 때는 창을 먼저 닫는다(열린 창은 꺼진 백엔드를 다시 띄운다). herdr를 끄면 판의 claude가 모두 끝나고, 다시 띄우면 이어 가기로 돌아온다.
+// - 트레이 메뉴(P14): 열기, 내 차례 수(누르면 그 세션), 백엔드 상태와 켜기·끄기·다시 띄우기, 터미널까지 모두 끄기(확인), 앱 끝내기, 백엔드도 끄고 끝내기.
+//   백엔드를 끌 때는 창을 먼저 닫는다(열린 창은 꺼진 백엔드를 다시 띄운다). 터미널 서버를 끄면 판의 claude가 모두 끝나고, 다시 띄우면 이어 가기로 돌아온다.
 // - 창이 없는 동안에는 main이 OS 알림을 띄운다. 규칙은 창(renderer notify.js)과 같다: 내 차례(waiting, trust_wait)가 되고 1.2초 뒤에도 같은 대기면,
 //   같은 대기에는 한 번만. 창이 있으면 창이 정한다. 알림을 누르면 창을 다시 열고 그 노드로 간다.
 // - main은 백엔드에 따로 WebSocket으로 붙는다. 백엔드가 없으면 띄우지 않고 2초마다 다시 붙어 본다(백엔드를 끄는 정리 순서를 막지 않게).
@@ -110,12 +110,12 @@ export function startTray({ cfg, log, hasWindow, showNode, quit, notifications =
     'backend-start': () => work('busyStart', () => startBackend()),
     'backend-restart': () => work('busyRestart', async () => { await stopBackend(); await startBackend(); }),
     'backend-stop': () => work('busyStop', async () => { await closeFirst(); await stopBackend(); }),
-    'herdr-stop': async () => {
-      const ok = await confirm({ message: tr('tray.herdrStopAsk'), detail: tr('tray.herdrStopDetail'), ok: tr('tray.herdrStopOk') });
-      if (!ok) return log('tray herdr stop canceled');
-      return work('busyHerdrStop', async () => {
+    'terminal-stop': async () => {
+      const ok = await confirm({ message: tr('tray.terminalStopAsk'), detail: tr('tray.terminalStopDetail'), ok: tr('tray.terminalStopOk') });
+      if (!ok) return log('tray terminal stop canceled');
+      return work('busyTerminalStop', async () => {
         await closeFirst();
-        if (st.client) await st.client.call('herdr.stop', { confirm: true }).catch((e) => log('tray herdr stop error', e.message));
+        if (st.client) await st.client.call('terminal.stop', { confirm: true }).catch((e) => log('tray terminal stop error', e.message));
         await stopBackend();
       });
     },
@@ -174,7 +174,7 @@ export function startTray({ cfg, log, hasWindow, showNode, quit, notifications =
       ...(st.migration ? [{ id: 'migration', label: st.migration.slice(0, 120), enabled: false }] : []),
       st.connected ? item('backend-restart', tr('tray.backendRestart')) : item('backend-start', tr('tray.backendStart')),
       item('backend-stop', tr('tray.backendStop'), st.connected),
-      item('herdr-stop', tr('tray.herdrStop'), st.connected),
+      item('terminal-stop', tr('tray.terminalStop'), st.connected),
       { type: 'separator' },
       ...(updateLine() ? [updateLine().job ? { id: 'update-apply', label: updateLine().label, enabled: false } : item('update-apply', updateLine().label, st.connected)] : []), // P69
       item('sleep-idle', tr('sleep.trayItem'), st.connected), // P21, P24: 쉬는 리포 모두

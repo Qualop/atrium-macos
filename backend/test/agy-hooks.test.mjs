@@ -17,8 +17,8 @@ test('Antigravity shell hook maps CommandLine and stable tool identity', () => {
 test('Antigravity hook cannot invent final answer text', () => {
   const body = normalizeAgyHook({ atriumEvent: 'Stop', fullyIdle: true, transcriptPath: '/not-claude.jsonl' });
   assert.equal(body.notification_type, 'agy_stop'); assert.equal(body.last_assistant_message, undefined); assert.equal(body.transcript_path, undefined);
-  const rt = newRuntime({ kind: 'agy', hooked: false }); rt.herdr.status = 'idle'; rt.agyTurnActive = true;
-  assert.equal(deriveState(rt).state, 'working'); rt.herdr.status = 'blocked'; assert.equal(deriveState(rt).state, 'waiting');
+  const rt = newRuntime({ kind: 'agy', hooked: false }); rt.term.status = 'idle'; rt.agyTurnActive = true;
+  assert.equal(deriveState(rt).state, 'working'); rt.term.status = 'blocked'; assert.equal(deriveState(rt).state, 'waiting');
 });
 
 test('Outside Atrium, the registered hook is inert and leaves default approval policy in charge', () => {

@@ -17,7 +17,7 @@ import { parseDuration, normalizeTrigger, normalizeStop, decideTarget, stopReaso
 import { missionGraph, categoryOf } from '../src/mission.mjs';
 import { Settings, normalizePatch } from '../src/settings.mjs';
 import { attachFeatures } from '../src/features.mjs';
-import { newRuntime, applyHerdrDisconnected } from '../src/state.mjs';
+import { newRuntime, applyTermDisconnected } from '../src/state.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p6b-'));
@@ -484,10 +484,10 @@ function fakeBackend() {
   let n = 0;
   queue.enqueue = (sessionId, text) => { const d = { deliveryId: `q${++n}`, sessionId, text, status: 'queued', reason: null, createdAt: Date.now() }; queue.items.set(d.deliveryId, d); store.insertDelivery(d); return d; };
   queue.cancel = (id) => { const d = queue.items.get(id); d.status = 'cancelled'; queue.items.delete(id); return d; };
-  const mk = (id, name, kind = 'claude') => ({ sessionId: id, name, kind, cwd: 'C:/x', workspaceKey: 'k', rt: Object.assign(newRuntime({ kind, hooked: kind === 'claude' }), { phase: 'running', herdr: { status: 'idle', present: true, launchPending: false } }) });
+  const mk = (id, name, kind = 'claude') => ({ sessionId: id, name, kind, cwd: 'C:/x', workspaceKey: 'k', rt: Object.assign(newRuntime({ kind, hooked: kind === 'claude' }), { phase: 'running', term: { status: 'idle', present: true, launchPending: false } }) });
   const sessions = new Map([['A', mk('A', 'a')], ['SH', mk('SH', 'sh1', 'shell')]]);
   const b = {
-    store, queue, sessions, bus: new EventEmitter(), cfg: { dataDir: tmp(), claudeProjects: tmp() }, api: { broadcast: () => {} }, adapter: { connected: true }, herdrOk: true,
+    store, queue, sessions, bus: new EventEmitter(), cfg: { dataDir: tmp(), claudeProjects: tmp() }, api: { broadcast: () => {} }, adapter: { connected: true }, termOk: true,
     log: () => {}, hooked: (s) => s.kind === 'claude', workspaceList: () => [{ key: 'k', name: 'repo' }], resolveWorkspace: async () => ({ key: 'k' }),
     resolve: (r) => { for (const s of sessions.values()) if (s.name === r || s.sessionId === r) return s; throw apiError('not_found', r); },
     summary: (s) => ({ sessionId: s.sessionId, name: s.name, kind: s.kind, state: 'ready', unseen: false, workspaceKey: 'k' }),
@@ -556,15 +556,15 @@ test('I2·I6: Thread 줄에서 미션 맵이 사람 → 세션, 루프 선을 �
 test('I8: herdr가 꺼질 때 셸에서 돌던 명령은 끊긴 것으로 남는다. 쉬던 셸은 남기지 않는다', () => {
   const run = newRuntime({ kind: 'shell', hooked: false });
   run.phase = 'running'; run.shell = { atPrompt: false, command: 'ping -n 300 127.0.0.1', procs: ['PING.EXE'] };
-  applyHerdrDisconnected(run, 50);
+  applyTermDisconnected(run, 50);
   assert.deepEqual(run.interruptedTurn, { state: 'shell_running', at: 50, prompt: 'ping -n 300 127.0.0.1' });
   const procOnly = newRuntime({ kind: 'shell', hooked: false });
   procOnly.shell = { atPrompt: false, command: null, procs: ['node.exe'] };
-  applyHerdrDisconnected(procOnly, 1);
+  applyTermDisconnected(procOnly, 1);
   assert.equal(procOnly.interruptedTurn.prompt, 'node.exe');
   const idle = newRuntime({ kind: 'shell', hooked: false });
   idle.shell = { atPrompt: true, command: 'dir', procs: [] };
-  applyHerdrDisconnected(idle, 1);
+  applyTermDisconnected(idle, 1);
   assert.equal(idle.interruptedTurn, null);
 });
 

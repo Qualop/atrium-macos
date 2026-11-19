@@ -11,11 +11,14 @@ import { useStore, getState, toast, setTermScale, setUiScale } from './store.js'
 import { pctOf, parsePct, stepScale, SCALE_MIN, SCALE_MAX, SCALE_STEP } from './lib/scale.js'; // P45
 import { useT, errText, setLanguage, getLanguage, LANGUAGES } from './lib/i18n.js';
 import { LaunchersTab } from './Launchers.jsx'; // P33: 호출자 탭
+import { ConnectionsTab } from './Connections.jsx'; // P115: 연결 탭
 import { DevicesTab } from './WebDevices.jsx'; // P48: 연결된 기기(웹 화면)
 import { useDialog } from './dialog.js'; // P52
 import { BranchSettings } from './Branch.jsx';
 import { UpdateSettings } from './Update.jsx'; // P69: 업데이트 묶음
 import { LIGHT_MODES, workLightOf, applyWorkLight } from './lib/work-light.js'; // P107: 작업 중 테두리 빛
+import { TerminalTab } from './Terminal.jsx'; // P117: 터미널 백엔드와 옮기기
+import { AccountsTab } from './Accounts.jsx'; // macOS 판: Claude 계정
 
 // 한 줄: 이름, 값, 풀이(짧은 글). 이름을 누르면 값 칸의 입력에 초점이 간다(label)
 export function SetRow({ name, hint, children, role }) {
@@ -138,6 +141,25 @@ function AutoApprovalSetting({ settings }) {
   </>;
 }
 
+// macOS 판(사용성): 영역 이름표 단추(자동 정렬, 절전, 세션 추가 …)를 늘 보이기. 끄면 마우스를 올렸을 때와 뗀 뒤 잠시, ⌄로 고정한 영역에만
+function RegionActsSetting({ settings }) {
+  const t = useT();
+  const set = async (value) => { try { await api.call('settings.set', { key: 'regionActsAlways', value }); } catch (e) { toast(t('settings.saveFailed', { error: errText(e) }), 'error'); } };
+  return <SetRow name={t('regionActs.name')} hint={t('regionActs.hint')} role="region-acts-setting"><Toggle checked={!!settings.regionActsAlways} onChange={set} field="setting-regionActsAlways" /></SetRow>;
+}
+
+// P146: 성능 기록(진단 스위치). 판 설정이라 이 판에 붙은 창·웹이 모두 모은다. 10분 뒤 백엔드가 저절로 끈다(backend perf-trace.mjs)
+function PerfTraceSetting({ settings }) {
+  const t = useT();
+  const set = async (value) => {
+    try { await api.call('settings.set', { key: 'perfTrace', value }); toast(value ? t('perfTrace.on') : t('perfTrace.off')); } catch (e) { toast(t('settings.saveFailed', { error: errText(e) }), 'error'); }
+  };
+  return <>
+    <SetRow name={t('perfTrace.name')} hint={t('perfTrace.hint')} role="perf-trace-setting"><Toggle checked={!!settings.perfTrace} onChange={set} field="setting-perfTrace" /></SetRow>
+    <SetNote>{t('perfTrace.note')}</SetNote>
+  </>;
+}
+
 // 일반: 언어, 배율(P45), 작업 중 테두리 빛(P107), 트레이 상주
 function GeneralTab({ settings }) {
   const t = useT();
@@ -156,46 +178,15 @@ function GeneralTab({ settings }) {
       <ScaleSetting kind="term" />
       {settings && <>
         <WorkLightSetting settings={settings} />
+        {'regionActsAlways' in settings && <RegionActsSetting settings={settings} />}
         {'agentAutoApprove' in settings && <AutoApprovalSetting settings={settings} />}
         <SetRow name={t('settings.trayName')} hint={t('settings.tray')} role="tray-setting"><Toggle checked={pending ?? !!settings.tray} onChange={set} field="setting-tray" /></SetRow>
         <SetNote>{t('settings.trayNote')}</SetNote>
-        {'herdrPath' in settings && <HerdrPathSetting settings={settings} />}
         {'updateCheck' in settings && <UpdateSettings settings={settings} />}
+        {'perfTrace' in settings && <PerfTraceSetting settings={settings} />}
       </>}
     </div>
   );
-}
-
-// P40: herdr 실행 파일 경로. 비우면 찾는다(ATRIUM_HERDR 다음 순서). 저장하면 백엔드가 다시 찾고, 못 붙어 있었으면 서버를 띄워 붙는다
-function HerdrPathSetting({ settings }) {
-  const t = useT();
-  const herdr = useStore((st) => st.herdr);
-  const [v, setV] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const save = async () => {
-    if (v == null) return;
-    setBusy(true);
-    try {
-      const r = await api.call('settings.set', { key: 'herdrPath', value: v });
-      setV((current) => current === v ? null : current);
-      const h = r && r.herdr;
-      if (h && h.connected) toast(t('settings.herdrPathOk', { path: h.path || '' }));
-      else if (h && (h.missing || h.level === 'missing')) toast(t('warn.herdrStillMissing'), 'error');
-      else toast(t('settings.herdrPathSaved'));
-    } catch (e) { toast(t('settings.saveFailed', { error: errText(e) }), 'error'); }
-    setBusy(false);
-  };
-  const chosen = herdr && herdr.find && herdr.find.chosen;
-  const now = herdr && herdr.path ? t('settings.herdrPathNow', { path: herdr.path, version: herdr.version ? ` ${herdr.version}` : '', source: chosen ? t(`settings.herdrFrom.${chosen.source}`) : '' }) : t('settings.herdrPathNone');
-  return <>
-    <SetRow name={t('settings.herdrPathName')} hint={t('settings.herdrPathHint')} role="herdr-path-setting">
-      <span className="mt-set-path">
-        <input type="text" className="mt-set-text" spellCheck={false} data-field="setting-herdrPath" placeholder={t('settings.herdrPathPlaceholder')} value={v ?? settings.herdrPath ?? ''} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => { if (!e.nativeEvent.isComposing && e.keyCode !== 229 && e.key === 'Enter') { e.preventDefault(); save(); } }} />
-        <button type="button" className="mt-btn small" data-action="herdr-path-save" disabled={busy || v == null} onClick={save}>{t('settings.herdrPathSave')}</button>
-      </span>
-    </SetRow>
-    <SetNote><span data-role="herdr-path-now">{now}</span> {t('settings.herdrPathNote')}</SetNote>
-  </>;
 }
 
 // P10: 보관 기간(0이면 저절로 보관 끔)과 리포 스스로 찾기
@@ -238,6 +229,12 @@ function SleepSetting({ settings, schema }) {
         <SleepMinutes settings={settings} schema={schema} k="sessionSleepAfterMin" label="sessionSleep.afterLabel" hint="sessionSleep.afterHint" set="sessionSleep.afterSet" off="sessionSleep.afterOff" />
         <SetNote>{t('sessionSleep.afterNote')}</SetNote>
       </>}
+      {/* macOS 판: 에이전트가 많을 때의 메모리와 토큰(워커 잠드는 시간, 깨어 있는 워커 상한, 자동 압축 기준) */}
+      {settings.workerSleepAfterMin != null && <SleepMinutes settings={settings} schema={schema} k="workerSleepAfterMin" label="agentMem.workerLabel" hint="agentMem.workerHint" set="agentMem.workerSet" off="agentMem.workerOff" />}
+      {settings.maxAwakeWorkers != null && <SleepMinutes settings={settings} schema={schema} k="maxAwakeWorkers" label="agentMem.capLabel" hint="agentMem.capHint" set="agentMem.capSet" off="agentMem.capOff" />}
+      {settings.claudeAutoCompactPct != null && <SleepMinutes settings={settings} schema={schema} k="claudeAutoCompactPct" label="agentMem.compactLabel" hint="agentMem.compactHint" set="agentMem.compactSet" off="agentMem.compactOff" />}
+      {settings.claudeCompactWindowK != null && <SleepMinutes settings={settings} schema={schema} k="claudeCompactWindowK" label="agentMem.windowLabel" hint="agentMem.windowHint" set="agentMem.windowSet" off="agentMem.windowOff" />}
+      {settings.maxAwakeWorkers != null && <SetNote>{t('agentMem.note')}</SetNote>}
     </div>
   );
 }
@@ -245,11 +242,14 @@ function SleepSetting({ settings, schema }) {
 // 탭: 있는 설정만(옛 백엔드면 빠진다)
 const TABS = [
   { key: 'general', has: () => true },
-  { key: 'launchers', has: (s, l) => !!l, label: 'launchers.tab' }, // P33: 옛 "새 세션" 두 탭(Claude Code, Codex·DeepSeek)을 대신한다
+  { key: 'launchers', has: (s, l) => !!l, label: 'launchers.tab' }, // P33: 옛 "새 세션" 두 탭을 대신한다
+  { key: 'connections', has: (s, l) => !!(l && l.connections), label: 'connections.tab' }, // P115: 모델 연결(연결을 아는 백엔드만)
+  { key: 'accounts', has: (s) => !!s, label: 'accounts.tab' }, // macOS 판: Claude 계정(설정 폴더) 여럿
   { key: 'sleep', has: (s) => s && s.sleepAfterMin != null },
   { key: 'branch', has: (s) => s && s.branchMaxChildren != null },
   { key: 'recall', has: (s) => s && s.archiveDays != null },
   { key: 'devices', has: () => true, label: 'webDevices.tab' }, // P48
+  { key: 'terminal', has: (s) => !!s, label: 'terminalMove.tab' }, // P117
 ];
 
 export function SettingsDialog({ onClose, tab: tab0 = null, newLauncher = false }) {
@@ -273,10 +273,13 @@ export function SettingsDialog({ onClose, tab: tab0 = null, newLauncher = false 
           {!settings && <div className="dim">{t('settings.loading')}</div>}
           {cur === 'general' && <GeneralTab settings={settings} />}
           {cur === 'launchers' && <LaunchersTab startNew={newLauncher} />}
+          {cur === 'connections' && <ConnectionsTab />}
+          {cur === 'accounts' && <AccountsTab />}
           {settings && cur === 'sleep' && <SleepSetting settings={settings} schema={schema} />}
           {settings && cur === 'branch' && <BranchSettings settings={settings} schema={schema} />}
           {settings && cur === 'recall' && <RecallSettings settings={settings} schema={schema} />}
           {cur === 'devices' && <DevicesTab />}
+          {cur === 'terminal' && <TerminalTab />}
         </div>
         <div className="mt-card-actions"><button className="mt-btn" data-action="settings-close" onClick={onClose}>{t('common.close')}</button></div>
       </div>

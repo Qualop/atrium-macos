@@ -75,12 +75,19 @@ function LinkPicker({ card, onPick, onClose }) {
   );
 }
 
+// 먼 얼굴의 요약(글자는 화면 기준 크기). P112: 배율은 이 얼굴만 구독한다(칸반 전체는 배율로 다시 그리지 않는다)
+function KanbanFar({ h, children }) {
+  const zoom = useFlowStore(zoomSel);
+  return <div className="mt-kanban-far" style={{ fontSize: Math.min(13 / Math.max(zoom, 0.02), h * 0.12) }}>{children}</div>;
+}
+
 function KanbanNodeInner({ data, selected }) {
   const t = useT();
   const id = data.kanbanId;
   const k = useStore((st) => st.kanbans.get(id));
   const flashCard = useStore((st) => st.flashCard);
-  const zoom = useFlowStore(zoomSel);
+  const kw = k ? k.w : 0;
+  const far = useFlowStore((st) => kw * st.transform[2] < 260); // P112: 배율은 먼 얼굴 단계로만 구독한다(먼 얼굴 글자는 KanbanFar가)
   const [confirm, setConfirm] = useState(null); // { message, run }
   const [drag, setDrag] = useState(null); // { cardId, over: { columnId, index } | null }
   const [linking, setLinking] = useState(null); // cardId
@@ -145,7 +152,6 @@ function KanbanNodeInner({ data, selected }) {
     window.addEventListener('mouseup', up, true);
   };
 
-  const far = k.w * zoom < 260;
   const total = k.columns.reduce((n, c) => n + c.cards.length, 0);
   const checklist = k.columns.length === 1;
 
@@ -164,10 +170,10 @@ function KanbanNodeInner({ data, selected }) {
         {!far && <button className="mt-x nodrag" data-action="kanban-delete" title={t('kanban.deleteTitle')} onClick={() => del()}>×</button>}
       </div>
       {far
-        ? <div className="mt-kanban-far" style={{ fontSize: Math.min(13 / Math.max(zoom, 0.02), k.h * 0.12) }}>
+        ? <KanbanFar h={k.h}>
             <b>{k.title}</b>
             {k.columns.map((c) => <div key={c.columnId}>{c.name} {c.cards.length}</div>)}
-          </div>
+          </KanbanFar>
         : <div className="mt-kcols nowheel">
             {k.columns.map((c) => {
               const over = drag && drag.over && drag.over.columnId === c.columnId ? drag.over.index : -1;

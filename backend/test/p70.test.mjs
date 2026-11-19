@@ -79,7 +79,7 @@ function fakeBoard(d, settings = {}) {
   const meta = new Map(), events = [];
   const s = { updateCheck: true, updateChannel: 'stable', ...settings };
   const b = {
-    cfg: { profile: 'real', logDir: path.join(d, 'logs') }, herdrCompat: { ok: true, protocol: 22 },
+    cfg: { profile: 'real', logDir: path.join(d, 'logs') }, termCompat: { ok: true, protocol: 22 },
     features: { settings: { get: () => ({ ...s }) } },
     store: { getMeta: (k) => (meta.has(k) ? JSON.parse(JSON.stringify(meta.get(k))) : null), setMeta: (k, v) => meta.set(k, JSON.parse(JSON.stringify(v))), addEvent() {} },
     api: { broadcast: (e, x) => events.push([e, x]) },

@@ -1,14 +1,14 @@
-// P4 단위 시험: herdr와 claude 없이 돌릴 수 있는 규칙들(세션끼리 연결, 판에 올린 에이전트의 상태, 다른 종류, 워크트리, herdr 스킬 플러그인)
+// P4 단위 시험: 터미널 서버와 claude 없이 돌릴 수 있는 규칙들(세션끼리 연결, 판에 올린 에이전트의 상태, 다른 종류, 워크트리, herdr 스킬 플러그인)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { splitCommands, parseHerdrCommands, parseHerdrOutput, readTextOf, tailText, screenAnswerText, freeSlotNear, facingSides, repoEdges, roleNotice, unlinkNotice, paneChangedNotice, linkLabel, ROLE_RE } from '../src/links.mjs';
-import { newRuntime, applyHerdrStatus, applyAgentDetected, applyAgentReleased, deriveState, flags } from '../src/state.mjs';
+import { splitCommands, tailText, screenAnswerText, freeSlotNear, facingSides, repoEdges, roleNotice, unlinkNotice, paneChangedNotice, linkLabel, ROLE_RE } from '../src/links.mjs';
+import { newRuntime, applyTermStatus, applyAgentDetected, applyAgentReleased, deriveState, flags } from '../src/state.mjs';
 import { parseRevParse } from '../src/git.mjs';
-import { parseKinds } from '../src/herdr/adapter.mjs';
-import { writeSessionSettings, buildStartArgs, buildResumeArgv, writeBoardPlugin, HERDR_ALLOW } from '../src/launch.mjs';
+import { parseHerdrCommands } from '../src/spawns.mjs'; // P129: 옛 대화 기록 읽기용으로 spawns.mjs에만 남았다
+import { writeSessionSettings, buildStartArgs, buildResumeArgv, writeBoardPlugin } from '../src/launch.mjs';
 import { Store } from '../src/store.mjs';
 import { DeliveryQueue } from '../src/delivery.mjs';
 
@@ -22,7 +22,7 @@ test('F1: 셸 명령 글을 명령 단위로 나눈다(따옴표 안의 줄바�
   assert.deepEqual(splitCommands("herdr agent prompt b 'it''s'"), [['herdr', 'agent', 'prompt', 'b', "it's"]]); // PowerShell ''
 });
 
-test('F1: herdr 호출 읽기 — 일 시키기, 답 읽기, 띄우기, 나누기, 다른 세션은 foreign', () => {
+test('옛 대화 기록의 herdr 호출 읽기(spawns.mjs) — 일 시키기, 답 읽기, 띄우기, 나누기, 다른 세션은 foreign', () => {
   const p = parseHerdrCommands('test "${HERDR_ENV:-}" = 1 && herdr agent prompt reviewer "Reply with exactly: pong" --wait --timeout 120000 && herdr agent read reviewer --source recent-unwrapped --lines 40', { boardSession: 'multitask-dev' });
   assert.equal(p.length, 2);
   assert.deepEqual({ verb: p[0].verb, target: p[0].target, text: p[0].text, wait: p[0].wait, timeout: p[0].timeout, foreign: p[0].foreign }, { verb: 'agent.prompt', target: 'reviewer', text: 'Reply with exactly: pong', wait: true, timeout: 120000, foreign: false });
@@ -43,12 +43,7 @@ test('F1: herdr 호출 읽기 — 일 시키기, 답 읽기, 띄우기, 나누�
   assert.equal(parseHerdrCommands('herdr worktree create --branch mtask-test/w1 --path ../wt')[0].branch, 'mtask-test/w1');
 });
 
-test('F1: herdr CLI 결과(JSON 줄)와 agent read 글', () => {
-  const out = parseHerdrOutput({ stdout: '{"id":"cli:agent:prompt","result":{"type":"agent_prompted","agent":{"name":"b","agent_status":"idle"}}}\nsome text\n', stderr: '' });
-  assert.equal(out.results[0].type, 'agent_prompted');
-  assert.equal(out.text, 'some text');
-  assert.equal(readTextOf(parseHerdrOutput('{"result":{"type":"agent_read","read":{"text":"pong\\n"}}}')), 'pong\n');
-  assert.equal(readTextOf(parseHerdrOutput('pong')), 'pong');
+test('화면 글: 끝 줄들과 Claude Code 화면의 답', () => {
   assert.equal(tailText('a\n\n b \nc\n\n', 2), ' b\nc');
   // Claude Code 화면: 머리 그림, 사용자 줄(❯), 답(●), 턴 시간(✻), 입력칸 ──── ❯ ────, 아래 줄
   const screen = [' ▐▛███▜▌   Claude Code v2', '', '❯ Reply with exactly: hi', '', '● hi', '', '✻ Crunched for 1s', '', '────────────────────', '❯ ', '────────────────────', '  ⏸ manual mode on'].join('\n');
@@ -72,10 +67,12 @@ test('F3: 새 노드는 부모 오른쪽 빈자리, 차 있으면 다음 자리.
   assert.deepEqual(facingSides(right, { x: -900, y: -100, w: 720, h: 460 }), { sourceHandle: 'l', targetHandle: 'r' });
 });
 
-test('F2: 연결 알림 글에는 herdr 이름, 패널, 역할, 쓸 명령이 있고 --session·--machine은 없다', () => {
-  const t = roleNotice({ role: '리뷰어', agentName: 'rv', paneId: 'w4:p1', kind: 'claude' });
-  for (const x of ['`rv`', 'w4:p1', '"리뷰어"', 'herdr agent prompt rv', 'herdr agent read rv']) assert.ok(t.includes(x), x);
-  assert.ok(!/--session|--machine|--remote/.test(t + unlinkNotice({ role: '리뷰어', agentName: 'rv' }) + paneChangedNotice({ role: '리뷰어', agentName: 'rv', paneId: 'w5:p1' })));
+test('F2: 연결 알림 글에는 이름, 역할, 쓸 명령이 있고 --session·--machine은 없다(P116: atrium prompt|wait|read, 패널·herdr 명령 없음)', () => {
+  const t = roleNotice({ role: '리뷰어', name: 'rv', kind: 'claude' });
+  for (const x of ['`@rv`', '"리뷰어"', 'atrium prompt rv', 'atrium wait rv', 'atrium read rv']) assert.ok(t.includes(x), x);
+  assert.equal(roleNotice({ role: '리뷰어', agentName: 'rv', paneId: 'w4:p1' }), t, '옛 호출 모양(agentName)도 같은 글');
+  const all = t + unlinkNotice({ role: '리뷰어', name: 'rv' }) + paneChangedNotice({ role: '리뷰어', name: 'rv', paneId: 'w5:p1' });
+  assert.ok(!/--session|--machine|--remote|herdr/.test(all));
   assert.ok(ROLE_RE.test('리뷰어')); assert.ok(!ROLE_RE.test('a"b')); assert.ok(!ROLE_RE.test('')); assert.ok(!ROLE_RE.test('x\ny'));
   assert.equal(linkLabel({ role: '리뷰어', lastText: 'Reply with exactly: pong' }), '리뷰어 · "Reply with exactly: pong"');
   assert.equal(linkLabel({ spawned: true }), '세션 생성');
@@ -84,32 +81,32 @@ test('F2: 연결 알림 글에는 herdr 이름, 패널, 역할, 쓸 명령이 �
 test('F3·F5: hook이 없는 세션은 herdr 상태만으로 — 막히면 화면을 보는 내 차례, unknown은 추정 준비', () => {
   const rt = newRuntime({ kind: 'codex', hooked: false });
   assert.equal(deriveState(rt).state, 'starting');
-  applyAgentDetected(rt); applyHerdrStatus(rt, 'idle');
+  applyAgentDetected(rt); applyTermStatus(rt, 'idle');
   assert.equal(deriveState(rt).state, 'ready');
-  applyHerdrStatus(rt, 'working');
+  applyTermStatus(rt, 'working');
   assert.equal(deriveState(rt).state, 'working');
   assert.ok(rt.turn.startedAt && !rt.turn.endedAt); // 턴은 herdr로 센다
-  applyHerdrStatus(rt, 'blocked');
+  applyTermStatus(rt, 'blocked');
   rt.screenAsk = { tail: 'Allow command? 1. Yes 2. No', at: 1 };
   const w = deriveState(rt);
   assert.equal(w.state, 'waiting'); assert.equal(w.ask.kind, 'screen'); assert.match(w.ask.tail, /Allow/);
-  applyHerdrStatus(rt, 'idle');
+  applyTermStatus(rt, 'idle');
   assert.equal(rt.screenAsk, null);
   assert.equal(deriveState(rt).state, 'ready');
   assert.ok(rt.turn.endedAt);
   assert.equal(flags(rt, { seenAt: null }).unseen, true);
-  applyHerdrStatus(rt, 'unknown');
-  assert.deepEqual(deriveState(rt), { state: 'ready', estimate: 'herdr unknown' });
+  applyTermStatus(rt, 'unknown');
+  assert.deepEqual(deriveState(rt), { state: 'ready', estimate: 'term unknown' });
   // hook이 없어 launch_pending만 남은 종료를 신뢰 거절로 보지 않는다. 판이 끄라고 했으면 정상 종료
   const r2 = newRuntime({ kind: 'codex', hooked: false }); applyAgentDetected(r2); applyAgentReleased(r2);
   assert.equal(r2.exit.kind, 'other');
   const r3 = newRuntime({ kind: 'codex', hooked: false }); applyAgentDetected(r3); r3.exitRequested = true; applyAgentReleased(r3);
   assert.equal(r3.exit.kind, 'normal');
   // 판에 올린 Claude Code의 신뢰 대화상자는 화면으로만
-  const r4 = newRuntime({ kind: 'claude', hooked: false }); applyAgentDetected(r4); applyHerdrStatus(r4, 'blocked'); r4.trustScreen = { at: 1 };
+  const r4 = newRuntime({ kind: 'claude', hooked: false }); applyAgentDetected(r4); applyTermStatus(r4, 'blocked'); r4.trustScreen = { at: 1 };
   assert.equal(deriveState(r4).state, 'trust_wait');
   // P1~P3 runtime(종류 없음)은 hook이 붙은 Claude Code로 본다
-  const old = newRuntime(); delete old.hooked; applyHerdrStatus(old, 'blocked');
+  const old = newRuntime(); delete old.hooked; applyTermStatus(old, 'blocked');
   assert.equal(deriveState(old).state, 'trust_wait');
 });
 
@@ -136,28 +133,23 @@ test('F4: 같은 저장소 관계선 — 워크트리마다 하나, 이어진 �
   assert.deepEqual(repoEdges(two).map((e) => `${e.from}>${e.to}`), ['a>b']); // 본 저장소 세션이 없으면 워크트리끼리
 });
 
-test('F5: herdr 도움말의 kinds 줄', () => {
-  assert.deepEqual(parseKinds('herdr agent commands:\n  herdr agent list\n  kinds: pi|claude|codex|hermes\n'), ['pi', 'claude', 'codex', 'hermes']);
-  assert.deepEqual(parseKinds('nothing'), []);
-});
-
-test('2: herdr 스킬은 --plugin-dir로, 안내는 --append-system-prompt-file로. 이어 가기도 같다. herdr만 자동 승인은 고를 때만', () => {
+test('2: 판 플러그인은 --plugin-dir로, 안내는 --append-system-prompt-file로. 이어 가기도 같다. 옛 herdr 스킬 폴더는 지운다(P129)', () => {
   const dir = tmp();
-  const pl = writeBoardPlugin({ dir, skillText: '---\nname: herdr\n---\nbody' });
-  assert.ok(fs.existsSync(path.join(dir, 'atrium-herdr', '.claude-plugin', 'plugin.json')));
-  assert.equal(fs.readFileSync(path.join(dir, 'atrium-herdr', 'skills', 'herdr', 'SKILL.md'), 'utf8'), '---\nname: herdr\n---\nbody');
-  assert.match(fs.readFileSync(pl.systemPromptFile, 'utf8'), /--session/); // 붙이지 말라는 안내
+  fs.mkdirSync(path.join(dir, 'atrium-herdr', 'skills', 'herdr'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'atrium-herdr', 'skills', 'herdr', 'SKILL.md'), 'old');
+  const pl = writeBoardPlugin({ dir });
+  assert.ok(fs.existsSync(path.join(dir, 'atrium', '.claude-plugin', 'plugin.json'))); // P132: 플러그인 이름 atrium
+  assert.equal(fs.existsSync(path.join(dir, 'atrium-herdr', 'skills', 'herdr')), false); // 남은 옛 이름 폴더도 다시 쓴다
+  assert.match(fs.readFileSync(pl.systemPromptFile, 'utf8'), /atrium prompt <이름>/); // P116: 일 시키기는 판의 atrium 명령
+  assert.doesNotMatch(fs.readFileSync(pl.systemPromptFile, 'utf8'), /herdr (agent|pane|스킬|명령|패널)|HERDR_ENV|--session/);
   const launch = { sessionId: 's', settingsPath: 'C:/x/s.json', permissionMode: 'manual', model: 'haiku', ...pl };
   const a = buildStartArgs(launch);
   assert.equal(a[a.indexOf('--plugin-dir') + 1], pl.pluginDir);
   assert.equal(a[a.indexOf('--append-system-prompt-file') + 1], pl.systemPromptFile);
   assert.deepEqual(buildResumeArgv(launch).slice(3), a.slice(2));
-  const f1 = path.join(dir, 'a.json'), f2 = path.join(dir, 'b.json');
+  const f1 = path.join(dir, 'a.json');
   writeSessionSettings({ file: f1, hookUrl: 'http://127.0.0.1:1/hooks/claude', token: 't', sessionId: 's' });
-  writeSessionSettings({ file: f2, hookUrl: 'http://127.0.0.1:1/hooks/claude', token: 't', sessionId: 's', allowHerdr: true });
   assert.equal(JSON.parse(fs.readFileSync(f1, 'utf8')).permissions, undefined);
-  assert.deepEqual(JSON.parse(fs.readFileSync(f2, 'utf8')).permissions.allow, HERDR_ALLOW);
-  assert.ok(HERDR_ALLOW.every((r) => /^(Bash|PowerShell)\((herdr|test|printf|echo)[ :]/.test(r)));
 });
 
 test('저장소: 연결과 오간 기록, P3 board.db에 종류·출처 열 더하기', () => {
@@ -181,12 +173,12 @@ test('저장소: 연결과 오간 기록, P3 board.db에 종류·출처 열 더�
   st.close();
 });
 
-test('F5: hook이 없는 세션은 보낸 뒤 herdr working으로 제출을 확인한다(응답보다 먼저 와도)', async () => {
+test('F5: hook이 없는 세션은 보낸 뒤 터미널 working으로 제출을 확인한다(응답보다 먼저 와도)', async () => {
   const store = new Store(path.join(tmp(), 'q.db'));
   const cfg = { inputQuietMs: 0, submitConfirmMs: 30000, deliveryMaxWaitMs: 60000 };
   let release, started;
   const sending = new Promise((r) => { started = r; });
-  const q = new DeliveryQueue({ store, cfg, view: () => ({ state: 'ready', agentPresent: true, herdrConnected: true, closed: false }), send: () => new Promise((r) => { release = r; started(); }) });
+  const q = new DeliveryQueue({ store, cfg, view: () => ({ state: 'ready', agentPresent: true, termConnected: true, closed: false }), send: () => new Promise((r) => { release = r; started(); }) });
   const d = q.enqueue('c', 'hi');
   await sending;
   assert.equal(d.status, 'sending');
@@ -195,6 +187,6 @@ test('F5: hook이 없는 세션은 보낸 뒤 herdr working으로 제출을 확�
   release();
   await confirmed;
   assert.equal(store.getDelivery(d.deliveryId).status, 'confirmed');
-  assert.equal(store.getDelivery(d.deliveryId).reason, 'herdr working');
+  assert.equal(store.getDelivery(d.deliveryId).reason, 'term working');
   store.close();
 });

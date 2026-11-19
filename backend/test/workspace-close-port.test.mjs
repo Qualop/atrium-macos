@@ -14,7 +14,7 @@ function board(t) {
   const b = new Backend({ logDir: dir, quietMs: 600000, killWaitMs: 0 });
   b.store = new Store(path.join(dir, 'board.db'));
   t.after(() => { b.store.close(); fs.rmSync(dir, { recursive: true, force: true }); });
-  b.api = { broadcast() {} }; b.log = () => {}; b.requireHerdr = () => {};
+  b.api = { broadcast() {} }; b.log = () => {}; b.requireTerminal = () => {};
   b.queue = { cancelSession() {}, pending: () => 0 };
   b.recall = {
     changed: async () => {},
@@ -32,7 +32,7 @@ function board(t) {
     const root = path.join(dir, key); fs.mkdirSync(root);
     fs.writeFileSync(path.join(root, 'transcript.jsonl'), 'retain conversation');
     b.store.insertWorkspace({ key, root, kind: 'folder', createdAt: 1 });
-    const s = { sessionId: id, name: id, kind: 'shell', workspaceKey: key, cwd: root, paneId, herdrWorkspaceId: 'w1', createdAt: 1, rt: newRuntime({ kind: 'shell', hooked: false }) };
+    const s = { sessionId: id, name: id, kind: 'shell', workspaceKey: key, cwd: root, paneId, termWorkspaceId: 'w1', createdAt: 1, rt: newRuntime({ kind: 'shell', hooked: false }) };
     b.sessions.set(id, s);
     b.store.insertSession({ ...s, runtime: s.rt, permissionMode: 'manual' });
     b.store.setNode({ session_id: id, x: 0, y: 0, w: 720, h: 460, z: 0 });

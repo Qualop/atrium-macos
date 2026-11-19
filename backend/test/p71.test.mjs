@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseWorktreeExit, parseChoices } from '../src/screen.mjs';
-import { newRuntime, deriveState, applyHerdrStatus, applyAgentReleased, worktreeExitAsk } from '../src/state.mjs';
+import { newRuntime, deriveState, applyTermStatus, applyAgentReleased, worktreeExitAsk } from '../src/state.mjs';
 import { planAnswer } from '../src/answer.mjs';
 import { worktreeOf, waitClaudeExit, answerWorktreeExitOnScreen } from '../src/worktree-exit.mjs';
 import { summarizeChanges } from '../src/changes.mjs';
@@ -75,21 +75,21 @@ test('워크트리 나가기 질문: 제목, 선택지 번호, 커밋 수, 브�
 
 test('상태: herdr blocked에 화면에서 읽은 질문이면 waiting(worktree_exit), 풀리면 지운다', () => {
   const rt = newRuntime({ hooked: true });
-  rt.phase = 'running'; rt.herdr.present = true; rt.herdr.launchPending = false; rt.herdr.agentSessionId = 'a1'; rt.hooksSinceLaunch = 3;
-  applyHerdrStatus(rt, 'blocked', 1000);
+  rt.phase = 'running'; rt.term.present = true; rt.term.launchPending = false; rt.term.agentSessionId = 'a1'; rt.hooksSinceLaunch = 3;
+  applyTermStatus(rt, 'blocked', 1000);
   assert.deepEqual(deriveState(rt).ask, { kind: 'unknown_dialog' }); // 읽기 전(지금까지의 모양)
   rt.worktreeExit = { ...parseWorktreeExit(SCREEN), at: 1500 };
   const d = deriveState(rt);
   assert.equal(d.state, 'waiting');
   assert.deepEqual(d.ask, { kind: 'worktree_exit', commits: 13, files: 0, branch: 'worktree-p9', keep: { n: 1, label: 'Keep worktree' }, remove: { n: 2, label: 'Remove worktree' }, since: 1500 });
-  applyHerdrStatus(rt, 'idle', 2000);
+  applyTermStatus(rt, 'idle', 2000);
   assert.equal(rt.worktreeExit, null);
   rt.worktreeExit = { ...parseWorktreeExit(SCREEN), at: 2500 };
   applyAgentReleased(rt, 3000);
   assert.equal(rt.worktreeExit, null);
   // hook이 없는 claude 세션도 같은 질문으로 본다
   const raw = newRuntime({ hooked: false, kind: 'claude' });
-  raw.herdr.present = true; applyHerdrStatus(raw, 'blocked', 1000);
+  raw.term.present = true; applyTermStatus(raw, 'blocked', 1000);
   raw.worktreeExit = { ...parseWorktreeExit(SCREEN), at: 1000 };
   assert.equal(deriveState(raw).ask.kind, 'worktree_exit');
 });
@@ -123,8 +123,8 @@ test('워크트리 세션 알아보기: 하위 세션의 --worktree 또는 .clau
 function fakeB(screenAfterExit = SCREEN) {
   const calls = [], events = [];
   let shown = '';
-  const s = { sessionId: 's1', name: 'w1', kind: 'claude', paneId: 'p1', agentName: 'w1', herdrWorkspaceId: 'ws1', cwd: 'C:/r/.claude/worktrees/w1', rt: newRuntime({ hooked: true }) };
-  s.rt.herdr.present = true; s.rt.herdr.status = 'idle'; s.rt.phase = 'running';
+  const s = { sessionId: 's1', name: 'w1', kind: 'claude', paneId: 'p1', agentName: 'w1', termWorkspaceId: 'ws1', cwd: 'C:/r/.claude/worktrees/w1', rt: newRuntime({ hooked: true }) };
+  s.rt.term.present = true; s.rt.term.status = 'idle'; s.rt.phase = 'running';
   const b = {
     cfg: { killWaitMs: 3000 }, killing: new Set(), sessions: new Map([['s1', s]]),
     currentSession: Backend.prototype.currentSession,
@@ -132,7 +132,7 @@ function fakeB(screenAfterExit = SCREEN) {
     store: { addEvent: (sid, kind, data) => events.push({ sid, kind, data }) },
     branch: { info: new Map() },
     resolve: () => s,
-    requireHerdr: () => {},
+    requireTerminal: () => {},
     closeSession: (x, why) => calls.push(['closeSession', why]),
     recall: { markArchive: () => calls.push(['archive']) },
     adapter: {
@@ -178,7 +178,7 @@ test('닫기: 확인에 워크트리를 알리고, 고르지 않으면 남기기
   {
     // 질문이 이미 떠 있으면 esc로 취소하지 않고 바로 답한다
     const { b, s, calls, show } = fakeB();
-    show(SCREEN); s.rt.herdr.status = 'blocked'; s.rt.worktreeExit = { ...parseWorktreeExit(SCREEN), at: 1 };
+    show(SCREEN); s.rt.term.status = 'blocked'; s.rt.worktreeExit = { ...parseWorktreeExit(SCREEN), at: 1 };
     await kill(b, { session: 's1', confirm: true });
     assert.deepEqual(calls.filter((c) => c[0] !== 'closePane' && c[0] !== 'closeSession'), [['keys', '1']]);
   }

@@ -19,12 +19,12 @@ test('P53 #9: 영어에서 셸의 명령 대기는 요청 이름표(Prompt)와 �
   assert.ok(en.chat.promptLast.startsWith(en.chat.prompt));
 });
 
-test('P53 #10: 백엔드 줄과 herdr 줄은 이름표가 다르다', () => {
+test('P53 #10: 백엔드 줄과 터미널 줄은 이름표가 다르다', () => {
   const was = getLanguage();
   try {
     setLanguage('ko');
     assert.equal(CHANGE_LABEL.backend, '앱 연결 서비스');
-    assert.equal(CHANGE_LABEL.herdr, 'herdr');
+    assert.equal(CHANGE_LABEL.terminal, '터미널');
     assert.equal(CHANGE_LABEL.needs_you, '응답 필요');
     assert.equal(CHANGE_LABEL.nope, undefined);
     setLanguage('en');

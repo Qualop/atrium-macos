@@ -1,5 +1,5 @@
 // 새 세션 시작(ARCH 4절 B3): 이름, 폴더, 모델, 권한 모드, 첫 지시. 처음 쓰는 폴더면 신뢰 확인이 필요하다고 미리 보여준다.
-// herdr가 아는 에이전트 종류를 고른다. 모델 목록과 실행 인자는 종류별로 받고, hook 지원 여부는 세션 정보에 따른다.
+// P4(F5): 터미널 백엔드가 아는 에이전트 종류를 고른다. Claude Code가 아니면 판의 hook이 없으니 상태는 터미널로만, 인자는 그 하네스의 것을 그대로 넘긴다.
 // P5: 폴더는 지금 워크스페이스의 저장소 루트가 기본이다. 다른 저장소의 폴더를 고르면 그 세션은 그 저장소의 워크스페이스에 생긴다(G1).
 //     종류 "셸(PowerShell)"은 에이전트 없이 패널만 연다(G2).
 // P33: 띄우는 방법은 호출자(설정의 호출자 탭)다. 창 맨 위에서 호출자를 고르면 그 값으로 띄우고, 여기서 바꾼 모델은 호출자 값을 덮는다(session.spawn { launcher, model }).
@@ -13,6 +13,7 @@ import { kindOf } from './lib/kinds.js';
 import { hasModelCatalog, spawnDefaults } from './lib/spawn.js';
 import { favoriteLaunchers, orderedLaunchers, previewLine, autoApprovalApplies } from './lib/launchers.js';
 import { useDialog } from './dialog.js';
+import { AccountSelect } from './Launchers.jsx';
 
 export const startedText = (r) => t('spawn.started', { name: r.name, kind: r.flavor ? t('spawn.startedKind', { kind: kindOf(r.flavor).label + (r.command ? t('spawn.startedCommand') : '') }) : r.command ? t('spawn.startedKind', { kind: t('launchers.harness.command') }) : r.kind && r.kind !== 'claude' ? t('spawn.startedKind', { kind: r.kind === 'shell' ? t('spawn.shell') : kindOf(r.kind).label }) : '', trust: r.trust && r.trust.needsTrust ? t('spawn.startedTrust') : '', ws: r.workspaceKey && r.workspaceKey !== getState().currentWs ? t('spawn.startedWs', { ws: wsName(r.workspaceKey) || r.workspaceRoot }) : '' });
 
@@ -42,7 +43,7 @@ export async function quickSpawn(launcherId, name) {
 
 // cwd: 영역 이름표의 "+ 세션"에서 열면 그 워크스페이스의 폴더(P6a)
 // launcher: 레일의 Shift+누르기로 열면 그 호출자. agentKind: 옛 길(그 종류를 직접 고르기로 연다)
-export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launcher: launcher0 = null }) {
+export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launcher: launcher0 = null, account: account0 = null }) {
   const t = useT();
   const info = api.info || {};
   const data = useStore((st) => st.launchers);
@@ -63,8 +64,7 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launc
   const [model, setModel] = useState(() => defaultsFor(kind).model);
   const [mode, setMode] = useState(def.claudePermissionMode || 'manual');
   const [args, setArgs] = useState(() => defaultsFor(kind).args);
-  const [command, setCommand] = useState(def.deepseekCommand || '');
-  const [allowHerdr, setAllowHerdr] = useState(!!def.claudeAllowHerdr);
+  const [account, setAccount] = useState(account0); // macOS 판: Claude 계정. null이면 런처의 계정(없으면 자동), ''면 자동(우선순위), 'default'면 기본 계정
   const [prompt, setPrompt] = useState('');
   const [trust, setTrust] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -72,12 +72,10 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launc
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const harness = L ? L.harness : kind;
-  const deepseek = harness === 'deepseek';
-  const direct = !L && deepseek && !!command.trim();
-  const claude = harness === 'claude' || (!L && deepseek && !direct);
+  const claude = harness === 'claude';
   const shell = harness === 'shell';
   const typed = harness === 'command';
-  const autoApprove = !direct && autoApprovalApplies(settings, harness);
+  const autoApprove = autoApprovalApplies(settings, harness);
   const modelPicker = hasModelCatalog(kind);
   const kindLabel = kindOf(kind).label;
   const pickKind = (k) => { setKind(k); const defaults = defaultsFor(k); setArgs(defaults.args); setModel(defaults.model); };
@@ -89,9 +87,9 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launc
     setTrust(null);
     if (!cwd || !claude) return;
     let current = true;
-    const tm = setTimeout(() => api.call('trust.predict', { cwd }).then((r) => { if (current) setTrust(r); }).catch(() => { if (current) setTrust(null); }), 250);
+    const tm = setTimeout(() => api.call('trust.predict', { cwd, ...((account ?? (L && L.account)) ? { account: account ?? L.account } : {}) }).then((r) => { if (current) setTrust(r); }).catch(() => { if (current) setTrust(null); }), 250);
     return () => { current = false; clearTimeout(tm); };
-  }, [cwd, claude]);
+  }, [cwd, claude, account, L]);
 
   async function submit(e) {
     e.preventDefault();
@@ -99,16 +97,16 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launc
     submitting.current = true;
     setBusy(true);
     try {
-      const p = { cwd, name: name.trim() || undefined, prompt: shell || typed || direct ? undefined : prompt.trim() || undefined };
+      const p = { cwd, name: name.trim() || undefined, prompt: shell || typed ? undefined : prompt.trim() || undefined };
       if (L) {
         p.launcher = L.id;
         if (MODEL_HARNESS.has(L.harness) && lmodel.trim() !== (L.model || '')) p.model = lmodel.trim();
       } else {
         p.kind = kind;
-        if (deepseek) p.command = command.trim();
-        if (claude) Object.assign(p, { model: model.trim() || undefined, permissionMode: mode, allowHerdr });
-        else if (!shell && !deepseek) { p.args = args.trim(); if (modelPicker) p.model = model.trim(); }
+        if (claude) Object.assign(p, { model: model.trim() || undefined, permissionMode: mode });
+        else if (!shell) { p.args = args.trim(); if (modelPicker) p.model = model.trim(); }
       }
+      if (claude && account != null) p.account = account || 'auto'; // 비면 자동(우선순위)
       const r = await api.call('session.spawn', p);
       toast(startedText(r));
       if (alive.current) onClose();
@@ -140,16 +138,11 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launc
           {!L && <label>{t('spawn.kind')}
             <select value={kind} onChange={(e) => pickKind(e.target.value)} data-field="kind">
               <option value="shell">{t('spawn.shellOption')}</option>
-              {kinds.filter((k) => k.kind !== 'shell' && k.kind !== 'deepseek').map((k) => <option key={k.kind} value={k.kind} disabled={!k.installed}>{kindOf(k.kind).label}{k.installed ? '' : t('spawn.notInstalled')}</option>)}
-              <option value="deepseek">{t('spawn.deepseekOption')}</option>
+              {kinds.filter((k) => k.kind !== 'shell').map((k) => <option key={k.kind} value={k.kind} disabled={!k.installed}>{kindOf(k.kind).label}{k.installed ? '' : t('spawn.notInstalled')}</option>)}
             </select>
           </label>}
         </div>
         <div className="mt-card-sub">{t('spawn.nameHelp')}</div>
-        {!L && deepseek && <>
-          <label>{t('spawn.deepseekCommand')}<input value={command} onChange={(e) => setCommand(e.target.value)} placeholder={t('spawn.deepseekCommandPh')} data-field="deepseek-command" /></label>
-          <div className="mt-card-sub" data-role="deepseek-note">{direct ? t('spawn.deepseekDirectNote') : t('spawn.deepseekNote')}</div>
-        </>}
         {L ? <>
           {MODEL_HARNESS.has(L.harness) && (hasModelCatalog(L.harness)
             ? <ModelField key={L.id} kind={L.harness} value={lmodel} onChange={setLmodel} />
@@ -157,7 +150,7 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launc
           {claude && <div className="mt-card-sub" data-role="launcher-permission">{t('spawn.mode')}: {autoApprove ? t('autoApproval.short') : tOr(`permissionModes.${L.permissionMode || 'manual'}`, L.permissionMode || 'manual')}</div>}
           {typed ? <div className="mt-card-sub" data-role="command-note">{t('launchers.commandNote')}</div>
             : shell ? <div className="mt-card-sub" data-role="shell-note">{t('spawn.shellNote')}</div> : null}
-        </> : shell ? <div className="mt-card-sub" data-role="shell-note">{t('spawn.shellNote')}</div> : direct ? null : claude ? <>
+        </> : shell ? <div className="mt-card-sub" data-role="shell-note">{t('spawn.shellNote')}</div> : claude ? <>
           <div className="mt-row">
             <label>{t('spawn.model')}<input value={model} onChange={(e) => setModel(e.target.value)} placeholder={t('spawn.modelPh')} data-field="model" /></label>
             <label>{t('spawn.mode')}
@@ -166,17 +159,16 @@ export function SpawnDialog({ onClose, cwd: cwd0 = null, agentKind = null, launc
               </select>
             </label>
           </div>
-          {!autoApprove && <><label className="mt-check"><input type="checkbox" checked={allowHerdr} disabled={autoApprove} onChange={(e) => setAllowHerdr(e.target.checked)} data-field="allow-herdr" /><span>{t('settings.allowHerdrName')}</span></label>
-          <div className="mt-card-sub">{t('spawn.allowHerdr')}</div></>}
         </> : <>
-          {modelPicker ? <ModelField key={kind} kind={kind} value={model} onChange={setModel} /> : <label>{t('spawn.args')}<input value={args} onChange={(e) => setArgs(e.target.value)} data-field="args" /></label>}
+          {modelPicker ? <ModelField key={kind} kind={kind} value={model} onChange={setModel} /> : <label>{t('spawn.args')}<input value={args} onChange={(e) => setArgs(e.target.value)} placeholder={kind === 'codex' ? t('spawn.codexArgsPh') : ''} data-field="args" /></label>}
           {modelPicker && <details data-role="advanced-args"><summary>{t('spawn.advanced')}</summary>
             <label>{t('spawn.extraArgs')}<input value={args} onChange={(e) => setArgs(e.target.value)} placeholder={kind === 'codex' ? '-c model_reasoning_effort=high' : undefined} data-field="args" /></label>
             <div className="mt-card-sub">{t('spawn.modelOverridesArgs')}</div>
           </details>}
           <div className="mt-card-sub" data-role="agent-note">{t(kind === 'agy' ? 'spawn.agyNote' : kind === 'gemini' ? 'spawn.geminiNote' : 'spawn.otherNote', { kind: kindLabel })}</div>
         </>}
-        {!shell && !typed && !direct && <label>{t('spawn.prompt')}<textarea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} data-field="prompt" /></label>}
+        {claude && <AccountSelect value={account ?? ((L && L.account) || '')} onChange={setAccount} field="account" className="" />}
+        {!shell && !typed && <label>{t('spawn.prompt')}<textarea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} data-field="prompt" /></label>}
         <div className="mt-card-actions">
           <button className="mt-btn primary" disabled={busy || !cwd} data-action="spawn-submit">{busy ? t('spawn.starting') : t('spawn.start')}</button>
           <button type="button" className="mt-btn ghost" onClick={onClose}>{t('common.cancel')}</button>

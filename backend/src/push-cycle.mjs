@@ -15,15 +15,21 @@ export const BUSY = new Set(['working', 'starting']);
 const OPEN = new Set(['working', 'starting', 'waiting', 'trust_wait']);
 const BG_MAX = 20;
 
-// hook 본문 → 도는 뒤 일 [{ id, type }] | null(필드 없음). 설명·명령 글은 남기지 않는다
+const BG_LABEL = 100;
+const oneLine = (v) => String(v || '').replace(/\s+/g, ' ').trim();
+// hook 본문 → 도는 뒤 일 [{ id, type, label }] | null(필드 없음).
+// P164: 세션 맵이 뒤 일 한 줄을 보이도록 설명(없으면 명령, 하위 에이전트는 agent_type) 한 줄을 BG_LABEL자까지 남긴다. 알림·이벤트 기록에는 싣지 않는다(수만)
 export function bgTasksOf(body) {
   const list = body && body.background_tasks;
   if (!Array.isArray(list)) return null;
   return list.filter((x) => x && typeof x === 'object' && (x.status == null || x.status === 'running' || x.status === 'pending'))
-    .slice(0, BG_MAX).map((x) => ({ id: String(x.id || '').slice(0, 40), type: String(x.type || '').slice(0, 20) }));
+    .slice(0, BG_MAX).map((x) => {
+      const label = oneLine(x.description || x.command || x.agent_type);
+      return { id: String(x.id || '').slice(0, 40), type: String(x.type || '').slice(0, 20), label: label.length > BG_LABEL ? `${label.slice(0, BG_LABEL - 1)}…` : label || null };
+    });
 }
 
-// nodes: [{ sessionId, parentSessionId, state, kind, delivering, loops, bg }] → 나무 찾기
+// nodes: [{ sessionId, parentSessionId, state, kind, delivering, loops, bg }] → 나무 찾기. P159: parentSessionId는 일 부모(backend.pushTree)
 export function treeIndex(nodes) {
   const byId = new Map(); for (const n of nodes || []) if (n && n.sessionId) byId.set(n.sessionId, n);
   const kids = new Map();

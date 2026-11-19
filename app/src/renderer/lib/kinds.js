@@ -14,7 +14,7 @@ export const KINDS = {
   codex: { id: 'codex', label: 'Codex', mark: 'Cx', shape: 'hexagon', color: 'var(--kind-codex)', ink: 'var(--kind-codex-ink)', logo: LOGO('codex') },
   gemini: { id: 'gemini', label: 'Gemini CLI', mark: 'Gm', shape: 'diamond', color: 'var(--kind-gemini)', ink: 'var(--kind-gemini-ink)', logo: LOGO('gemini', 'svg'), logoBadge: LOGO('gemini-badge', 'svg') },
   agy: { id: 'agy', label: 'Gemini (Antigravity)', mark: 'Gm', shape: 'diamond', color: 'var(--kind-gemini)', ink: 'var(--kind-gemini-ink)', logo: LOGO('gemini', 'svg'), logoBadge: LOGO('gemini-badge', 'svg') },
-  // P25: DeepSeek는 herdr 종류가 아니라 띄운 방법(flavor)이다. 판이 띄우는 Claude Code(모델만 DeepSeek)이거나 직접 명령으로 띄운 세션.
+  // P25: 이 아이콘은 터미널이 알아낸 종류가 아니라 런처 아이콘(flavor)이다. P115: 특별 취급 없이 고를 수 있는 아이콘 하나(옛 런처의 아이콘 값을 그대로 둔다)
   // 로고는 위키미디어 공용 DeepSeek-icon.svg(받은 그대로), 레일 단추는 같은 모양을 로고 파랑 바탕에 흰색으로 얹었다
   deepseek: { id: 'deepseek', label: 'DeepSeek', mark: 'DS', shape: 'circle', color: 'var(--kind-deepseek)', ink: 'var(--kind-deepseek-ink)', logo: LOGO('deepseek', 'svg'), logoBadge: LOGO('deepseek-badge', 'svg') },
   pi: { id: 'pi', label: 'Pi', mark: 'π', shape: 'diamond', color: 'var(--kind-pi)', ink: 'var(--kind-pi-ink)', logo: LOGO('pi') },
@@ -32,7 +32,7 @@ export function kindOf(kind) {
   return { ...base, id: k, label: kind, mark: mark ? mark[0].toUpperCase() + mark.slice(1) : base.mark };
 }
 
-// P25: 보여줄 종류. 띄운 방법(flavor, 예: deepseek)이 있으면 그것이 herdr 종류(claude, shell)보다 먼저다
+// P25: 보여줄 종류. 띄운 방법(flavor, 런처 아이콘)이 있으면 그것이 터미널이 알아낸 종류(claude, shell)보다 먼저다
 export const shownKind = (s) => (s && (s.flavor || s.kind)) || 'claude';
 
 // 모양 → SVG path(100×100 상자 안). 원은 path 대신 circle로 그린다

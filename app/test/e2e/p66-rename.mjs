@@ -9,6 +9,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { _electron as electron } from 'playwright';
 import { APP_ROOT, REPO, OUT, sleep, until, logger, closeApp } from './harness.mjs';
 import { assertTestBoard } from './p9-guard.mjs';
+import { hcStateDir } from '../../../backend/src/hc/core.mjs'; // P129: 이 판의 hc 상태 폴더
 
 if (process.env.MT_E2E_OUT !== 'p66') throw new Error('MT_E2E_OUT=p66를 명령줄에서 준다');
 const T = createRequire(import.meta.url)(path.join(REPO, 'experiments', 'p66', 'tools', 'env.cjs'));
@@ -67,8 +68,8 @@ try {
   // ---------- 준비: 새 판, 시험 폴더, 셸 s1과 Claude Code(haiku) s2 ----------
   try { log('백엔드 멈춤', atrium('backend', 'stop').trim()); } catch (e) { log('백엔드 멈춤', e.message.slice(0, 120)); }
   await sleep(800);
-  // herdr는 멈춘 세션의 패널을 다음에 되살린다. 이 판의 세션(atrium-dev-p66)만 멈췄을 때 지운다
-  try { log('herdr 세션 지움', execFileSync('herdr', ['session', 'delete', ENV.ATRIUM_HERDR_SESSION], { encoding: 'utf8', env }).trim()); } catch (e) { log('herdr 세션 지움', String(e.stdout || e.message).trim().slice(0, 160)); }
+  // 터미널 서버는 멈춘 세션의 패널을 다음에 되살릴 수 있다. 이 판의 세션(atrium-dev-p66) 상태 폴더만 지운다
+  try { const d = hcStateDir(ENV.ATRIUM_HERDR_SESSION); fs.rmSync(d, { recursive: true, force: true }); log('hc 상태 지움', d); } catch (e) { log('hc 상태 지움', String(e.message).slice(0, 160)); }
   for (const d of [path.join(T.DEV, 'data'), path.join(T.DEV, 'app'), T.PROJECTS, T.SESSIONS]) fs.rmSync(d, { recursive: true, force: true });
   for (const d of [T.PROJECTS, T.SESSIONS, T.DIR]) fs.mkdirSync(d, { recursive: true });
   await launch();

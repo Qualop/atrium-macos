@@ -244,7 +244,7 @@ try {
 
   // 5. 잠든 채로 herdr와 백엔드를 다시 켠다
   atrium('herdr', 'restart', '--yes');
-  await until(async () => page.evaluate(() => window.__mt.getState().herdr.connected), 60000, 500);
+  await until(async () => page.evaluate(() => window.__mt.getState().terminal.connected), 60000, 500);
   await sleep(5000);
   const s9 = await states(page);
   step('herdr를 다시 켜도 네 세션 모두 잠든 채로 남는다', Object.values(s9).every((x) => x === 'sleeping'), s9);

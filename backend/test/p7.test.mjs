@@ -42,14 +42,15 @@ test('audit: failed reopen launch returns an archived session to a retryable clo
   addClosed(b, { id: ID(47), name: 'retry-open', cwd, kind: 'codex', ws: W });
   b.store.setArchive('session', ID(47), { archivedAt: 123 });
   const r = new Recall(b, { readProcs: async () => [] }); r.changed = async () => {};
-  const start = b.adapter.startAgent;
-  b.adapter.startAgent = async () => { throw apiError('launch_failed', 'fixture launch failure'); };
+  // P115: Codex는 하네스 어댑터로 띄운다(startHarness). 그 시작이 실패할 때를 본다
+  const start = b.startHarness;
+  b.startHarness = async () => { throw apiError('launch_failed', 'fixture launch failure'); };
   await assert.rejects(r.reopen({ session: ID(47) }), { code: 'launch_failed' });
   assert.equal(b.sessions.has(ID(47)), false);
   assert.ok(b.store.closedSession(ID(47)));
   assert.equal(b.store.archiveMarks().get(`session:${ID(47)}`).archivedAt, 123);
   assert.deepEqual(b.calls.filter(([op]) => op === 'closePane'), [['closePane', 'w1:p1']]);
-  b.adapter.startAgent = start;
+  b.startHarness = start;
   assert.equal((await r.reopen({ session: ID(47) })).name, 'retry-open');
 });
 
@@ -57,7 +58,7 @@ test('audit: failed reopen cleanup retains the tracked pane when its close is no
   const cwd = tmp(), W = folderWs(cwd), b = fakeBackend({ convoRoots: [tmp()], workspaces: [W] });
   addClosed(b, { id: ID(48), name: 'tracked', cwd, kind: 'codex', ws: W });
   const r = new Recall(b, { readProcs: async () => [] }); r.changed = async () => {};
-  b.adapter.startAgent = async () => { throw apiError('launch_failed', 'fixture launch failure'); };
+  b.startHarness = async () => { throw apiError('launch_failed', 'fixture launch failure'); }; // P115: Codex는 하네스로 띄운다
   b.adapter.closePane = async () => { throw apiError('unreachable', 'fixture cleanup failure'); };
   await assert.rejects(r.reopen({ session: ID(48) }), { code: 'launch_failed' });
   const s = b.sessions.get(ID(48));
@@ -73,11 +74,13 @@ test('audit: Codex reopen honors the requested model and persists it for another
   b.store.addEvent(ID(43), 'spawn', { args: ['--model=old-model', '--sandbox', 'workspace-write'] });
   const r = new Recall(b, { readProcs: async () => [] }); r.changed = async () => {};
   await r.reopen({ session: ID(43), model: 'new-model' });
-  assert.deepEqual(b.calls.filter(([op]) => op === 'startAgent').at(-1)[1].args, ['--sandbox', 'workspace-write', '--model', 'new-model']);
+  // P115: 하네스 계획에 모델을 따로 두고(어댑터가 -m을 붙인다) 옛 인자의 모델은 뺀다
+  const plan = () => b.calls.filter(([op]) => op === 'startHarness').at(-1)[3];
+  assert.deepEqual([plan().model, plan().args], ['new-model', ['--sandbox', 'workspace-write']]);
   assert.equal(b.sessions.get(ID(43)).model, 'new-model');
   b.closeSession(b.sessions.get(ID(43)), 'killed');
   await r.reopen({ session: ID(43) });
-  assert.ok(b.calls.filter(([op]) => op === 'startAgent').at(-1)[1].args.includes('new-model'));
+  assert.equal(plan().model, 'new-model');
 });
 
 test('audit: Claude reopen after /clear resumes the latest conversation without replacing the board identity', async () => {
@@ -97,7 +100,7 @@ for (const closeFails of [false, true]) {
   test(`audit: recovery closes only its target without enumeration and retains it when close fails=${closeFails}`, async () => {
     const cwd = tmp(), W = folderWs(cwd), b = fakeBackend({ convoRoots: [tmp()], workspaces: [W] });
     addClosed(b, { id: ID(46), name: 'stopped', cwd, kind: 'codex', ws: W });
-    const row = b.store.getSession(ID(46)), s = { ...row, rt: row.runtime, paneId: 'shared:p1', herdrWorkspaceId: 'shared' };
+    const row = b.store.getSession(ID(46)), s = { ...row, rt: row.runtime, paneId: 'shared:p1', termWorkspaceId: 'shared' };
     b.store.reopenRow(s.sessionId, {}); b.sessions.set(s.sessionId, s);
     b.adapter.workspacePanes = async () => { throw apiError('unreachable', 'fixture enumeration unavailable'); };
     b.adapter.closePane = async (pane) => {
@@ -285,15 +288,17 @@ function fakeBackend({ convoRoots, sessionsDir = tmp(), desktop = null, workspac
     store, bus: new EventEmitter(), sessions: new Map(), adapter, events, calls, killing: new Set(),
     api: { broadcast: (ev, data) => events.push([ev, data]) },
     plugin: { pluginDir: 'P', systemPromptFile: 'S' }, hookUrl: 'http://127.0.0.1:1/hooks/claude',
-    log: () => {}, hooked: (s) => s.rt.hooked !== false, requireHerdr: () => {},
+    log: () => {}, hooked: (s) => s.rt.hooked !== false, requireTerminal: () => {},
     resolveWorkspace: async (r) => store.getWorkspace(r),
     ensureWorkspace: (ws) => { if (!store.getWorkspace(ws.key)) store.insertWorkspace({ ...ws, createdAt: Date.now() }); },
     withNewPane: async (create, register) => { const r = await create(); await register(r); return r; },
     broadcastSession: (s, o) => events.push(['session', s.name, o && o.cause]),
-    probeGit: () => {}, registerResume: (s) => calls.push(['registerResume', s.sessionId]),
-    setPane: async (s, paneId, wid) => { s.paneId = paneId; s.herdrWorkspaceId = wid; store.updateSession(s.sessionId, { paneId, herdrWorkspaceId: wid }); },
+    probeGit: () => {},
+    setPane: async (s, paneId, wid) => { s.paneId = paneId; s.termWorkspaceId = wid; store.updateSession(s.sessionId, { paneId, termWorkspaceId: wid }); },
     demoteToShell: (s) => { s.kind = 'shell'; calls.push(['demote', s.name]); },
     closeSession: (s, reason) => { store.updateSession(s.sessionId, { closedAt: Date.now(), runtime: s.rt, closeReason: reason }); b.sessions.delete(s.sessionId); calls.push(['close', s.name, reason]); },
+    // P115: 하네스 세션(codex 등)은 백엔드가 판의 줄(env·안내문·세션 ID)로 띄운다. 여기서는 무엇으로 불렀는지만 남긴다
+    startHarness: async (s, o) => { calls.push(['startHarness', s.name, { ...o }, { ...s.harnessPlan }]); return { agent: { name: s.agentName, launchPending: true }, argv: [s.kind], resumed: !!o.resume }; },
   };
   return b;
 }
@@ -379,7 +384,7 @@ test('board auto approval on Claude reopen keeps the native ID, launcher and dis
   assert.deepEqual(launch.command, ['ocx', 'claude']);
   assert.deepEqual(launch.args.slice(0, 2), ['--resume', nativeId]);
   assert.equal(launch.args.filter((arg) => arg === '--permission-mode').length, 1);
-  assert.ok(launch.args.includes('bypassPermissions') && launch.args.includes('--max-turns') && !launch.args.includes('manual'));
+  assert.ok(launch.args.includes('auto') && !launch.args.includes('bypassPermissions') && launch.args.includes('--max-turns') && !launch.args.includes('manual')); // macOS 판: Claude 자동 승인은 auto
   assert.deepEqual(row.resumeArgv.slice(0, 4), ['ocx', 'claude', '--resume', nativeId]);
   assert.equal(row.label, '검토자'); assert.equal(row.name, 'stable-agent');
   assert.equal(row.runtime.startCommand, 'ocx claude');
@@ -387,16 +392,16 @@ test('board auto approval on Claude reopen keeps the native ID, launcher and dis
 
 test('board auto approval on hookless Claude recovery uses the known native ID and launcher', async (t) => {
   const cwd = tmp(), ws = folderWs(cwd), b = fakeBackend({ convoRoots: [tmp()], workspaces: [ws] });
-  const rt = newRuntime({ kind: 'claude', hooked: false }); rt.herdr.agentSessionId = ID(81);
+  const rt = newRuntime({ kind: 'claude', hooked: false }); rt.term.agentSessionId = ID(81);
   const s = { sessionId: ID(80), name: 'stable-agent', agentName: 'stable-agent', cwd, paneId: 'owned-pane', kind: 'claude', origin: 'adopted', permissionMode: 'manual', startCommand: 'ocx claude', createdAt: 1, rt };
   b.sessions.set(s.sessionId, s); b.store.insertSession({ ...s, runtime: rt }); b.store.setMeta('settings', { agentAutoApprove: true });
   const recall = new Recall(b, { readProcs: async () => [] });
   t.after(() => { recall.stop(); b.store.close(); fs.rmSync(cwd, { recursive: true, force: true }); });
   await recall.resumeHookless(s, 'synthetic-recovery');
   const launch = b.calls.find(([op]) => op === 'startAgent')[1];
-  assert.deepEqual(launch.args, ['--resume', ID(81), '--permission-mode', 'bypassPermissions']);
+  assert.deepEqual(launch.args, ['--resume', ID(81), '--permission-mode', 'auto']); // macOS 판: Claude 자동 승인은 auto
   assert.deepEqual(launch.command, ['ocx', 'claude']);
-  assert.equal(b.store.getSession(s.sessionId).permissionMode, 'bypassPermissions');
+  assert.equal(b.store.getSession(s.sessionId).permissionMode, 'auto');
 });
 
 test('J2: 닫힌 세션은 그 워크스페이스 아래 "닫힘"으로 보이고, 목록에서 빼면 사라진다(판 기록은 남음)', async () => {
@@ -433,9 +438,8 @@ test('J2: 닫힌 claude를 다시 열면 같은 세션 ID로 이어 간다(--res
   const row = b.store.getSession(ID(2));
   assert.equal(row.closedAt, null); assert.ok(row.hookToken.length > 20);
   assert.ok(fs.readFileSync(row.settingsPath, 'utf8').includes(row.hookToken));
-  assert.deepEqual(b.store.nodeOf(ID(2)), { session_id: ID(2), x: 100, y: 200, w: 1440, h: 810, z: 0, size: 'wide-normal', aspect: '16:9', area: '' }); // P27: area(본 저장소 영역)
-  assert.ok(b.calls.some((c) => c[0] === 'registerResume'));
-  await assert.rejects(r.reopen({ session: ID(2) }), (e) => e.code === 'not_found');
+  assert.deepEqual(b.store.nodeOf(ID(2)), { session_id: ID(2), x: 100, y: 200, w: 1440, h: 810, z: 0, size: 'wide-normal', aspect: '16:9', area: '' }); // P27: area(본 저장소 영역). P73: 사람이 바꾸지 않은 옛 기본 크기(720×460)는 새 기본 크기로 연다
+  await assert.rejects(r.reopen({ session: ID(2) }), /닫힌 세션이 아닙니다/);
 });
 
 test('J2: 대화 기록이 없는 claude는 같은 --session-id로 새로, 셸은 같은 폴더에 새 셸, 다른 종류는 띄울 때의 인자로. 이름이 쓰이고 있으면 바꾸고 자리가 차면 빈자리', async () => {
@@ -454,14 +458,17 @@ test('J2: 대화 기록이 없는 claude는 같은 --session-id로 새로, 셸�
   assert.equal(sh.name, 'sh1-2'); assert.equal(sh.place, 'slot'); // s2가 그 자리에 다시 떴다
   assert.equal(b.sessions.get(ID(4)).agentName, sh.paneId);
   const cx = await r.reopen({ session: ID(5) });
-  assert.deepEqual(b.calls.filter((c) => c[0] === 'startAgent').pop()[1], { name: 'cx', paneId: cx.paneId, args: ['-m', 'o4'], kind: 'codex' });
+  // P115: 하네스 세션은 판의 줄로 이어 간다. P115 전 행은 띄운 인자를 호출자 추가 인자로 본다
+  const hs = b.calls.filter((c) => c[0] === 'startHarness').pop();
+  assert.equal(hs[1], 'cx'); assert.equal(hs[2].resume, true); assert.deepEqual(hs[3].args, ['-m', 'o4']);
+  assert.equal(cx.resumed, true);
 });
 
 test('J2·J4: 판에 올린 claude는 그 대화 ID의 판 세션으로 다시 연다(옛 행은 옮겨 갔다고 남김). 묶여 있으면 열지 않는다', async () => {
   const root = tmp(); const ws = tmp(); const W = folderWs(ws); const sdir = tmp();
   writeConvo(root, ws, ID(7), [L.user('지시', { cwd: ws })]);
   const b = fakeBackend({ convoRoots: [root], workspaces: [W], sessionsDir: sdir });
-  const rt = newRuntime({ kind: 'claude', hooked: false }); rt.herdr.agentSessionId = ID(7);
+  const rt = newRuntime({ kind: 'claude', hooked: false }); rt.term.agentSessionId = ID(7);
   addClosed(b, { id: ID(6), name: 'helper', cwd: ws, origin: 'adopted', rt, ws: W, reason: 'pane gone' });
   assert.equal(convOf(b.store.getSession(ID(6))), ID(7));
   const r = new Recall(b, { resolveCwd: fakeResolve({}), readProcs: async () => [{ pid: 77, cmd: `claude --resume ${ID(7)}` }] });
@@ -507,10 +514,10 @@ test('J1: herdr가 패널을 잃은 셸은 같은 폴더의 새 셸로, 판에 �
   const b = fakeBackend({ convoRoots: [root], workspaces: [W] });
   const r = new Recall(b, { resolveCwd: fakeResolve({}), readProcs: async () => [] });
   await r.scan({ wait: true });
-  const mk = (id, name, kind, origin, rt) => { const s = { sessionId: id, name, cwd: ws, kind, origin, paneId: 'old:p1', herdrWorkspaceId: 'old', agentName: name, rt, workspaceKey: W.key }; b.store.insertSession({ ...s, permissionMode: 'manual', createdAt: 1, runtime: rt }); b.sessions.set(id, s); return s; };
+  const mk = (id, name, kind, origin, rt) => { const s = { sessionId: id, name, cwd: ws, kind, origin, paneId: 'old:p1', termWorkspaceId: 'old', agentName: name, rt, workspaceKey: W.key }; b.store.insertSession({ ...s, permissionMode: 'manual', createdAt: 1, runtime: rt }); b.sessions.set(id, s); return s; };
   const shRt = newRuntime({ kind: 'shell', hooked: false }); shRt.interruptedTurn = { state: 'shell_running', prompt: 'ping' };
   const sh = mk(ID(1), 'sh1', 'shell', 'board', shRt);
-  const hRt = newRuntime({ kind: 'claude', hooked: false }); hRt.herdr.agentSessionId = ID(9); hRt.exit = { kind: 'herdr_stopped' };
+  const hRt = newRuntime({ kind: 'claude', hooked: false }); hRt.term.agentSessionId = ID(9); hRt.exit = { kind: 'terminal_stopped' };
   const helper = mk(ID(2), 'helper', 'claude', 'adopted', hRt);
   const nRt = newRuntime({ kind: 'claude', hooked: false });
   const noConv = mk(ID(3), 'h2', 'claude', 'adopted', nRt);
@@ -531,8 +538,8 @@ test('J1: herdr를 다시 띄운 뒤 패널은 남았는데 돌아오지 않은 
   const b = fakeBackend({ convoRoots: [root], workspaces: [W] });
   const r = new Recall(b, { resolveCwd: fakeResolve({}), readProcs: async () => [] });
   await r.scan({ wait: true });
-  const down = (kind, agentSessionId = null) => { const rt = newRuntime({ kind, hooked: false }); rt.exit = { kind: 'herdr_stopped' }; rt.herdr.agentSessionId = agentSessionId; return rt; };
-  const mk = (id, name, kind, origin, rt) => { const s = { sessionId: id, name, cwd: ws, kind, origin, paneId: `${name}:p1`, herdrWorkspaceId: name, agentName: name, rt, workspaceKey: W.key }; b.store.insertSession({ ...s, permissionMode: 'manual', createdAt: 1, runtime: rt }); b.sessions.set(id, s); return s; };
+  const down = (kind, agentSessionId = null) => { const rt = newRuntime({ kind, hooked: false }); rt.exit = { kind: 'terminal_stopped' }; rt.term.agentSessionId = agentSessionId; return rt; };
+  const mk = (id, name, kind, origin, rt) => { const s = { sessionId: id, name, cwd: ws, kind, origin, paneId: `${name}:p1`, termWorkspaceId: name, agentName: name, rt, workspaceKey: W.key }; b.store.insertSession({ ...s, permissionMode: 'manual', createdAt: 1, runtime: rt }); b.sessions.set(id, s); return s; };
   const helper = mk(ID(1), 'helper', 'claude', 'adopted', down('claude', ID(9)));
   const cx = mk(ID(2), 'cx', 'codex', 'board', down('codex'));
   const back = mk(ID(3), 'back', 'claude', 'adopted', down('claude', ID(9)));
@@ -541,8 +548,10 @@ test('J1: herdr를 다시 띄운 뒤 패널은 남았는데 돌아오지 않은 
   await r.recoverHookless([helper, cx, back, ag]);
   const starts = b.calls.filter((c) => c[0] === 'startAgent').map((c) => c[1]);
   assert.deepEqual(starts, [{ name: 'helper', paneId: 'helper:p1', args: ['--resume', ID(9)], kind: 'claude' }]);
+  // macOS 판(ARCH D2): 작업 공간을 닫지 않고 그 세션의 패널만 닫는다(형제 패널 보호)
+  assert.deepEqual(b.calls.filter((c) => c[0] === 'closeWorkspace'), []);
   assert.deepEqual(b.calls.filter((c) => c[0] === 'closePane'), [['closePane', 'cx:p1']]);
-  assert.ok(b.calls.some((c) => c[0] === 'close' && c[1] === 'cx' && c[2] === 'not resumed after herdr restart'));
+  assert.ok(b.calls.some((c) => c[0] === 'close' && c[1] === 'cx' && c[2] === 'not resumed after terminal restart'));
   assert.ok(b.calls.some((c) => c[0] === 'demote' && c[1] === 'ag'));
 });
 

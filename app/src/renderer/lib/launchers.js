@@ -59,7 +59,7 @@ export function secretNames(envText) {
   return String(envText || '').split(/\r?\n/).map((l) => l.split('=')[0].trim()).filter((k) => k && SECRET_RE.test(k));
 }
 
-// 하네스가 보일 칸(백엔드 HARNESSES의 fields). 모르는 종류(herdr가 아는 그 밖)는 추가 인자만
+// 하네스가 보일 칸(백엔드 HARNESSES의 fields). 모르는 종류(터미널 백엔드가 아는 그 밖)는 추가 인자만
 export function harnessFields(harnesses, id) {
   const h = (harnesses || []).find((x) => x.id === id);
   return h ? h.fields : ['codex', 'gemini', 'agy'].includes(id) ? ['model', 'args'] : ['args'];
@@ -81,8 +81,21 @@ export function harnessModelLabels(harnesses, id) {
   return (h && h.modelLabels) || {};
 }
 
-// 새 호출자의 빈 틀. P97: startCommand(Claude Code의 실행 명령, 비면 claude)
-export const blankLauncher = (harness = 'claude') => ({ id: null, name: '', harness, icon: '', model: '', effort: '', permissionMode: 'manual', allowHerdr: false, args: '', env: {}, command: '', checkUrl: '', startCommand: '' });
+// 새 호출자의 빈 틀. P97: startCommand(실행 명령, 비면 그 하네스의 명령). P115: connection(연결 ID, 비면 하네스의 기본 로그인)
+export const blankLauncher = (harness = 'claude') => ({ id: null, name: '', harness, icon: '', model: '', effort: '', permissionMode: 'manual', args: '', env: {}, command: '', connection: '', startCommand: '' });
+
+// P115: 런처 틀의 연결 고르기. 그 하네스가 쓰는 프로토콜이 아닌 연결은 고를 수 없게(흐리게) 까닭과 함께
+// → [{ id, name, protocol, baseUrl, ok }]. protocols는 그 하네스의 것(백엔드 harnesses[].protocols)
+export function connectionChoices(connections, harnesses, harnessId) {
+  const h = (harnesses || []).find((x) => x.id === harnessId);
+  const ps = (h && h.protocols) || [];
+  return (connections || []).map((c) => ({ id: c.id, name: c.name, protocol: c.protocol, baseUrl: c.baseUrl, ok: ps.includes(c.protocol) }));
+}
+export const harnessProtocols = (harnesses, harnessId) => { const h = (harnesses || []).find((x) => x.id === harnessId); return (h && h.protocols) || []; };
+// P115: 연결 틀의 base URL 자리표시(프로토콜마다 /v1을 어디까지 쓰는지 다르다)
+export const baseUrlHintKey = (protocol) => (protocol === 'anthropic-messages' ? 'connections.baseUrlPhAnthropic' : 'connections.baseUrlPhOpenai');
+// P115: 연결 하나의 빈 틀
+export const blankConnection = () => ({ id: null, name: '', protocol: 'openai-chat', baseUrl: '', auth: { env: '', scheme: '' }, healthUrl: '', modelsUrl: '' });
 
 // P97: 붙여 넣은 명령줄을 무엇으로 알아봤는지(백엔드 launcher.parse의 recognized) → 칩 목록 [{ tone: ok|dim|warn, key, vars }]. 사전 launchers.parse.*
 export function recognizedChips(rec) {

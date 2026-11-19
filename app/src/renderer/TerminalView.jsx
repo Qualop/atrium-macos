@@ -1,18 +1,21 @@
 // 가까이 얼굴: 제어기 프레임을 xterm.js로 그리고 입력을 제어기로 넘긴다(ARCH 7.2, E4).
 // - allowProposedApi + unicode11(이모지 폭). 프레임의 크기가 바뀌면 쓰기 전에 xterm 크기를 맞춘다.
 // - 붙여넣기는 괄호 붙여넣기로 감싸고, 휠은 SGR 마우스 시퀀스로 바꾼다. ctrl+g(외부 편집기)는 막는다.
+//   P126: 프레임이 마우스 모드를 알려 주는 판(hc)에서 프로그램이 마우스 추적을 끈 동안은 휠을 보내지 않는다(lib/term-input.js wheelAction).
+//   P135: 단추 없는 마우스 움직임 보고는 보내지 않고, 마우스 보고는 다음 프레임까지 REPORT_BUDGET바이트만 보낸다(filterMouse). 첫 프레임 전에는 휠을 삼킨다.
 // - WebGL 렌더러는 예산(기본 8) 안에서만 쓰고, 넘거나 컨텍스트를 잃으면 DOM으로 그린다(BRIEF 위험 2).
 // - P6a(H4): 노드를 눌러 들어간 뒤 붙기 전에 친 글(store.pendingInput)은 붙자마자 넣고 초점을 준다.
 // - P38: 판 배율 아래에서도 끌어 고르기가 마우스 밑 글자를 따라가게 xterm의 마우스 → 칸 계산에 확대·축소 전 자리를 넘긴다(unscalePoint).
 //   고르는 동안 포인터는 글 고르기 모양. 복사는 줄 끝 빈칸을 뺀다.
 // - P42: 글 고르기는 웹처럼 한다(term-selection.js). 선택은 글에 붙어 휠·가장자리 자동 스크롤·새 프레임에 함께 움직이고 풀리지 않는다.
-//   claude 등은 프레임을 이어 붙인 문서로, 셸은 herdr 기록과 밀려난 줄을 xterm scrollback에 넣어(판 안에서 스크롤) 화면 밖 글까지 고르고 복사한다.
+//   claude 등은 프레임을 이어 붙인 문서로, 셸은 터미널 기록과 밀려난 줄을 xterm scrollback에 넣어(판 안에서 스크롤) 화면 밖 글까지 고르고 복사한다.
 // - P45: 글자 크기 = TERM_FONT_SIZE × 터미널 글자 배율(설정 일반 탭, store.termScale). 바꾸면 곧바로 글자를 바꾸고 줄·칸 수를 다시 재 패널 크기를 맞춘다.
 // - P47: 창(클라이언트) 여럿이 한 패널을 함께 본다. 패널 크기는 마지막으로 입력했거나 초점을 준 창이 정하고(terminal.owner),
 //   다른 창은 같은 열×행을 노드 크기에 맞춰 비율로 그린다(fitScale). 다른 기기가 방금 친 터미널에는 짧게 표시한다(잠그지 않는다).
 // - P65: 판 배율·분수 DPR에서 글자가 흐리지 않게, 배율이 멈추면 WebGL 터미널을 화면 장치 픽셀에 맞춘 해상도로 다시 그리고
 //   캔버스를 장치 픽셀 경계에 맞춘다(lib/term-sharp.js). 패널 줄·칸 수는 배율 1 칸으로 잰다(배율을 바꿔도 패널 크기는 그대로).
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useStoreApi } from '@xyflow/react';
 import { Terminal } from '@xterm/xterm';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -20,9 +23,10 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { FitAddon } from '@xterm/addon-fit';
 import { api } from './api.js';
 import { useStore, getState, takePendingInput, pendingFor } from './store.js';
-import { wrapPaste, wheelToSgr, shellWheelLines, sgrWheel, keyAction, frameBytes, unscalePoint, clearsSelection, copyText, REDRAW_PREFIX, joinBytes } from './lib/term-input.js';
-import { findShift, bigChange, historyAbove, historyPrefill, scrollUpSeq, serializeScreen, stripAnsi } from './lib/term-select.js';
+import { wrapPaste, wheelToSgr, shellWheelLines, sgrWheel, wheelAction, setsMouseMode, filterMouse, REPORT_BUDGET, keyAction, frameBytes, unscalePoint, clearsSelection, copyText, copyOnRelease, REDRAW_PREFIX, joinBytes } from './lib/term-input.js';
+import { findShift, bigChange, historyAbove, scrollUpSeq, serializeScreen, stripAnsi } from './lib/term-select.js';
 import { TermSelection } from './term-selection.js';
+import { TouchSelect, writeClipboard } from './term-touch.js'; // P151: 휴대폰 웹의 길게 눌러 고르기
 import { RendererBudget, DEFAULT_WEBGL_BUDGET } from './lib/faces.js';
 import { onFrame, onWritten, markInput, setTerminal, perfLog } from './perf.js';
 import { termTheme, TERM_FONT, TERM_FONT_SIZE, TERM_LINE_HEIGHT } from './lib/tokens.js';
@@ -32,8 +36,10 @@ import { useT, errText } from './lib/i18n.js';
 import { fitScale, inputByLabel } from './lib/multiclient.js'; // P47: 창 여럿이 같은 패널을 볼 때
 import { isWeb, uploadFiles } from './web.js'; // P48: 웹 화면의 파일 붙여넣기·끌어 놓기
 import { pathsText, filesOf, hasFiles } from './lib/upload.js';
+import { wantsDesktopPaste, pastePathsText } from './lib/desktop-paste.js'; // P162: 데스크톱 창의 파일·그림 붙여 넣기
 import { termBudgetNow, step } from './crash-watch.js'; // P84: 손가락 웹 화면은 WebGL 없이, 웹은 캔버스 픽셀 상한을 낮게. P86: 단계 기록
 import { capDims } from './lib/crumbs.js'; // P86: 웹 화면의 칸·줄 상한
+import { fillPlan, runFill } from './lib/term-fill.js'; // P127: 셸 기록을 여러 프레임에 나눠 쓴다(최근 화면 먼저)
 
 // P86: 단계 기록에 적는 터미널 값(잰 글자 폭·높이, 칸·줄, DOM 셀 수, 판 배율). 내용 없음
 const cellsOf = (term) => { const rows = term.element && term.element.querySelector('.xterm-rows'); return rows ? rows.getElementsByTagName('span').length + rows.children.length : 0; };
@@ -68,7 +74,8 @@ function fixMouseScale(term, sessionId) {
 // P11: 색은 tokens.css --term-…, 글꼴은 앱에 넣은 JetBrains Mono(한글 Nanum Gothic Coding). 글 크기와 줄 높이는 lib/tokens.js
 
 // P74: fontScale을 주면 store의 터미널 글자 배율 대신 그 값(휴대폰 화면의 글자 크기). webgl = false면 DOM으로 그린다(휴대폰: 터미널 하나, 높은 DPR)
-export function TerminalView({ sessionId, width, height, onActivate, onInput, focusTick, fontScale = null, webgl = true }) {
+// P151: touchSelect = 손가락으로 길게 눌러 글 고르기(휴대폰 세션 화면·전체 보기). 태블릿 판은 길게 누르기가 노드 옮기기라 주지 않는다
+export function TerminalView({ sessionId, width, height, onActivate, onInput, focusTick, fontScale = null, webgl = true, touchSelect = false }) {
   const t = useT();
   const flow = useStoreApi(); // P65: 판 배율·이동을 렌더 없이 구독한다
   const onInputRef = useRef(onInput);
@@ -83,6 +90,8 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
   const [retry, setRetry] = useState(0);
   const [share, setShare] = useState({ shared: 1, ownerIsMe: true, ownerName: null }); // P47
   const [typing, setTyping] = useState(null); // P47: 다른 기기가 방금 입력
+  const [touchUi, setTouchUi] = useState(null); // P151: 손가락 고르기의 손잡이·막대 자리
+  const touchSelectRef = useRef(touchSelect);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -231,39 +240,72 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
     };
     st.send = send;
     const flash = (t) => { setHint(t); clearTimeout(st.hintTimer); st.hintTimer = setTimeout(() => setHint(null), 2500); };
+    // P126: 프레임에 마우스 모드(DECSET·DECRST)가 한 번이라도 오면 이 터미널은 모드를 아는 것으로 본다(hc 판은 전체 프레임마다 모드를 다시 적는다).
+    // 처리기는 false를 돌려 xterm이 모드를 그대로 바꾸게 한다
+    st.modesKnown = false;
+    const modeHooks = ['h', 'l'].map((final) => term.parser.registerCsiHandler({ prefix: '?', final }, (params) => { if (!st.modesKnown && setsMouseMode(params)) st.modesKnown = true; return false; }));
+    // P135: 첫 프레임이 오기 전(새로 붙는 중)과 다시 붙어 첫 full 프레임을 기다리는 동안은 휠을 보내지 않는다
+    const wheelMode = () => wheelAction({ modesKnown: st.modesKnown, mouseTrackingMode: term.modes.mouseTrackingMode, framed: !!st.wrote && !st.again });
+    // P135: 마우스 보고는 프로그램이 다시 그리기 전까지 REPORT_BUDGET바이트만 보낸다(콘솔 호스트가 멈춘 동안 쌓여 보고가 글로 깨지지 않게). 프레임이 오면 다시 센다
+    st.unacked = 0;
+    const sendMouse = (data, how) => {
+      const f = filterMouse(data, { room: REPORT_BUDGET - st.unacked });
+      st.unacked += f.bytes;
+      // P136: 창 로그(app-main.log)에도 남긴다. perfLog는 ?trace=1이 아니면 창 안에만 남아 실제 판에서 볼 수 없었다
+      if (f.held && !st.heldNoted) { st.heldNoted = true; perfLog('term_mouse_held', { sessionId, how, held: f.held, unacked: st.unacked }); try { window.mt.log(`term_mouse_held ${sessionId} how=${how} held=${f.held} unacked=${st.unacked}`); } catch {} }
+      send(f.data);
+    };
 
     // P42: 글 고르기(웹처럼). xterm 자체 선택 대신 문서 줄에 붙은 선택을 쓴다. 판(Canvas)과 시험이 보는 hasSelection·getSelection도 이것으로 답한다
     const sel = new TermSelection({
       term, host, mode: shell ? 'buffer' : 'live',
-      sendWheel: (steps, c) => send(sgrWheel(steps, c.cell + 1, c.row + 1, term.cols, term.rows)),
+      sendWheel: (steps, c) => { if (wheelMode() === 'report') sendMouse(sgrWheel(steps, c.cell + 1, c.row + 1, term.cols, term.rows), 'edge'); }, // P126: 마우스 추적을 끈 프로그램에는 보내지 않는다. P135: 보고 바이트 상한
       onActivate: () => { if (onActivateRef.current) onActivateRef.current(); },
+      onSelectEnd: () => { const text = sel.text(); if (copyOnRelease({ hasSelection: sel.has(), text })) copySel(text, 'select'); }, // P125: 끌어 고르면 바로 복사
       log: (name, d) => perfLog(name, { sessionId, ...d }),
     });
+    // P42·P125: 고른 글 전체(화면 밖으로 나간 부분까지)를 복사한다. 선택은 남긴다(clearsSelection: 복사로는 지우지 않음)
+    function copySel(raw, how) {
+      const text = copyText(raw);
+      navigator.clipboard.writeText(text).then(() => { perfLog('term_copy', { sessionId, chars: text.length, how }); flash(t('terminal.copied')); }, (err) => { window.mt.log(`clipboard write failed ${sessionId}: ${err && err.message}`); flash(t('termSelect.copyFail')); });
+    }
     st.sel = sel;
+    // P151: 손가락 고르기. 복사는 막대에서 하고(클립보드 API, 안 되면 execCommand), 복사하면 고르기를 끝낸다
+    if (touchSelectRef.current) {
+      const ts = new TouchSelect({ sel, wrap: host.parentElement || host, owner: sessionId, onUi: setTouchUi, log: (name, d) => perfLog(name, { sessionId, ...d }) });
+      ts.copy = () => {
+        const text = copyText(sel.text());
+        if (!text.trim()) { ts.close('touch-copy-empty'); return; }
+        writeClipboard(text).then((how) => { perfLog('term_copy', { sessionId, chars: text.length, how: `touch-${how}` }); flash(t('terminal.copied')); }, (err) => { window.mt.log(`clipboard write failed ${sessionId}: ${err && err.message}`); flash(t('termSelect.copyFail')); });
+        ts.close('touch-copy');
+      };
+      st.touch = ts;
+      term._mtTouch = ts; // 시험이 읽는다
+    }
     term._mtSel = sel; // 시험이 선택 기록(trace)을 읽는다
     term.hasSelection = () => sel.has();
     term.getSelection = () => sel.text();
-    term.onData((d) => { if (clearsSelection('input', { hasSelection: sel.has() })) sel.clear('input'); send(d); });
+    term.onData((d) => { if (clearsSelection('input', { hasSelection: sel.has() })) sel.clear('input'); sendMouse(d, 'xterm'); }); // P135: 단추 없는 움직임 보고는 빼고, 마우스 보고는 상한까지
     term.attachCustomKeyEventHandler((e) => {
       const a = keyAction(e, sel.has());
       if (a === 'block-ctrl-g') { e.preventDefault(); flash(t('terminal.ctrlG')); return false; }
       if (a === 'paste') return false; // 브라우저 붙여넣기 이벤트로 넘긴다(아래에서 감싼다)
       if (a === 'clear-selection') { e.preventDefault(); sel.clear('escape'); return false; } // P42: Esc는 선택만 끝낸다
       if (a === 'copy') {
-        // P42: 화면 밖으로 나간 부분까지 고른 글 전체. 일하는 중에도 프레임이 선택을 지우지 않는다
-        const text = copyText(sel.text());
-        navigator.clipboard.writeText(text).then(() => perfLog('term_copy', { sessionId, chars: text.length }), (err) => { window.mt.log(`clipboard write failed ${sessionId}: ${err && err.message}`); flash(t('termSelect.copyFail')); });
-        if (clearsSelection('copy', { hasSelection: sel.has() })) sel.clear('copy');
-        e.preventDefault(); flash(t('terminal.copied')); return false;
+        // P42: 화면 밖으로 나간 부분까지 고른 글 전체. 일하는 중에도 프레임이 선택을 지우지 않는다.
+        // P125: 고른 글이 있으면 Ctrl+C는 복사만 하고 ^C를 보내지 않는다. 선택을 남겨 다시 눌러도 복사다(세션이 끝나지 않는다)
+        copySel(sel.text(), 'key');
+        e.preventDefault(); return false;
       }
       return true;
     });
     term.attachCustomWheelEventHandler((ev) => {
       if (shell) return false; // 셸은 아래 onShellWheel이 먼저 받는다
+      if (wheelMode() === 'swallow') { st.acc = 0; ev.preventDefault(); return false; } // P126: 마우스 추적이 꺼진 프로그램(보고가 입력창에 글로 남는다)
       const screen = host.querySelector('.xterm-screen') || host;
       const r = wheelToSgr({ deltaY: ev.deltaY, deltaMode: ev.deltaMode, clientX: ev.clientX, clientY: ev.clientY, rect: screen.getBoundingClientRect(), cols: term.cols, rows: term.rows, acc: st.acc });
       st.acc = r.acc;
-      send(r.seq); // P42: 선택은 지우지 않는다. 다음 프레임에서 글과 함께 움직인다(끄는 중이면 늘어난다)
+      sendMouse(r.seq, 'wheel'); // P135: 보고 바이트 상한. P42: 선택은 지우지 않는다. 다음 프레임에서 글과 함께 움직인다(끄는 중이면 늘어난다)
       ev.preventDefault();
       return false;
     });
@@ -286,10 +328,24 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
       uploadFiles(files).then((paths) => { if (!current(generation, attachmentId)) return; send(wrapPaste(pathsText(paths))); flash(t('upload.done', { n: paths.length })); perfLog('term_upload', { sessionId, n: paths.length }); },
         (err) => { flash(t('upload.failed', { error: err.message })); window.mt.log(`upload failed ${sessionId}: ${err.message}`); });
     };
+    // P162: 데스크톱 창은 탐색기에서 복사한 파일의 경로를, 캡처한 그림은 판 데이터 폴더에 둔 PNG의 경로를 넣는다(main.mjs mt:clipPaste).
+    // 터미널에는 칩 대신 경로 그대로 보낸다. Claude Code·Codex는 붙여 넣은 그림 경로를 그림으로 붙인다
+    const pasteDesktop = () => window.mt.clipPaste().then((r) => {
+      if (!r) return;
+      if (r.kind === 'error') { flash(t('desktopPaste.tooBig')); return; }
+      if (r.kind === 'files' && r.folders && !r.paths.length) { flash(t('desktopPaste.foldersOnly')); return; }
+      const paths = r.kind === 'image' ? [r.path] : r.paths;
+      if (!paths || !paths.length) return;
+      send(wrapPaste(pastePathsText(paths)));
+      if (r.kind === 'image') flash(t('desktopPaste.image'));
+      else if (r.folders) flash(t('desktopPaste.foldersSkipped', { n: r.folders }));
+      perfLog('term_desktop_paste', { sessionId, kind: r.kind, n: paths.length });
+    }, (err) => { flash(t('desktopPaste.failed', { error: err.message })); window.mt.log(`desktop paste failed ${sessionId}: ${err.message}`); });
     const onPaste = (e) => {
       e.preventDefault(); e.stopPropagation();
       const files = isWeb ? filesOf(e.clipboardData) : [];
       if (clearsSelection('paste', { hasSelection: sel.has() })) sel.clear('paste');
+      if (wantsDesktopPaste(e.clipboardData, { desktop: !isWeb && typeof window.mt.clipPaste === 'function' })) return pasteDesktop();
       if (files.length) return uploadInto(files);
       const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
       // P51(#3): 셸 노드는 줄바꿈을 Shift+Enter로 보내 여러 줄이 입력줄에 쌓이게 한다(지금 종류로 본다. 셸 안에서 띄운 에이전트로 바뀔 수 있다)
@@ -301,29 +357,38 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
     host.addEventListener('dragover', onDragOver, true);
     host.addEventListener('drop', onDrop, true);
 
-    // P42: 셸은 그림자 터미널(herdr 화면과 같은 scrollback 0 화면)에 먼저 써서 새 출력으로 화면이 몇 줄 밀렸는지 보고,
-    // 프레임을 쓰기 전에 그만큼 xterm 영역을 올려 밀려난 줄을 scrollback으로 보낸다. 첫 프레임 앞에는 herdr 기록(지난 출력)을 넣는다
+    // P42: 셸은 그림자 터미널(터미널 서버 화면과 같은 scrollback 0 화면)에 먼저 써서 새 출력으로 화면이 몇 줄 밀렸는지 보고,
+    // 프레임을 쓰기 전에 그만큼 xterm 영역을 올려 밀려난 줄을 scrollback으로 보낸다. 첫 프레임 앞에는 터미널 기록(지난 출력)을 넣는다
     let shadow = null, chain = Promise.resolve(), history = 'wait';
     const writeP = (tm, data) => new Promise((res) => tm.write(data, res));
     const rowsOf = (tm) => { const b = tm.buffer.active, out = []; for (let r = 0; r < tm.rows; r++) { const l = b.getLine(b.viewportY + r); out.push(l ? l.translateToString(true) : ''); } return out; };
     if (shell) { shadow = new Terminal({ allowProposedApi: true, scrollback: 0, cols: 80, rows: 24 }); const su = new Unicode11Addon(); shadow.loadAddon(su); shadow.unicode.activeVersion = '11'; }
-    // herdr 기록 가운데 지금 화면 위의 줄(ANSI). 맞는 자리가 없으면 null
+    // 터미널 기록 가운데 지금 화면 위의 줄(ANSI). 맞는 자리가 없으면 null
     const readHistory = async (screen) => {
       const r = await Promise.race([api.call('terminal.history', { session: sessionId }).catch(() => null), new Promise((res) => setTimeout(() => res(null), HISTORY_WAIT))]);
       const ansi = r && r.text ? r.text.split(/\r?\n/) : [];
       const above = ansi.length ? historyAbove(ansi.map(stripAnsi), screen) : -1;
       return { lines: ansi.length, above, ansi: above >= 0 ? ansi.slice(0, above) : null };
     };
+    // P127: 기록 + 지금 화면을 나눠 쓴다(lib/term-fill.js). 첫 쓰기는 대체 화면에 지금 화면만이라 바로 보이고, 위쪽 기록은 뒤 프레임마다 한 조각씩 채운다
+    const fillHistory = async (ansi, screen, what) => {
+      const plan = fillPlan(ansi, term.rows, screen);
+      const t0 = performance.now();
+      const n = await runFill(plan, { write: (d) => writeP(term, d), alive: () => st.alive });
+      perfLog('term_history_fill', { sessionId, what, lines: ansi.length, writes: plan.length, wrote: n, ms: Math.round(performance.now() - t0) });
+    };
+    // 그림자(터미널 서버 화면) 칸을 다시 그리는 글. 웹은 터미널 칸·줄이 상한으로 작을 수 있어 작은 쪽까지만
+    const shadowScreen = () => { const sb = shadow.buffer.active; return serializeScreen(sb, { base: sb.baseY, rows: Math.min(shadow.rows, term.rows), cols: Math.min(shadow.cols, term.cols), cursorX: sb.cursorX, cursorY: Math.min(sb.cursorY, term.rows - 1), cell: sb.getNullCell() }); };
     const prefill = async (screen) => {
       const generation = st.generation, attachmentId = st.attachmentId;
       const h = await readHistory(screen);
       if (!current(generation, attachmentId)) return;
       step('hist', { lines: h.lines, above: h.above });
       perfLog('term_history', { sessionId, lines: h.lines, above: h.above });
-      if (h.above > 0 && current()) term.write(historyPrefill(h.ansi, term.rows));
+      if (h.above > 0 && st.alive && current(generation, attachmentId)) await fillHistory(h.ansi, shadowScreen(), 'first');
     };
-    // 빠른 출력이 한 프레임에 지나가거나(화면에 한 번도 안 보인 줄), cls·크기 바뀜으로 판 안 기록이 herdr 기록과 어긋났다.
-    // 출력이 멈추면(그리고 고르는 중이나 위로 올려 보는 중이 아니면) herdr 기록으로 다시 맞춘다: 지금 화면을 칸 그대로 적어 두고 reset 뒤 기록 + 화면
+    // 빠른 출력이 한 프레임에 지나가거나(화면에 한 번도 안 보인 줄), cls·크기 바뀜으로 판 안 기록이 터미널 기록과 어긋났다.
+    // 출력이 멈추면(그리고 고르는 중이나 위로 올려 보는 중이 아니면) 터미널 기록으로 다시 맞춘다: 지금 화면을 칸 그대로 적어 두고 reset 뒤 기록 + 화면
     const resync = async () => {
       if (!current()) return;
       st.stale = false;
@@ -334,7 +399,7 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
       if (sel.has() || sel.dragging || b.viewportY < b.baseY) { markStale(); return; }
       const screen = serializeScreen(b, { base: b.baseY, rows: term.rows, cols: term.cols, cursorX: b.cursorX, cursorY: b.cursorY, cell: b.getNullCell() });
       term.reset();
-      term.write(historyPrefill(h.ansi, term.rows) + screen);
+      await fillHistory(h.ansi, screen, 'resync'); // P127: 나눠 쓴다(지금 화면이 먼저 보인다)
       perfLog('term_history_resync', { sessionId, lines: h.lines, above: h.above });
     };
     const trySync = () => {
@@ -359,8 +424,8 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
       else if (!before) markStale();
       else {
         const s = findShift(before, after);
-        // 영역을 올려 밀려난 줄을 scrollback으로 보낸 뒤, 화면은 그림자(herdr의 새 화면)를 칸 그대로 다시 쓴다.
-        // herdr 프레임은 herdr 앞 화면에서 바뀐 칸만 쓰므로, 올린 화면에 그대로 쓰면 글이 깨진다. 그 뒤 프레임을 써도 같은 칸을 같은 글로 쓸 뿐이다
+        // 영역을 올려 밀려난 줄을 scrollback으로 보낸 뒤, 화면은 그림자(터미널 서버의 새 화면)를 칸 그대로 다시 쓴다.
+        // 터미널 프레임은 서버의 앞 화면에서 바뀐 칸만 쓰므로, 올린 화면에 그대로 쓰면 글이 깨진다. 그 뒤 프레임을 써도 같은 칸을 같은 글로 쓸 뿐이다
         if (s.d > 0) { const sb = shadow.buffer.active; term.write(scrollUpSeq(s.d, s.hi, term.rows) + serializeScreen(sb, { base: sb.baseY, rows: shadow.rows, cols: shadow.cols, cursorX: sb.cursorX, cursorY: sb.cursorY, cell: sb.getNullCell() })); }
         else if (bigChange(before, after)) markStale();
       }
@@ -375,6 +440,7 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
       let bytes = frameBytes(f.bytes);
       if (st.again && f.full) { st.again = false; bytes = joinBytes(REDRAW_PREFIX, bytes); }
       const t0 = onFrame(sessionId, bytes.length, f.width, f.height);
+      st.unacked = 0; st.heldNoted = false; // P135: 프로그램이 그렸다(콘솔 호스트가 돈다). 마우스 보고를 다시 센다
       if (shell) { chain = chain.then(() => shellFrame(f, bytes, t0)).catch((e) => window.mt.log(`shell frame ${sessionId}: ${e.stack || e.message}`)); return; }
       if (f.width && f.height && (f.width !== term.cols || f.height !== term.rows)) { const d = capDims({ cols: f.width, rows: f.height }, isWeb); term.resize(d.cols, d.rows); st.applyScale(); } // 쓰기 전에 크기 맞추기(E4). P86: 웹은 상한
       const first = !st.wrote; st.wrote = true;
@@ -492,6 +558,8 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
       host.removeEventListener('dragover', onDragOver, true);
       host.removeEventListener('drop', onDrop, true);
       host.removeEventListener('wheel', onShellWheel, { capture: true });
+      for (const h of modeHooks) h.dispose();
+      if (st.touch) { st.touch.dispose(); st.touch = null; }
       sel.dispose();
       clearTimeout(st.syncTimer);
       if (shadow) shadow.dispose();
@@ -549,21 +617,21 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
     st.term.focus();
   }, [focusTick, sessionId]);
 
-  // herdr가 다시 뜨거나(C3) 백엔드가 다시 붙어 제어기가 끝났으면, 세션이 다시 살아난 뒤 저절로 다시 붙는다.
+  // 터미널 서버가 다시 뜨거나(C3) 백엔드가 다시 붙어 제어기가 끝났으면, 세션이 다시 살아난 뒤 저절로 다시 붙는다.
   // 다른 클라이언트가 이 패널을 가져간 경우(takeover)는 서로 빼앗지 않게 저절로 붙지 않는다. 같은 끊김에 다섯 번까지.
-  const herdrUp = useStore((st) => st.herdr.connected);
+  const termUp = useStore((st) => st.terminal.connected);
   const sstate = useStore((st) => (st.sessions.get(sessionId) || {}).state);
   const autoTries = useRef(0);
   useEffect(() => {
     if (status.kind === 'attached') { autoTries.current = 0; return; }
     if (status.kind !== 'detached' && status.kind !== 'error') return;
-    if (status.reason === 'takeover' || api.status !== 'open' || !herdrUp || !sstate || sstate === 'exited' || sstate === 'starting' || autoTries.current >= 5) return;
+    if (status.reason === 'takeover' || api.status !== 'open' || !termUp || !sstate || sstate === 'exited' || sstate === 'starting' || autoTries.current >= 5) return;
     const t = setTimeout(() => { autoTries.current++; perfLog('term_auto_reattach', { sessionId, reason: status.reason, state: sstate }); setStatus({ kind: 'attaching' }); setRetry((x) => x + 1); }, 800);
     return () => clearTimeout(t);
-  }, [status.kind, status.reason, herdrUp, sstate, sessionId]);
+  }, [status.kind, status.reason, termUp, sstate, sessionId]);
 
   return (
-    <div className="mt-term-wrap nodrag nowheel nopan" onMouseDown={() => onActivate && onActivate()}>
+    <div className={`mt-term-wrap nodrag nowheel nopan${touchSelect ? ' mt-term-touch' : ''}${touchUi ? ' mt-term-touchsel' : ''}`} onMouseDown={() => onActivate && onActivate()}>
       <div className="mt-term" ref={hostRef} data-session={sessionId} />
       {status.kind === 'attaching' && <div className="mt-term-note">{t('terminal.attaching')}</div>}
       {(status.kind === 'detached' || status.kind === 'error') && (
@@ -574,6 +642,7 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
       )}
       {hint && <div className="mt-term-hint">{hint}</div>}
       {typing && <div className="mt-term-typing" data-role="term-typing">{t('peers.typing', { name: typing })}</div>}
+      {touchUi && createPortal(<TouchSelectUi ui={touchUi} owner={sessionId} ctl={ref.current.touch} />, document.body)}
       {share.shared > 1 && !share.ownerIsMe && <div className="mt-term-sizeby" data-role="term-sizeby" title={t('peers.sizeBy', { name: share.ownerName || '?' })} />}
     </div>
   );
@@ -592,4 +661,25 @@ export function termStats() {
     } catch {}
   }
   return { terms: terms.size, px, atlas, gl: budget.used };
+}
+
+// P151: 손가락 고르기의 양 끝 손잡이와 떠 있는 막대(복사, 모두 선택, 닫기). 창 기준 자리라 body에 그린다(판의 변환 밖).
+// data-term-keep: 눌러도 P42 밖 누르기로 고르기가 풀리지 않는다. 단추는 tabIndex -1(초점을 받지 않는다).
+// pointerdown·mousedown에서 preventDefault를 하지 않는다: WebKit은 그러면 손가락 탭의 click을 만들지 않는다(P151 실험)
+function TouchSelectUi({ ui, owner, ctl }) {
+  const t = useT();
+  if (!ctl) return null;
+  return (
+    <div className="mt-tsel" data-term-keep="" onMouseDown={(e) => e.stopPropagation()} data-role="term-touch-select" data-session={owner}>
+      {ui.start && <span className="mt-tsel-h start" data-term-handle="start" data-owner={owner} style={{ left: ui.start.x, top: ui.start.y, '--lh': `${ui.lineH}px` }} />}
+      {ui.end && <span className="mt-tsel-h end" data-term-handle="end" data-owner={owner} style={{ left: ui.end.x, top: ui.end.y, '--lh': `${ui.lineH}px` }} />}
+      {!ui.dragging && (
+        <div className="mt-tsel-bar" role="toolbar" aria-label={t('termSelect.bar')} style={{ left: ui.bar.x, top: ui.bar.y }}>
+          <button type="button" data-action="term-touch-copy" tabIndex={-1} onClick={() => ctl.copy()}>{t('termSelect.copy')}</button>
+          <button type="button" data-action="term-touch-all" tabIndex={-1} onClick={() => ctl.selectAll()}>{t('termSelect.selectAll')}</button>
+          <button type="button" data-action="term-touch-close" tabIndex={-1} onClick={() => ctl.close()}>{t('termSelect.close')}</button>
+        </div>
+      )}
+    </div>
+  );
 }

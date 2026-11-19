@@ -218,7 +218,7 @@ test('P44 판: workspace.close는 여럿을 한 번에, 세션이 있으면 고�
   keys.forEach((k, i) => mk(k, dirs[i], i * 4000, 0));
   add('x1', 'c:/x', R(40, 112)); add('x2', 'c:/x', R(600, 112));
   add('y1', 'c:/y', R(4040, 112), 'claude');
-  b.sessions.get('id-y1').rt.herdr = { ...(b.sessions.get('id-y1').rt.herdr || {}), present: true, status: 'working' };
+  b.sessions.get('id-y1').rt.term = { ...(b.sessions.get('id-y1').rt.term || {}), present: true, status: 'working' };
   b.sessions.get('id-x2').rt.shell = { atPrompt: false, command: 'npm test', procs: ['node'] };
   // 끄기와 보관은 가짜로: 끄면 판 세션에서 빼고 닫힌 행을 만든다
   const killed = [];
@@ -271,7 +271,7 @@ test('P44 판: 빈 워크스페이스 하나는 예전 문구로 묻고 고르�
   mk('c:/f', 'C:/f', 4000, 0);
   add('f1', 'c:/f', R(4040, 112));
   b.recall = { markArchive: () => {}, changed: async () => {} };
-  b.kill = async () => { throw Object.assign(new Error('herdr down'), { code: 'herdr_down' }); };
+  b.kill = async () => { throw Object.assign(new Error('herdr down'), { code: 'terminal_down' }); };
   const h = b.handlers();
   const ask = await h['workspace.close']({ workspace: 'c:/e' });
   assert.equal(ask.msg.key, 'wsClose');

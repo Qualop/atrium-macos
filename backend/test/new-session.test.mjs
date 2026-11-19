@@ -1,37 +1,25 @@
-// 새 세션 기본값 단위 시험: 설정의 claude*, codexArgs 값 확인. session.spawn이 이 값을 쓰는지는 개발용 판에서 본다(herdr와 claude가 필요)
+// 새 세션 기본값 단위 시험. P33부터 새 세션 기본값(claude*, codexArgs, deepseek*)은 설정이 아니라 호출자(launchers.mjs, p33.test.mjs)다.
+// 여기서는 설정이 옛 키를 받지도 보이지도 않고, 판 기록에 남은 옛 키는 지우지 않는지만 본다
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizePatch, DEFAULTS, Settings } from '../src/settings.mjs';
+import { normalizePatch, DEFAULTS, Settings, SETTINGS } from '../src/settings.mjs';
+import { LEGACY_KEYS } from '../src/launchers.mjs';
 
-test('새 세션 기본값: 처음에는 비어 있고 권한은 manual', () => {
-  assert.equal(DEFAULTS.claudeModel, '');
-  assert.equal(DEFAULTS.claudeEffort, '');
-  assert.equal(DEFAULTS.claudePermissionMode, 'manual');
-  assert.equal(DEFAULTS.claudeAllowHerdr, false);
-  assert.equal(DEFAULTS.codexArgs, '');
+test('새 세션 기본값: 설정에는 옛 키가 없다(호출자로 옮김)', () => {
+  for (const k of LEGACY_KEYS) {
+    assert.ok(!(k in DEFAULTS), k);
+    assert.throws(() => normalizePatch({ [k]: 'x' }), /(?:알 수 없는|모르는) 설정/); // macOS 판의 문구는 "모르는 설정"
+  }
+  assert.match(SETTINGS.sleepAfterMin.label, /프로젝트/, '뒤의 정의(P24 리포 단위) 하나만');
 });
 
-test('새 세션 기본값: 모델 이름, 노력 수준, 권한 모드, Codex 인자를 확인한다', () => {
-  assert.deepEqual(normalizePatch({ claudeModel: ' claude-opus-5-5[1m] ' }), { claudeModel: 'claude-opus-5-5[1m]' });
-  assert.deepEqual(normalizePatch({ claudeModel: '' }), { claudeModel: '' });
-  assert.throws(() => normalizePatch({ claudeModel: 'opus --dangerously-skip-permissions' }), /claudeModel/);
-  assert.deepEqual(normalizePatch({ claudeEffort: 'high' }), { claudeEffort: 'high' });
-  assert.deepEqual(normalizePatch({ claudeEffort: '' }), { claudeEffort: '' });
-  assert.throws(() => normalizePatch({ claudeEffort: 'huge' }), /claudeEffort/);
-  assert.deepEqual(normalizePatch({ claudePermissionMode: 'acceptEdits' }), { claudePermissionMode: 'acceptEdits' });
-  assert.throws(() => normalizePatch({ claudePermissionMode: 'yolo' }), /claudePermissionMode/);
-  assert.deepEqual(normalizePatch({ claudeAllowHerdr: 'on' }), { claudeAllowHerdr: true });
-  assert.deepEqual(normalizePatch({ codexArgs: ' -m gpt-5 -c model_reasoning_effort=low ' }), { codexArgs: '-m gpt-5 -c model_reasoning_effort=low' });
-  assert.throws(() => normalizePatch({ codexArgs: 'x'.repeat(301) }), /codexArgs/);
-});
-
-test('새 세션 기본값: 설정 화면이 고를 값을 describe로 받는다', () => {
-  const meta = new Map();
+test('새 세션 기본값: 판 기록에 남은 옛 키는 get이 보이지 않고, set도 지우지 않는다', () => {
+  const meta = new Map([['settings', { tray: false, claudeModel: 'opus', codexArgs: '-m x' }]]);
   const s = new Settings({ store: { getMeta: (k) => meta.get(k), setMeta: (k, v) => meta.set(k, v) }, broadcast: () => {} });
-  const d = s.describe();
-  assert.deepEqual(d.claudeEffort.options, ['', 'low', 'medium', 'high', 'xhigh', 'max']);
-  assert.ok(d.claudePermissionMode.options.includes('manual'));
-  assert.equal(d.codexArgs.max, 300);
-  assert.equal(s.set({ key: 'claudeModel', value: 'opus' }).claudeModel, 'opus');
-  assert.equal(s.get().claudeModel, 'opus');
+  assert.equal(s.get().tray, false);
+  assert.ok(!('claudeModel' in s.get()));
+  const next = s.set({ key: 'language', value: 'ko' });
+  assert.ok(!('claudeModel' in next));
+  assert.equal(meta.get('settings').claudeModel, 'opus');
+  assert.equal(meta.get('settings').language, 'ko');
 });

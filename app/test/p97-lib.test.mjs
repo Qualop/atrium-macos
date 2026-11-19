@@ -20,7 +20,7 @@ test('P97 알아본 결과 칩: 판 세션, 실행 명령, 칸으로 간 인자,
 });
 
 test('P97 틀 채우기: 해석 값을 덮되 사람이 쓴 이름과 고르던 아이콘, 고치는 호출자의 ID는 지킨다', () => {
-  const parsed = { name: 'ocx claude haiku', harness: 'claude', startCommand: 'ocx claude', model: 'haiku', permissionMode: 'auto', args: '--foo', env: { A: '1' }, icon: '', effort: '', allowHerdr: false, command: '', checkUrl: '' };
+  const parsed = { name: 'ocx claude haiku', harness: 'claude', startCommand: 'ocx claude', model: 'haiku', permissionMode: 'auto', args: '--foo', env: { A: '1' }, icon: '', effort: '', command: '', checkUrl: '' };
   const a = fillFromParse({ ...blankLauncher('claude') }, parsed);
   assert.deepEqual([a.name, a.startCommand, a.model, a.permissionMode, a.args, a.env.A, a.id], ['ocx claude haiku', 'ocx claude', 'haiku', 'auto', '--foo', '1', null]);
   const b = fillFromParse({ ...blankLauncher('claude'), id: 'l1', name: 'Mine', icon: 'deepseek' }, parsed);

@@ -18,7 +18,8 @@ import { shortFolder } from './lib/folder-display.js';
 import './sidebar.css';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { api } from './api.js';
-import { useStore, getState, selectWorkspace, toast, goWhenOpen, openDialog, setRenaming } from './store.js';
+import { shownRole } from './lib/roles.js'; // P141(#17)
+import { useStore, getState, selectWorkspace, selectGroup, toast, goWhenOpen, openDialog, setRenaming } from './store.js';
 import { ago, askLine, STATE_LABEL } from './lib/labels.js';
 import { useT, t, errText, tMsg, tOr } from './lib/i18n.js';
 import { archiveRows, SECTION_STEP, bindingText } from './lib/sidebar.js';
@@ -28,6 +29,7 @@ import { branchLabel } from './lib/branch.js'; // P8(K4): 하위 세션은 부�
 import { Icon } from './lib/icons.jsx';
 import { RenameInput, useRenaming } from './Rename.jsx'; // P66: 세션 줄 메뉴의 이름 바꾸기
 import { addressOf, renamed } from './lib/session-name.js';
+import { canReopen } from './lib/user-close.js'; // P125: 끝난 세션 다시 열기
 
 const KEY = 'mt.sidebar';
 function load() { try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch { return {}; } }
@@ -147,10 +149,18 @@ export function reopenClosed(c) {
     goWhenOpen(r.sessionId);
   });
 }
-export function openConvo(c) {
+// P125: 끝난 판 세션(사람이 닫음 등)을 같은 자리에서 같은 대화로 다시 연다(session.reopen). 닫힌 세션도 같은 API가 recall.reopen으로 넘긴다
+export function reopenSession(s) {
+  return run(s.sessionId, async () => {
+    const r = await api.call('session.reopen', { session: s.sessionId });
+    toast(r.resume ? t('userClose.reopenedResume', { name: r.name }) : t('userClose.reopened', { name: r.name }));
+  });
+}
+// P133: Codex 대화도 같은 길(판의 Codex 이어 가기 줄). fork: Codex 앱 대화를 갈라 연다(원본은 그대로)
+export function openConvo(c, { fork = false } = {}) {
   return run(c.convId, async () => {
-    const r = await api.call('convo.open', { convo: c.convId, model: devModel() });
-    if (!r.existing) toast(t('sidebar.convoOpened', { name: r.name, id: c.convId.slice(0, 8) }));
+    const r = await api.call('convo.open', { convo: c.convId, model: devModel(), ...(fork ? { fork: true } : {}) });
+    if (!r.existing) toast(fork ? t('codexConvo.forked', { name: r.name, id: c.convId.slice(0, 8) }) : t('sidebar.convoOpened', { name: r.name, id: c.convId.slice(0, 8) }));
     goWhenOpen(r.sessionId);
   });
 }
@@ -212,7 +222,24 @@ const dragProps = (r) => ({
 const NAME = 22;
 const pad = (r, extra = 0) => ({ paddingLeft: TREE.pad + (r.lv || 0) * TREE.step + extra });
 // 작은 펼침 화살표(펼치면 아래로 돈다)
-const Fold = ({ open, action }) => <span className={`mt-sb2-fold${open ? ' open' : ''}`} data-action={action} aria-hidden="true"><Icon name="chev" /></span>;
+// P153 r9: 폴더·워크스페이스 줄은 이 화살표(onToggle)로만 접고 편다. 줄의 나머지(이름·빈 곳)는 그 영역으로 간다(focusGroup·focusWs)
+const Fold = ({ open, action, onToggle, title }) => (onToggle
+  ? <span role="button" tabIndex={-1} className={`mt-sb2-fold btn${open ? ' open' : ''}`} data-action={action} title={title} aria-label={title} aria-expanded={open ? 'true' : 'false'} onClick={(e) => { e.stopPropagation(); onToggle(); }} onDoubleClick={(e) => e.stopPropagation()}><Icon name="chev" /></span>
+  : <span className={`mt-sb2-fold${open ? ' open' : ''}`} data-action={action} aria-hidden="true"><Icon name="chev" /></span>);
+
+// P153 r9: 사이드바 줄 누르기. 세션 맵이 열려 있으면 세션 맵을 움직이고(getState().mapFocus: 세션 = 지금 배율로 가운데, 줄·띠 = 맞춤, 반짝임), 아니면 판을 움직인다
+// (세션 = 그 노드로 확대해 맞춤, 워크스페이스 = 그 영역에 맞춤, 폴더 = 구성 영역 모두에 맞춤)
+function focusSession(sid) { const st = getState(); if (st.missionOpen && st.mapFocus && st.mapFocus.session(sid)) return; if (st.navigateTo) st.navigateTo(sid, { focusTerminal: true }); }
+function focusWs(key) { const st = getState(); if (st.missionOpen && st.mapFocus && st.mapFocus.ws(key)) return; selectWorkspace(key); }
+function focusGroup(r) {
+  const st = getState();
+  if (st.missionOpen && st.mapFocus && st.mapFocus.group(r.none ? null : r.g.id)) return;
+  const have = new Set((st.workspaces || []).map((w) => w.key));
+  const inGroup = new Set((st.groups || []).flatMap((g) => g.members || []));
+  const keys = r.none ? [...have].filter((k) => !inGroup.has(k)) : (r.g.members || []).filter((k) => have.has(k));
+  if (!keys.length) return;
+  selectGroup(keys, keys.includes(st.currentWs) ? st.currentWs : keys[0]);
+}
 
 function sessionTitle(s, now, { here = false, pinned = false } = {}) {
   const br = branchLabel(s);
@@ -234,13 +261,15 @@ function sessionTitle(s, now, { here = false, pinned = false } = {}) {
 
 // 판 세션 한 줄: 상태 점, 이름, 역할·종류(claude가 아니면, 옅은 글), 지난 시간. 응답 필요·오류는 질문(또는 오류) 한 줄을 더 보인다.
 // P103: 안 본 결과는 이름 뒤 점 대신 상태 점을 보라로 하고 이름을 진하게, 지금 연 세션(here)은 이름을 강조색으로
-const SessionRow = memo(function SessionRow({ r, now, cur, here }) {
+const SessionRow = memo(function SessionRow({ r, now, cur, here, busy: rowBusy }) {
   const t = useT();
   const s = r.s;
   const b = bucketOf(s);
   const ask = r.attn ? (b === 'need' ? askLine(s) || t(`state.${s.state}`) : (s.error && (typeof s.error === 'string' ? s.error : s.error.message)) || t(`state.${s.state}`)) : '';
   const k = shownKind(s);
   const editing = useRenaming(s.sessionId, 'sidebar');
+  const reopen = canReopen(s); // P125: 끝난 세션(직접 종료 등)은 시간 자리에 "다시 열기"
+  const busy = reopen && !!rowBusy;
   // P66: 이름을 바꾸는 동안은 줄을 단추가 아닌 칸으로 그린다(단추 안의 입력칸은 초점을 받지 못한다)
   if (editing) return (
     <div className={`mt-sb2-row sess b-${b} cur editing`} style={pad(r)} data-sb="session" data-row={r.id} data-session={s.sessionId} data-name={s.name} data-state={s.state}>
@@ -252,15 +281,16 @@ const SessionRow = memo(function SessionRow({ r, now, cur, here }) {
   );
   return (
     <button className={`mt-sb2-row sess b-${b}${r.attn ? ' attn' : ''}${r.pinned ? ' pinned' : ''}${cur ? ' cur' : ''}${s.unseen ? ' unseen' : ''}${here ? ' here' : ''}`} style={pad(r)} data-sb="session" data-row={r.id} data-session={s.sessionId} data-name={s.name} data-state={s.state} data-indent={r.indent || 0} data-pinned={r.pinned ? '1' : undefined} data-focused={here ? '1' : undefined}
-      title={sessionTitle(s, now, { here, pinned: r.pinned })} onClick={() => { setCursor(r.id); getState().navigateTo && getState().navigateTo(s.sessionId, { focusTerminal: true }); }}
+      title={sessionTitle(s, now, { here, pinned: r.pinned })} onClick={() => { setCursor(r.id); focusSession(s.sessionId); }}
       onContextMenu={(e) => { setCursor(r.id); openMenuAt(e, 'session', s.sessionId); }}>
       <span className="mt-sb2-line">
         <span className={`mt-sb2-dot st-${s.state}`} data-state={s.state} />
         <b className="mt-sb2-name">{s.name}</b>
-        {s.branch && s.branch.role && <span className="mt-sb2-role">{s.branch.role}</span>}
+        {s.branch && s.branch.role && <span className="mt-sb2-role">{shownRole(s.branch.role)}</span>}
         {k !== 'claude' && <span className="mt-sb2-kind">{kindText(k)}</span>}
         {r.attn && <span className={`mt-sb2-tag ${b}`}>{b === 'need' ? t('sb2.st_need') : t('sb2.st_error')}</span>}
-        <span className="mt-sb2-time">{ago(s.lastActivityAt || s.createdAt, now)}</span>
+        {reopen ? <span role="button" tabIndex={-1} className={`mt-sb2-reopen${busy ? ' busy' : ''}`} data-action="reopen-session" title={t('userClose.reopenTitle')} onClick={(e) => { e.stopPropagation(); setCursor(r.id); if (!busy) reopenSession(s); }}>{busy ? t('userClose.reopening') : t('userClose.reopen')}</span>
+          : <span className="mt-sb2-time">{ago(((s.state === 'waiting' || s.state === 'trust_wait') && s.waitingSince) || s.lastActivityAt || s.createdAt, now)}</span>}
         <span role="button" tabIndex={-1} className="mt-sb2-more" data-action="session-menu" title={t('sb2.menu')} onClick={(e) => { setCursor(r.id); openMenu(e, 'session', s.sessionId); }}><Icon name="more" /></span>
       </span>
       {r.attn && <span className="mt-sb2-ask">{ask}</span>}
@@ -292,13 +322,16 @@ function GroupRow({ r, cur, renaming, dropAt }) {
   const t = useT();
   const [val, setVal] = useState(r.g.name || '');
   useEffect(() => { if (renaming) setVal(r.g.name || ''); }, [renaming, r.g.name]);
+  // P141(#16): 이름 칸을 열면 지금 이름을 골라 둔다(치면 바뀐다. 새 그룹의 기본 이름 뒤에 붙지 않는다)
+  const inputRef = useRef(null);
+  useEffect(() => { if (!renaming) return; const id = requestAnimationFrame(() => { const el = inputRef.current; if (el) { el.focus(); el.select(); } }); return () => cancelAnimationFrame(id); }, [renaming]);
   const none = r.none;
   return (
     <div className={`mt-sb2-row grp${r.open ? '' : ' folded'}${cur ? ' cur' : ''}${none ? ' none' : ''}${dropAt ? ' drop' : ''}`} style={pad(r)} data-sb="group" data-row={r.id} data-group={r.g.id || ''} data-name={r.g.name || ''} {...dragProps(r)}
-      onClick={() => { setCursor(r.id); if (!none && !renaming) toggleFold(r.id); }}>
-      {none ? <span className="mt-sb2-fold" aria-hidden="true" /> : <Fold open={r.open} action="fold" />}
+      onClick={() => { setCursor(r.id); if (!renaming) focusGroup(r); }}>
+      {none ? <span className="mt-sb2-fold" aria-hidden="true" /> : <Fold open={r.open} action="fold" title={t(r.open ? 'sbFold.close' : 'sbFold.open')} onToggle={() => { setCursor(r.id); toggleFold(r.id); }} />}
       {renaming
-        ? <input className="mt-sb2-rename" data-role="group-rename" autoFocus value={val} maxLength={40} onClick={(e) => e.stopPropagation()} onChange={(e) => setVal(e.target.value)} onBlur={() => (val.trim() && val.trim() !== r.g.name ? renameGroup(r.g.id, val) : (side.renaming = null, bump()))} onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { side.renaming = null; bump(); } }} />
+        ? <input ref={inputRef} className="mt-sb2-rename" data-role="group-rename" autoFocus value={val} maxLength={40} onClick={(e) => e.stopPropagation()} onChange={(e) => setVal(e.target.value)} onBlur={() => (val.trim() && val.trim() !== r.g.name ? renameGroup(r.g.id, val) : (side.renaming = null, bump()))} onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { side.renaming = null; bump(); } }} />
         : <span className="mt-sb2-gname" data-role="group-name" onDoubleClick={(e) => { if (!none) { e.stopPropagation(); side.renaming = r.g.id; bump(); } }}>{none ? t('sbGroups.none') : r.g.name}</span>}
       <Inside n={r.wsN} what="sb3.wsN" kind="workspaces" />
       <Counts c={r.c} open={r.open} />
@@ -314,11 +347,11 @@ function WsRow({ r, cur, selecting, selected, dropAt }) {
     <div className={`mt-sb2-row ws${r.open ? '' : ' folded'}${cur ? ' cur' : ''}${selected ? ' sel' : ''}${dropAt ? (dropAt.after ? ' drop-after' : ' drop-before') : ''}`} style={pad(r)} data-sb="ws" data-row={r.id} data-ws={w.key} data-name={w.name} data-kind={w.kind}
       draggable={!selecting} onDragStart={(e) => { side.drag = w.key; try { e.dataTransfer.setData('text/plain', w.name); e.dataTransfer.effectAllowed = 'move'; } catch {} bump(); }} onDragEnd={() => { side.drag = null; side.dropAt = null; bump(); }} {...dragProps(r)}
       title={`${w.root}\n${t(w.kind === 'repo' ? 'sb3.repo' : 'sb3.folder')}\n${t('sb2.wsTip')}`}
-      onClick={() => { setCursor(r.id); if (selecting) toggleSelected(w.key); else toggleFold(w.key); }}>
+      onClick={() => { setCursor(r.id); if (selecting) toggleSelected(w.key); else focusWs(w.key); }}>
       {selecting
         ? <input type="checkbox" className="mt-sb2-check" data-action="ws-select" checked={selected} readOnly />
-        : <Fold open={r.open} action="fold" />}
-      <button className="mt-sb2-wname" data-action="go-ws" title={t('sidebar.goWs')} onClick={(e) => { e.stopPropagation(); setCursor(r.id); if (selecting) toggleSelected(w.key); else selectWorkspace(w.key); }}>{w.label || w.name}</button>{/* P91: 저절로 만든 묶음 안에서는 뿌리에서의 상대 경로 */}
+        : <Fold open={r.open} action="fold" title={t(r.open ? 'sbFold.close' : 'sbFold.open')} onToggle={() => { setCursor(r.id); toggleFold(w.key); }} />}
+      <button className="mt-sb2-wname" data-action="go-ws" title={t('sidebar.goWs')} onClick={(e) => { e.stopPropagation(); setCursor(r.id); if (selecting) toggleSelected(w.key); else focusWs(w.key); }}>{w.label || w.name}</button>{/* P91: 저절로 만든 묶음 안에서는 뿌리에서의 상대 경로 */}
       {r.matched != null ? <Inside n={r.matched} what="sb3.matchedIn" kind="matched" /> : <Inside n={r.c.sessions} what="sb3.sessionsIn" kind="sessions" />}
       <Counts c={r.c} open={r.open} />
       {!selecting && <button className="mt-sb2-more" data-action="ws-menu" title={t('sb2.menu')} onClick={(e) => openMenu(e, 'ws', w.key)}><Icon name="more" /></button>}
@@ -361,7 +394,7 @@ function ClosedRow({ r, now, busy, cur }) {
       <span className="mt-sb2-time">{ago(c.closedAt, now)}</span>
       <span className="mt-sb2-acts">
         {why ? <span className="mt-sb-bound" data-bound={c.binding.where}>{why}</span>
-          : <button className="mt-btn small" data-action="reopen" disabled={busy} onClick={(e) => { e.stopPropagation(); reopenClosed(c); }}>{busy ? t('sidebar.opening') : t('sidebar.openOnBoard')}</button>}
+          : <button className="mt-btn small" data-action="reopen" disabled={busy} title={t('sidebar.openOnBoard')} onClick={(e) => { e.stopPropagation(); reopenClosed(c); }}>{busy ? t('sidebar.opening') : t('userClose.reopen')}</button>}
         <button className="mt-btn small ghost" data-action="archive" title={t('sidebar.archiveClosedTitle')} onClick={(e) => { e.stopPropagation(); archiveItem(c); }}>{t('common.archive')}</button>
       </span>
     </div>
@@ -373,11 +406,13 @@ function ConvoRow({ r, now, busy, cur }) {
   const b = c.binding || { bound: false };
   const title = c.title || c.firstPrompt || c.convId.slice(0, 8);
   return (
-    <div className={`mt-sb2-row item convo${b.bound ? ' bound' : ''}${cur ? ' cur' : ''}`} style={pad(r, NAME)} data-sb="convo" data-row={r.id} data-convo={c.convId} data-bound={b.bound ? b.where : ''} onClick={() => setCursor(r.id)}
+    <div className={`mt-sb2-row item convo${b.bound ? ' bound' : ''}${cur ? ' cur' : ''}`} style={pad(r, NAME)} data-sb="convo" data-row={r.id} data-convo={c.convId} data-harness={c.harness || 'claude'} data-bound={b.bound ? b.where : ''} onClick={() => setCursor(r.id)}
       title={`${c.title || ''}\n${t('sidebar.convoId', { id: c.convId })}${c.cwd ? `\n${c.cwd}` : ''}${[c.folder, c.branch && `⎇ ${c.branch}`].filter(Boolean).length ? `\n${[c.folder, c.branch && `⎇ ${c.branch}`].filter(Boolean).join(' · ')}` : ''}${c.lastPrompt && c.lastPrompt !== c.title ? `\n${c.lastPrompt}` : ''}${b.bound ? `\n${bindingText(b)}` : ''}`}>
       {c.onCanvas ? <button className="mt-sb-title link mt-sb2-name" data-action="go-convo" title={t('sidebar.goConvo')} onClick={(e) => { e.stopPropagation(); getState().navigateToItem && getState().navigateToItem(`convo:${c.convId}`); }}>{title}</button> : <b className="mt-sb2-name">{title}</b>}
+      {c.harness === 'codex' && <span className="mt-sb2-kind" data-harness="codex" title={t('codexConvo.kindTitle')}>{t('codexConvo.kind')}</span>}
       <span className="mt-sb2-time">{ago(c.lastAt, now)}</span>
       <span className="mt-sb2-acts">
+        {b.bound && c.canFork && <button className="mt-btn small" data-action="fork-convo" disabled={busy} title={t('codexConvo.forkTitle')} onClick={(e) => { e.stopPropagation(); openConvo(c, { fork: true }); }}>{busy ? t('sidebar.opening') : t('codexConvo.fork')}</button>}
         {b.bound ? <span className="mt-sb-bound" data-bound={b.where} title={b.sure ? '' : t('sidebar.boundUnsure')}>{bindingText(b)}</span>
           : <button className="mt-btn small" data-action="open-convo" disabled={busy} onClick={(e) => { e.stopPropagation(); openConvo(c); }}>{busy ? t('sidebar.opening') : t('sidebar.openOnBoard')}</button>}
         <button className="mt-btn small ghost" data-action="archive" title={t('sidebar.archiveConvoTitle')} onClick={(e) => { e.stopPropagation(); archiveItem(c); }}>{t('common.archive')}</button>
@@ -390,7 +425,7 @@ function Row({ r, now, cur, busy, selecting, selected, renaming, dropAt, here })
   switch (r.type) {
     case 'group': return <GroupRow r={r} cur={cur} renaming={renaming} dropAt={dropAt} />;
     case 'ws': return <WsRow r={r} cur={cur} selecting={selecting} selected={selected} dropAt={dropAt} />;
-    case 'session': return <SessionRow r={r} now={now} cur={cur} here={here} />;
+    case 'session': return <SessionRow r={r} now={now} cur={cur} here={here} busy={busy} />;
     case 'extra': return <ExtraRow r={r} cur={cur} />;
     case 'sec': return <SecRow r={r} />;
     case 'closed': return <ClosedRow r={r} now={now} busy={busy} cur={cur} />;
@@ -403,9 +438,9 @@ function Row({ r, now, cur, busy, selecting, selected, renaming, dropAt, here })
 // 고른 줄에서 Enter
 function activate(r) {
   if (!r) return;
-  if (r.type === 'group') { if (!r.none) toggleFold(r.id); }
-  else if (r.type === 'ws') { if (side.selecting) toggleSelected(r.w.key); else selectWorkspace(r.w.key); }
-  else if (r.type === 'session') { const st = getState(); if (st.navigateTo) st.navigateTo(r.s.sessionId, { focusTerminal: true }); }
+  if (r.type === 'group') focusGroup(r); // P153 r9: Enter = 그 영역으로(접기·펴기는 ←·→와 화살표 단추)
+  else if (r.type === 'ws') { if (side.selecting) toggleSelected(r.w.key); else focusWs(r.w.key); }
+  else if (r.type === 'session') focusSession(r.s.sessionId);
   else if (r.type === 'extra') toggleExtra(r.key);
   else if (r.type === 'more') { if (r.pinMore) toggleFold(r.key.slice(4), true); else showMore(r.key); }
   else if (r.type === 'closed' && !(r.x.binding && r.x.binding.bound)) reopenClosed(r.x);
@@ -443,6 +478,7 @@ function SideMenu() {
       <div className="mt-sb2-mh">{s.name}{renamed(s) ? <span className="mt-sb2-maddr"> · {addressOf(s)}</span> : null}</div>
       {item('menu-rename-session', t('rename.menu'), () => setRenaming(s.sessionId, 'sidebar'))}
       {item('menu-go-session', t('rename.goNode'), () => { const st = getState(); if (st.navigateTo) st.navigateTo(s.sessionId, { viewOnly: true }); })}
+      {canReopen(s) && item('menu-reopen-session', t('userClose.reopen'), () => reopenSession(s), { disabled: side.busy.has(s.sessionId) })}
     </>;
   } else if (menu.type === 'ws') {
     const w = workspaces.find((x) => x.key === menu.key);
@@ -549,7 +585,7 @@ function VirtualList({ rows, now, scroller }) {
   const out = [];
   for (let i = win.start; i < win.end; i++) {
     const r = rows[i];
-    const key = r.type === 'ws' ? r.w.key : r.type === 'closed' || r.type === 'convo' ? r.x.sessionId || r.x.convId : '';
+    const key = r.type === 'ws' ? r.w.key : r.type === 'closed' || r.type === 'convo' ? r.x.sessionId || r.x.convId : r.type === 'session' ? r.s.sessionId : ''; // P125: 세션 줄의 다시 열기
     out.push(
       <div key={r.id} className="mt-sb2-slot" style={{ top: off[i], height: r.h, '--lv': r.lv || 0 }} data-lv={r.lv || 0}>{/* P103: 칸이 단계 수만큼 세로 안내선을 그린다 */}
         <Row r={r} now={now} cur={cursor === r.id} busy={busy.has(key)} selecting={selecting} selected={r.type === 'ws' && selected.has(r.w.key)} renaming={r.type === 'group' && !!renaming && renaming === r.g.id} dropAt={dropAt && dropAt.id === r.id ? dropAt : null} here={r.type === 'session' && !!focusId && focusId === r.s.sessionId} />

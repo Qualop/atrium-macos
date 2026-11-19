@@ -12,9 +12,10 @@ import { Memos } from './memos.mjs';
 import { Kanbans } from './kanban.mjs';
 import { LoopEngine, normalizeTrigger, normalizeStop, describeLoop, describeLoopMsg } from './loops.mjs';
 import { confirmResult, keyed } from './msg.mjs'; // P16: 화면 글 열쇠
-import { missionGraph } from './mission.mjs';
+import { missionGraph, CALLED_MS } from './mission.mjs';
 import { Settings } from './settings.mjs';
-import { Launchers, HARNESSES } from './launchers.mjs'; // P33: 호출자
+import { Launchers, HARNESSES, checkGateway } from './launchers.mjs'; // P33: 호출자
+import { Connections, checkOf, fetchConnectionModels } from './connections.mjs'; // P115: 모델 연결
 import { CodexModels } from './codex-models.mjs'; // P72: Codex 모델 목록
 import { placeItem } from './canvas-ops.mjs';
 
@@ -26,10 +27,10 @@ export function attachFeatures(b, { timers = true } = {}) {
   const broadcast = (ev, data) => b.api && b.api.broadcast(ev, data);
   const wsName = (key) => { if (!key) return null; const w = b.workspaceList().find((x) => x.key === key); return w ? w.name : null; };
   const transcriptOf = (s) => {
-    if (b.hooked(s)) return s.rt.transcriptPath || transcriptPathFor(b.cfg.claudeProjects, s.cwd, s.rt.claudeSessionId || s.sessionId);
-    // 판이 띄우지 않은 Claude Code(셸에서 띄움, 판에 올림)는 herdr가 아는 대화 ID로 대화 기록을 찾아 본다
-    const id = s.rt.herdr && s.rt.herdr.agentSessionId;
-    const f = s.kind === 'claude' && id ? transcriptPathFor(b.cfg.claudeProjects, s.rt.cwd || s.cwd, id) : null;
+    if (b.hooked(s)) return s.rt.transcriptPath || transcriptPathFor(b.projectsOf ? b.projectsOf(s) : b.cfg.claudeProjects, s.cwd, s.rt.claudeSessionId || s.sessionId);
+    // 판이 띄우지 않은 Claude Code(셸에서 띄움, 판에 올림)는 터미널이 아는 대화 ID로 대화 기록을 찾아 본다
+    const id = s.rt.term && s.rt.term.agentSessionId;
+    const f = s.kind === 'claude' && id ? transcriptPathFor(b.projectsOf ? b.projectsOf(s) : b.cfg.claudeProjects, s.rt.cwd || s.cwd, id) : null;
     return f && fs.existsSync(f) ? f : null;
   };
   const deliveryOf = (id) => { const d = b.queue.items.get(id) || store.getDelivery(id); return d ? { status: d.status, reason: d.reason } : null; };
@@ -44,8 +45,10 @@ export function attachFeatures(b, { timers = true } = {}) {
   f.settings = new Settings({ store, broadcast });
   // P72: Codex 모델 목록은 Codex의 캐시 파일을 읽는다(설정 탭의 모델 고르기와 atrium models). 폴더를 주지 않은 판(시험)은 고정 목록
   f.codexModels = b.cfg.codexHome ? new CodexModels({ home: b.cfg.codexHome, fallback: HARNESSES.codex.models }) : null;
-  f.launchers = new Launchers({ store, broadcast, gateway: { healthUrl: b.cfg.ocxHealthUrl, baseUrl: b.cfg.ocxBaseUrl }, codexModels: f.codexModels }); // 처음 켤 때 옛 새 세션 기본값을 옮긴다
-  if (f.launchers.migrated) b.log(`launchers created (${f.launchers.migrated.oldBoard ? 'from old settings' : 'new board'}): favorites ${f.launchers.migrated.favorites.join(',')}`);
+  // P115: 연결 목록(런처가 ID로 참조). 쓰는 런처가 있으면 지우지 않는다
+  f.connections = new Connections({ store, broadcast, inUse: (id) => (f.launchers ? f.launchers.usersOf(id) : []) });
+  f.launchers = new Launchers({ store, broadcast, gateway: b.cfg.legacyGateway || {}, codexModels: f.codexModels, connections: f.connections, log: (m) => b.log(m) }); // 처음 켤 때 옛 새 세션 기본값과 옛 목록(연결)을 옮긴다
+  if (f.launchers.migrated) b.log(`launchers migrated to v2 (${f.launchers.migrated.oldBoard ? 'old board' : 'new board'}): favorites ${f.launchers.migrated.favorites.join(',')}, connections moved ${(f.launchers.migrated.v2 && f.launchers.migrated.v2.moved.length) || 0}`);
   f.outputs = new Outputs({ cfg: b.cfg, store, resolve: (r) => b.resolve(r), hooked: (s) => b.hooked(s), transcriptOf, readMessages, workspaceName: wsName, apiError });
   // Native history is fetched only for explicit output.get/output.save calls.
   const outputAction = async (action, p) => {
@@ -73,7 +76,7 @@ export function attachFeatures(b, { timers = true } = {}) {
     },
   });
   f.loops = new LoopEngine({
-    store, broadcast, log: (m) => b.log(m), canRun: () => !!(b.adapter && b.adapter.connected && b.herdrOk),
+    store, broadcast, log: (m) => b.log(m), canRun: () => !!(b.adapter && b.adapter.connected && b.termOk),
     targetsOf: (l) => {
       const toT = (s) => {
         const per = (l.per || {})[s.sessionId] || {};
@@ -139,7 +142,7 @@ export function attachFeatures(b, { timers = true } = {}) {
     'loop.delete': (p) => f.loops.delete(loopRef(p)),
     'loop.list': (p) => f.loops.list({ sessionId: p.session ? b.resolve(p.session).sessionId : null }),
     // I6 미션 맵
-    'mission.graph': () => missionGraph({ sessions: [...b.sessions.values()].map((s) => b.summary(s)), links: b.linksOpen(), thread: f.thread.list({ limit: 500 }).items, loops: [...f.loops.loops.values()] }),
+    'mission.graph': () => missionGraph({ sessions: [...b.sessions.values()].map((s) => b.summary(s)), links: b.linksOpen(), thread: f.thread.list({ limit: 500 }).items, loops: [...f.loops.loops.values()], relations: b.store.relationRows ? b.store.relationRows() : [], called: { kids: b.store.branchRows ? b.store.branchRows() : [], assigns: b.store.assignSenders ? b.store.assignSenders(Date.now() - CALLED_MS) : [] } }), // P156: 일 관계, P157: 하위를 불렀던 기록
     // I7 설정(트레이 상주)
     'settings.get': () => ({ settings: f.settings.get(), schema: f.settings.describe() }),
     'settings.set': (p) => ({ settings: f.settings.set(p) }),
@@ -151,7 +154,19 @@ export function attachFeatures(b, { timers = true } = {}) {
     'launcher.favorite': (p) => f.launchers.favorite(p),
     'launcher.order': (p) => f.launchers.order(p),
     'launcher.preview': (p) => f.launchers.preview(p),
-    // P97: 붙여 넣은 명령줄 → 호출자 칸(herdr가 아는 에이전트 종류로 하네스를 알아본다)
+    // P115 연결
+    'connection.list': () => f.connections.list(),
+    'connection.create': (p) => f.connections.create(p),
+    'connection.update': (p) => { const r = f.connections.update(p); broadcast('launchers.updated', f.launchers.list()); return r; },
+    'connection.delete': (p) => f.connections.delete(p),
+    // 시작 전 확인과 같은 검사(health 주소면 2xx·status ok, 아니면 base URL이 닿는지)와 모델 목록. 저장하지 않은 값(p.connection)도 본다
+    'connection.check': async (p) => {
+      const c = p && p.connection ? { ...p.connection, id: p.connection.id || 'draft' } : f.connections.get(p && p.id);
+      const health = await checkGateway({ ...checkOf(c), name: c.name }).then(() => ({ ok: true }), (e) => ({ ok: false, why: e.vars ? e.vars.why : e.message }));
+      const models = await fetchConnectionModels(c);
+      return { health, models: models.ok ? { ok: true, count: models.models.length, ids: models.models.slice(0, 50).map((m) => m.id) } : { ok: false, why: models.why } };
+    },
+    // P97: 붙여 넣은 명령줄 → 호출자 칸(터미널이 아는 에이전트 종류로 하네스를 알아본다)
     'launcher.parse': async (p) => f.launchers.parse({ ...p, kinds: await b.adapter.agentKinds().then((ks) => ks.map((k) => k.kind)).catch(() => []) }),
   };
   // 세션 요약에 덧붙이는 값: 긴 답인지(출력 보기), 켜진 루프 수(노드 배지)

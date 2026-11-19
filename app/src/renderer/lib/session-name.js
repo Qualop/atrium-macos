@@ -1,4 +1,4 @@
-// P66: 판의 이름(표시 이름). 세션 요약의 name은 보이는 이름(판의 이름이 있으면 그것), address는 에이전트가 쓰는 주소(herdr 이름), label은 사람이 정한 이름이다.
+// P66: 판의 이름(표시 이름). 세션 요약의 name은 보이는 이름(판의 이름이 있으면 그것), address는 에이전트가 쓰는 주소(에이전트 이름), label은 사람이 정한 이름이다.
 // 백엔드 규칙(backend/src/session-label.mjs)과 같다. 창은 보내기 전에 미리 보고 이유를 바로 보인다. 확정은 백엔드가 한다.
 export const LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 export const LABEL_MAX = 32;

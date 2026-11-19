@@ -1,4 +1,4 @@
-// 터미널 노드 입력 규칙(ARCH 7.2, E4). 제어기 프레임은 herdr가 다시 그린 화면이라 괄호 붙여넣기와 마우스 추적 모드가
+// 터미널 노드 입력 규칙(ARCH 7.2, E4). 제어기 프레임은 터미널 서버가 다시 그린 화면이라 괄호 붙여넣기와 마우스 추적 모드가
 // xterm.js에 오지 않는다. 그래서 창이 직접 감싸고 바꾼 뒤 terminal.input으로 보낸다. 순수 함수만 둔다(단위 시험 있음).
 
 export const PASTE_START = '\x1b[200~';
@@ -54,6 +54,51 @@ export function sgrWheel(steps, x, y, cols, rows) {
   return `\x1b[<${n < 0 ? 64 : 65};${clamp(x, 1, cols)};${clamp(y, 1, rows)}M`.repeat(Math.abs(n));
 }
 
+// P126: 휠을 마우스 보고로 보낼지. 프로그램이 마우스 추적(DECSET 1000·1002·1003)을 켜지 않았는데 보내면 받는 쪽이 보고를 글로 읽어
+// 입력창에 `[<65;101;61M` 같은 글이 남을 수 있다(그 뒤 판이 넣은 지시가 제출되지 않았다).
+// - modesKnown: 이 터미널이 받는 프레임이 마우스 모드를 알려 준다(hc 판은 프레임마다 모드를 다시 적는다). 프레임에 모드를 적지 않는 서버는 다시 그린 화면만 보내
+//   마우스 모드가 xterm에 오지 않는다(늘 'none'). 그때는 알 수 없으므로 예전처럼 보낸다(터미널 서버가 입력을 받아 프로그램에 맞춰 넘긴다)
+// - 모드가 꺼져 있으면 아무것도 보내지 않는다. 에이전트 노드는 판 안 기록이 없어(scrollback 0) 굴릴 것이 없고, xterm 기본(대체 화면이면
+//   위·아래 키)은 Codex·Claude Code에서 지난 지시 불러오기가 되어 입력창을 바꾼다
+// → 'report'(SGR 휠을 보낸다) | 'swallow'(삼킨다)
+// - framed(P135): 이 터미널에 첫 프레임이 왔고 다시 붙는 중이 아니다. 그 전에는 모드를 모르고 보낼 곳도 아직 없으니 삼킨다
+export function wheelAction({ modesKnown = false, mouseTrackingMode = 'none', framed = true } = {}) {
+  if (!framed) return 'swallow';
+  if (!modesKnown) return 'report';
+  return mouseTrackingMode && mouseTrackingMode !== 'none' ? 'report' : 'swallow';
+}
+// P135: 마우스 보고 거르기. 콘솔 호스트(ConPTY)가 입력을 읽지 못하는 동안(PC 메모리가 모자라 창을 다시 띄울 때 등) 쌓인 입력은 나중에 한꺼번에 읽힌다.
+// 한 번에 읽는 양(4096바이트)을 넘으면 읽는 경계가 보고 가운데에 떨어질 수 있고, ESC 바로 뒤에서 끊기면 ESC는 Esc 키로, 나머지
+// `[<65;101;61M`은 글자로 들어가 Codex·Claude Code 입력창에 남는다(P135 재현: 콘솔 호스트를 3초 멈추고 휠 보고 400개 → 입력창에 남음, 75개 → 깨끗).
+// 그래서 (1) 아무 단추도 누르지 않은 마우스 움직임 보고(DECSET 1003, 마우스를 움직일 때마다 하나)는 보내지 않는다. 에이전트 하네스는 마우스 올림을 쓰지 않는다.
+// (2) 프로그램이 다시 그리기(프레임) 전에 보낸 보고는 REPORT_BUDGET바이트까지만 보낸다. 프로그램이 받아서 그리면 프레임이 오고 다시 센다.
+//     휠 한 칸에 보고 하나(약 13바이트)라 쉬지 않고 75칸 넘게 굴려도 화면이 바뀌지 않을 때만 막힌다
+export const REPORT_BUDGET = 1024;
+const MOUSE_G = /\x1b\[<(\d+);\d+;\d+[Mm]|\x1b\[M([\s\S]{3})/g;
+// 단추 없는 움직임: 움직임 비트(32)가 있고 단추 칸이 3(누른 단추 없음)
+const isHover = (code) => (code & 32) !== 0 && (code & 3) === 3;
+// data: 터미널로 보낼 글. room: 더 보낼 수 있는 보고 바이트 → { data(거른 글), bytes(남긴 보고 바이트), hover(뺀 움직임 수), held(자리가 없어 뺀 보고 수) }
+export function filterMouse(data, { room = Infinity } = {}) {
+  const s = String(data ?? '');
+  if (!s.includes('\x1b[')) return { data: s, bytes: 0, hover: 0, held: 0 };
+  let bytes = 0, hover = 0, held = 0;
+  const out = s.replace(MOUSE_G, (m, sgr, x10) => {
+    const code = sgr != null ? Number(sgr) : x10.charCodeAt(0) - 32;
+    if (isHover(code)) { hover++; return ''; }
+    if (bytes + m.length > room) { held++; return ''; }
+    bytes += m.length;
+    return m;
+  });
+  return { data: out, bytes, hover, held };
+}
+
+// P126: DECSET·DECRST(CSI ? … h|l)의 인자에 마우스 모드가 있는가. xterm 파서의 인자는 숫자이거나(하위 인자가 있으면) 숫자 배열이다
+export const MOUSE_MODES = [9, 1000, 1001, 1002, 1003, 1005, 1006, 1015, 1016];
+export function setsMouseMode(params) {
+  for (const p of params || []) for (const n of [].concat(p)) if (MOUSE_MODES.includes(n)) return true;
+  return false;
+}
+
 // 키 처리(xterm attachCustomKeyEventHandler에서 부른다). 돌려준 action:
 //   'block-ctrl-g'  막는다. Claude Code가 외부 편집기(메모장)를 띄운다(E9 2.4, P2에서 막기로 정함. docs/decisions.md)
 //   'paste'         xterm이 ^V를 보내지 않게 하고 브라우저 붙여넣기 이벤트로 넘긴다(그 이벤트에서 감싼다)
@@ -96,18 +141,24 @@ export function unscalePoint({ clientX, clientY, rect, width, height }) {
 
 // 선택을 지우는 때. true면 지운다. P42(웹처럼): 선택은 문서 줄에 붙어 휠·자동 스크롤·새 프레임에 함께 움직이므로
 // 'wheel'·'scroll'·'frame'으로는 지우지 않는다. 고르기를 끝내는 것은 웹과 같다(밖 누르기, 글 입력, Esc).
-//   'copy'    고른 글을 복사했다(Ctrl+C, Ctrl+Shift+C). 다음 Ctrl+C가 ^C가 되게 지운다(Windows Terminal처럼)
+//   (P125) 복사(Ctrl+C, Ctrl+Shift+C, 끌어 고르기)로는 지우지 않는다. 고른 글이 남아 있는 동안 Ctrl+C는 몇 번을 눌러도 복사만 한다.
+//   복사하려고 Ctrl+C를 두 번 누르면 두 번째가 ^C가 되어 Claude Code가 끝나던 것을 막는다. ^C를 보내려면 Esc·밖 누르기·글 입력으로 먼저 고르기를 끝낸다
 //   'paste'   붙여넣었다(Ctrl+V, Shift+Insert)
 //   'input'   글을 쳤다
 //   'escape'  Esc
 //   'outside' 터미널 밖을 눌렀다
 //   'resize'  칸 수가 바뀌었다(줄이 다시 감겨 문서를 이어 갈 수 없다)
-const CLEARS = new Set(['copy', 'paste', 'input', 'escape', 'outside', 'resize']);
+const CLEARS = new Set(['paste', 'input', 'escape', 'outside', 'resize']);
+
+// P125: 끌어 고르기(두세 번 누르기 포함)를 놓을 때 클립보드로 복사할까. 고른 글이 있을 때만(그냥 누르기는 아니다)
+export function copyOnRelease({ hasSelection = false, text = '' } = {}) {
+  return !!hasSelection && copyText(text).trim().length > 0; // 빈칸·줄바꿈만이면 클립보드를 덮지 않는다
+}
 export function clearsSelection(event, { hasSelection = true } = {}) {
   return !!hasSelection && CLEARS.has(event);
 }
 
-// 복사할 글: herdr가 다시 그린 화면은 줄 끝까지 빈칸이 차 있어, 줄마다 끝의 빈칸을 뺀다(Windows Terminal처럼)
+// 복사할 글: 터미널 서버가 다시 그린 화면은 줄 끝까지 빈칸이 차 있어, 줄마다 끝의 빈칸을 뺀다(Windows Terminal처럼)
 export function copyText(sel) {
   return String(sel ?? '').replace(/[ \t]+(?=\r?\n|$)/g, '');
 }

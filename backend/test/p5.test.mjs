@@ -1,5 +1,5 @@
 // P5 단위 시험: 리포지토리 워크스페이스(키 정하기, 경로 대소문자, 워크트리, git이 아닌 폴더, 이름), 이전 판 옮기기(P4 스키마 고정 자료),
-// 일반 셸(프롬프트 읽기, 상태, @로 보내면 거부), @all 범위, herdr 패널 이벤트. herdr와 claude 없이 돈다(git은 쓴다)
+// 일반 셸(프롬프트 읽기, 상태, @로 보내면 거부), @all 범위. 터미널 서버와 claude 없이 돈다(git은 쓴다)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,8 +11,7 @@ import { workspaceFromProbe, workspaceNames, workspaceCounts, elsewhereOf, normP
 import { workspaceOf, gitProbe, parseRevParse } from '../src/git.mjs';
 import { migrateWorkspaces } from '../src/migrate.mjs';
 import { shellPromptState } from '../src/screen.mjs';
-import { newRuntime, deriveState, flags, applyHerdrStatus } from '../src/state.mjs';
-import { normalizeEvent } from '../src/herdr/adapter.mjs';
+import { newRuntime, deriveState, flags, applyTermStatus } from '../src/state.mjs';
 import { Store } from '../src/store.mjs';
 import { Backend } from '../src/backend.mjs';
 
@@ -138,8 +137,8 @@ test('옮기기: P4 board.db(고정 자료) → 워크스페이스. 세션은 �
   // 마지막에 본 워크스페이스: 세션이 가장 많은 곳. 옛 판의 뷰포트는 거기로
   assert.equal(store.getMeta('currentWorkspace'), 'c:/work/multitask/.git');
   assert.deepEqual(store.getWorkspace('c:/work/multitask/.git').viewport, { x: 40, y: 80, zoom: 0.5 });
-  // 세션 행: herdr 작업 공간 ID는 herdrWorkspaceId로 읽는다(판의 워크스페이스와 헷갈리지 않게)
-  assert.equal(store.getSession('s-a').herdrWorkspaceId, 'w1');
+  // 세션 행: herdr 작업 공간 ID는 termWorkspaceId로 읽는다(판의 워크스페이스와 헷갈리지 않게)
+  assert.equal(store.getSession('s-a').termWorkspaceId, 'w1');
   // 다시 돌려도 바뀌는 것이 없다
   const again = await migrateWorkspaces(store, { resolve });
   assert.equal(again.sessions, 0);
@@ -160,17 +159,10 @@ test('G2: 셸 상태 — shell_idle·shell_running. 검토 대기·조용함은 
   assert.equal(deriveState(rt).state, 'shell_idle');
   rt.shell = { atPrompt: false, command: 'npm run dev' };
   assert.equal(deriveState(rt).state, 'shell_running');
-  applyHerdrStatus(rt, 'unknown');
-  assert.equal(deriveState(rt).state, 'shell_running', 'herdr 상태(unknown)는 셸에 쓰지 않는다');
+  applyTermStatus(rt, 'unknown');
+  assert.equal(deriveState(rt).state, 'shell_running', '터미널 상태(unknown)는 셸에 쓰지 않는다');
   rt.lastActivityAt = 0;
   assert.deepEqual(flags(rt, { quietMs: 1000 }), { unseen: false, quiet: false, delivering: 0 });
-});
-
-test('G2: herdr pane_created는 패널 정보(pane)로 온다', () => {
-  const e = normalizeEvent({ event: 'pane_created', data: { type: 'pane_created', pane: { pane_id: 'w2:p2', workspace_id: 'w2', cwd: 'C:\\x\\' } } });
-  assert.deepEqual([e.type, e.paneId, e.workspaceId, e.cwd], ['pane_created', 'w2:p2', 'w2', 'C:\\x\\']);
-  const x = normalizeEvent({ event: 'pane_exited', data: { pane_id: 'w2:p2', workspace_id: 'w2' } });
-  assert.deepEqual([x.type, x.paneId], ['pane_exited', 'w2:p2']);
 });
 
 // send()만 시험하는 백엔드(herdr 없이): 세션과 저장소만 채운다

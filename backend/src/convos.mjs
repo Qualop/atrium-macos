@@ -8,7 +8,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { readPosixProcesses } from './processes.mjs';
 import { isSyntheticUserText } from './transcript.mjs';
-import { unwrapPasted, clip } from './text.mjs';
+import { unwrapPasted, clip, isBoardNotice, promptTask } from './text.mjs';
 import { pathKey, normPath } from './workspaces.mjs';
 import { promptKey, spawnsInLines, SPAWN_KEEP } from './spawns.mjs';
 
@@ -60,7 +60,8 @@ export function parseTranscriptChunks(head, tail = '') {
         const t = unwrapPasted(text);
         out.prompts++;
         if (!out.firstPrompt) { out.firstPrompt = clip(t, 300); out.firstAt = at; out.promptKey = promptKey(t); }
-        out.lastPrompt = clip(t, 300); out.lastPromptAt = at;
+        // P153 r13: 판 알림은 마지막 지시가 아니다(그 앞 지시가 남는다). 알림에 대한 답은 마지막 답으로 둔다
+        if (!isBoardNotice(t)) { out.lastPrompt = clip(promptTask(t), 300); out.lastPromptAt = at; } // P159: 관계 줄은 뗀다
         out.lastAnswer = null; out.lastAnswerAt = null;
       } else if (o.type === 'assistant' && o.message && Array.isArray(o.message.content)) {
         const t = textOf(o.message.content);
@@ -75,7 +76,7 @@ export function parseTranscriptChunks(head, tail = '') {
   else if (titles.ai) { out.title = clip(titles.ai, 120); out.titleSource = 'ai'; }
   else if (titles.summary) { out.title = clip(titles.summary, 120); out.titleSource = 'summary'; }
   else if (out.firstPrompt) { out.title = clip(out.firstPrompt.replace(/\s+/g, ' '), 80); out.titleSource = 'prompt'; }
-  if (!out.lastPrompt && out.lastPromptLine) out.lastPrompt = clip(out.lastPromptLine, 300);
+  if (!out.lastPrompt && out.lastPromptLine && !isBoardNotice(out.lastPromptLine)) out.lastPrompt = clip(promptTask(out.lastPromptLine), 300);
   return out;
 }
 
@@ -242,11 +243,12 @@ export function readDesktopSessions(base, cache = new Map()) {
   return out;
 }
 
-// (3) 돌고 있는 claude 프로세스의 명령줄에 든 대화 ID(--resume, --session-id). 세션 파일을 쓰기 전의 짧은 틈과 세션 파일이 없는 실행(-p 등)을 메운다.
+// (3) 돌고 있는 claude 프로세스의 명령줄에 든 대화 ID(--resume, --session-id). P133: 같은 PowerShell 한 번에 codex.exe 줄도 읽는다(name). 세션 파일을 쓰기 전의 짧은 틈과 세션 파일이 없는 실행(-p 등)을 메운다.
 //     PowerShell 한 번(약 0.3~0.5초)이라 열기 직전과 느린 주기에만 부른다
 export function parseClaudeCmdlines(rows) {
   const out = new Map();
   for (const r of rows || []) {
+    if (r.name && !/claude/i.test(r.name)) continue; // P133: codex 프로세스 줄은 codex-convos.mjs가 읽는다
     const cl = String(r.cmd || '');
     for (const m of cl.matchAll(ID_ARG_RE)) out.set(m[1].toLowerCase(), { pid: r.pid });
   }
@@ -255,13 +257,14 @@ export function parseClaudeCmdlines(rows) {
 export async function claudeProcesses() {
   if (process.platform !== 'win32') {
     const procs = await readPosixProcesses();
-    return procs ? [...procs.values()].filter((p) => p.name === 'claude' || /(?:^|\/)claude(?:\s|$)|@anthropic-ai\/claude-code\//.test(p.cmd)).map(({ pid, cmd }) => ({ pid, cmd })) : null;
+    // P133: Codex 대화도 묶임을 본다(codex 프로세스의 명령줄)
+    return procs ? [...procs.values()].filter((p) => p.name === 'claude' || p.name === 'codex' || /(?:^|\/)(?:claude|codex)(?:\s|$)|@anthropic-ai\/claude-code\/|@openai\/codex\//.test(p.cmd)).map(({ pid, name, cmd }) => ({ pid, name: /codex/.test(name || '') || /(?:^|\/)codex(?:\s|$)|@openai\/codex\//.test(cmd || '') ? 'codex' : 'claude', cmd })) : null;
   }
-  const ps = `$ErrorActionPreference = 'SilentlyContinue'; @(Get-CimInstance Win32_Process -Filter "Name='claude.exe'" -Property ProcessId,CommandLine | ForEach-Object { [pscustomobject]@{ i = $_.ProcessId; c = $_.CommandLine } }) | ConvertTo-Json -Compress`;
+  const ps = `$ErrorActionPreference = 'SilentlyContinue'; @(Get-CimInstance Win32_Process -Filter "Name='claude.exe' OR Name='codex.exe'" -Property ProcessId,Name,CommandLine | ForEach-Object { [pscustomobject]@{ i = $_.ProcessId; n = $_.Name; c = $_.CommandLine } }) | ConvertTo-Json -Compress`;
   return new Promise((resolve) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true, timeout: 10000 }, (err, out) => {
       if (err) return resolve(null);
-      try { resolve([].concat(JSON.parse(out || '[]') || []).map((x) => ({ pid: x.i, cmd: x.c }))); } catch { resolve(null); }
+      try { resolve([].concat(JSON.parse(out || '[]') || []).map((x) => ({ pid: x.i, name: x.n || null, cmd: x.c }))); } catch { resolve(null); }
     });
   });
 }

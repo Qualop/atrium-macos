@@ -9,7 +9,7 @@ const cfg = { submitConfirmMs: 30000, deliveryMaxWaitMs: 900000, inputQuietMs: 3
 const tick = async (n = 4) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
 const fakeStore = () => ({ rows: new Map(), activeDeliveries: () => [], insertDelivery(d) { this.rows.set(d.deliveryId, { ...d }); }, updateDelivery(id, p) { Object.assign(this.rows.get(id) || {}, p); }, getDelivery(id) { return this.rows.get(id) || null; } });
 const RULE = '─'.repeat(40);
-const WORKING = { state: 'working', agentPresent: true, herdrConnected: true, closed: false, lastUserInputAt: 0, kind: 'claude', hooked: true };
+const WORKING = { state: 'working', agentPresent: true, termConnected: true, closed: false, lastUserInputAt: 0, kind: 'claude', hooked: true };
 
 function rig(t, { look = () => ({ box: 'empty', seen: false }), view = {}, send = null } = {}) {
   t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
@@ -32,7 +32,7 @@ test('P90 판단: 판이 띄운 Claude Code(hook 있음)가 working일 때만 �
   assert.equal(canTypeNow({ ...WORKING, kind: 'shell' }), false, '셸');
   assert.equal(canTypeNow({ ...WORKING, kind: 'codex' }), false, '다른 종류');
   assert.equal(canTypeNow({ ...WORKING, hooked: false }), false, 'hook 없는(판에 올린) Claude Code: 제출 확인을 할 수 없다');
-  assert.equal(canTypeNow({ ...WORKING, herdrConnected: false }), false);
+  assert.equal(canTypeNow({ ...WORKING, termConnected: false }), false);
   assert.equal(canTypeNow({ ...WORKING, agentPresent: false }), false);
   assert.equal(canTypeNow({ ...WORKING, closed: true }), false);
   assert.equal(canTypeNow(null), false);

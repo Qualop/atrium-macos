@@ -219,7 +219,7 @@ export function focusView(nodes, vp) {
   return { x: n2(vp.w / 2 - ((x0 + x1) / 2) * zoom), y: n2(vp.h / 2 - ((y0 + y1) / 2) * zoom), zoom: Math.round(zoom * 1000) / 1000 };
 }
 // 요약 칩의 등급에 드는 카드인가(응답 필요 칩은 오류도 센다, phone-mission.js tally와 같다)
-export const inFocus = (focus, tier) => !focus || (focus === 'work' ? tier === 'work' : tier === 'turn' || tier === 'alert');
+export const inFocus = (focus, tier) => !focus || (focus === 'work' ? tier === 'work' : focus === 'review' ? tier === 'review' : tier === 'turn' || tier === 'alert'); // P119: review = 작업 완료
 // 화면 크기 키(돌아오면 같은 키일 때만 마지막 보기를 다시 쓴다)
 export const vpKey = (vp) => `${Math.round(vp.w)}x${Math.round(vp.h)}`;
 // 카드의 브랜치 표시: 워크트리에서 도는 세션이면 그 브랜치(없으면 워크트리 이름). live: 판의 세션 요약(이미 받은 것)

@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { Store } from '../src/store.mjs';
 import { newRuntime } from '../src/state.mjs';
 import { BOARD_SYSTEM_PROMPT } from '../src/launch.mjs';
-import { Branch, BRANCH_ALLOW, boardSkill } from '../src/branch.mjs';
+import { Branch, ATRIUM_ALLOW, boardSkill } from '../src/branch.mjs';
 import { NoticeBatcher, noticeText, closeWhy, ME_LINE, ACK_LINE } from '../src/link-notice.mjs';
 import { workspaceOf } from '../src/git.mjs';
 import { Sleeper } from '../src/sleep.mjs';
@@ -29,9 +29,9 @@ async function fakeBoard({ batchMs = 30 } = {}) {
   const ws = await workspaceOf(dir);
   store.insertWorkspace({ ...ws, createdAt: 1 });
   const b = {
-    cfg: { profile: 'dev', herdrSession: 'atrium-dev-p81test', port: 0, dataDir: dir }, apiToken: 'board-api-token', store, sessions: new Map(), bus: new EventEmitter(),
+    cfg: { profile: 'dev', terminalSession: 'atrium-dev-p81test', port: 0, dataDir: dir }, apiToken: 'board-api-token', store, sessions: new Map(), bus: new EventEmitter(),
     broadcasts: [], spawned: [], killed: [], queued: [], killing: new Set(),
-    api: { broadcast: (e, d) => b.broadcasts.push([e, d]) }, log: () => {}, requireHerdr: () => {},
+    api: { broadcast: (e, d) => b.broadcasts.push([e, d]) }, log: () => {}, requireTerminal: () => {},
     hooked: (s) => s.kind === 'claude' && s.origin === 'board',
     summary: (s) => ({ state: s.rt.sleep ? 'sleeping' : s.rt.fakeState || 'ready', ask: null }),
     broadcastSession: (s) => b.broadcasts.push(['session', s.sessionId]),
@@ -171,13 +171,15 @@ test('P81 명령: atrium me 글(20줄 안, 부모 없음·부모와 역할), --j
     assert.equal(me.code, 0, me.stderr);
     const lines = me.stdout.trim().split('\n');
     assert.ok(lines.length <= 20, me.stdout);
-    assert.match(lines[0], /^나: @lead \(herdr lead/);
-    assert.match(me.stdout, /부모: 부모 없음/);
-    assert.match(me.stdout, /하위 세션 1개:\n {2}@w1 \(herdr w1\) 워커 1 · ready · 마지막 지시 \d+초 전 "do the thing"/);
-    assert.match(me.stdout, /일 시키기: herdr agent prompt <이름>/);
+    // P116: 이름은 판의 세션 이름, 명령은 atrium prompt|wait|read(herdr 이름·패널은 --json에만)
+    assert.match(lines[0], /^나: @lead \(claude\)/);
+    assert.match(me.stdout, /상위: 없음/); // P156: 상위·동료·하위·독립
+    assert.match(me.stdout, /하위 세션 1개:\n {2}@w1 워커 1 · ready · 마지막 지시 \d+초 전 "do the thing"/);
+    assert.match(me.stdout, /일 시키기: atrium prompt <이름> "<할 일>" --wait · 끝나기 기다리기: atrium wait <이름> · 화면 읽기: atrium read <이름>/);
+    assert.doesNotMatch(me.stdout, /herdr/);
     const w1 = [...b.sessions.values()].find((x) => x.name === 'w1');
     const meW = await runChild(['me'], b.branch.envFor(w1.sessionId));
-    assert.match(meW.stdout, /부모: @lead \(herdr lead, ready\) — 너는 @lead의 워커 1/);
+    assert.match(meW.stdout, /상위: @lead \(ready\) — 너는 @lead의 워커 1/);
     const js = await runChild(['me', '--json'], env);
     const j = JSON.parse(js.stdout);
     assert.equal(j.children[0].name, 'w1'); assert.equal(j.parent, null); assert.equal(j.me.name, 'lead');
@@ -189,7 +191,7 @@ test('P81 명령: atrium me 글(20줄 안, 부모 없음·부모와 역할), --j
     const bad = await runChild(['child', 'h2', '--head', '--worktree', 'x'], env);
     assert.notEqual(bad.code, 0); assert.match(bad.stderr, /--head와 --worktree는 함께 쓰지 않는다/);
     const nope = await runChild(['kill', 'w1'], env);
-    assert.match(nope.stderr, /me, child, children/);
+    assert.match(nope.stderr, /me, child, relate, children/);
   } finally { srv.close(); b.branch.notices.stop(); }
 });
 
@@ -212,15 +214,23 @@ for (const by of ['head', 'user']) test(`P81 quota: ${by} detach preserves creat
       s.rt.fakeState = 'ready';
       assert.equal(b.branch.maybeHead(s, 'ready'), true);
     } else b.branch.detach(s, { by, notify: false });
-    assert.equal(s.parentSessionId, null);
-    assert.equal(b.branch.depth(s.sessionId), 1);
-    assert.equal(b.branch.info.has(s.sessionId), false);
+    if (by === 'head') {
+      assert.equal(s.parentSessionId, null);
+      assert.equal(b.branch.depth(s.sessionId), 1);
+      assert.equal(b.branch.info.has(s.sessionId), false);
+    } else {
+      // P159: 사람의 떼기는 계보(띄운 세션)를 사실로 남기고 일 관계만 독립(none, 출처 user)으로 둔다
+      assert.equal(s.parentSessionId, lead.sessionId);
+      const rel = b.branch.relationBetween(lead.sessionId, s.sessionId);
+      assert.deepEqual([rel.relation, rel.source], ['none', 'user']);
+    }
     assert.equal(b.branch.openTotal(), ids.length, 'detached sessions still consume the global agent-created quota');
     assert.equal(s.rt.branchOrigin.by, lead.sessionId);
     assert.equal(s.rt.branchOrigin.via, 'atrium child');
     assert.deepEqual(b.store.getSession(s.sessionId).runtime.branchOrigin, s.rt.branchOrigin);
   }
-  assert.equal(b.branch.openChildren(lead.sessionId).length, 0);
+  // P159: 사람이 독립으로 둔 세션도 계보로는 lead의 자식이다(세션 하나의 하위 상한은 계보로 센다). --head는 계보를 지운다
+  assert.equal(b.branch.openChildren(lead.sessionId).length, by === 'head' ? 0 : ids.length);
   for (const name of ['quota-three', 'quota-four']) await assert.rejects(
     b.branch.spawnChild(lead, { name, head: true, wait: false }),
     (e) => e.code === 'board_full' && e.limit === 2 && e.now === 2,
@@ -241,8 +251,8 @@ for (const by of ['head', 'user']) test(`P81 quota: ${by} detach preserves creat
   assert.equal(b.branch.openTotal(), 2);
   const reloadedLead = b.sessions.get(lead.sessionId);
   for (const id of ids) {
-    assert.equal(b.branch.depth(id), 1);
-    assert.equal(b.branch.info.has(id), false);
+    assert.equal(b.branch.depth(id), by === 'head' ? 1 : 2); // P159: 사람의 떼기는 계보를 남긴다
+    assert.equal(b.branch.info.has(id), by !== 'head');
     assert.deepEqual(b.sessions.get(id).rt.branchOrigin, expected.get(id));
   }
   await assert.rejects(b.branch.spawnChild(reloadedLead, { name: 'quota-reloaded', head: true, wait: false }), (e) => e.code === 'board_full');
@@ -250,7 +260,7 @@ for (const by of ['head', 'user']) test(`P81 quota: ${by} detach preserves creat
   assert.equal(b.branch.openTotal(), 1, 'quota releases only when a created session leaves the live board');
 });
 
-test('P81 떼기: 부모 기록·하위 세션 기록·역할 선을 지우고(오간 기록은 남김), children·child-kill 범위·잠재우기 묶음에서 빠지고, 아래는 그대로(단계만 다시), 다시 켜도 그대로', async () => {
+test('P81→P159 떼기 = 독립으로 두기: 계보·하위 세션 기록은 남기고 일 관계만 none(출처 user), 역할 이름을 지우고, children·child-kill 범위·잠재우기 묶음에서 빠지고, 아래는 그대로, 다시 켜도 그대로, auto로 되돌린다', async () => {
   const { b, lead } = await fakeBoard();
   const r = await b.branch.spawnChild(lead, { name: 'b1', prompt: 'go', wait: false });
   const B = b.sessions.get(r.sessionId);
@@ -266,36 +276,44 @@ test('P81 떼기: 부모 기록·하위 세션 기록·역할 선을 지우고(�
   const l = b.store.linkByPair(lead.sessionId, B.sessionId);
   assert.equal(l.role, '워커');
   const out = b.branch.detach(B, { by: 'user' });
-  assert.deepEqual(out, { detached: true, name: 'b1', from: 'lead', by: 'user' });
-  assert.equal(B.parentSessionId, null);
-  assert.equal(b.store.getSession(B.sessionId).parentSessionId, null);
-  assert.equal(b.branch.info.has(B.sessionId), false);
-  assert.deepEqual(b.store.branchRows().find((x) => x.sessionId === B.sessionId).branch, { detached: true, creation: B.rt.branchOrigin });
+  assert.deepEqual(out, { detached: true, name: 'b1', from: 'lead', by: 'user', relation: 'none' });
+  // 계보는 사실로 남는다
+  assert.equal(B.parentSessionId, lead.sessionId);
+  assert.equal(b.store.getSession(B.sessionId).parentSessionId, lead.sessionId);
+  assert.equal(b.branch.info.has(B.sessionId), true);
+  const rel = b.branch.relIndex().between(lead.sessionId, B.sessionId);
+  assert.equal(rel.relation, 'none'); assert.equal(rel.source, 'user');
+  assert.equal(b.branch.relIndex().workParentOf(B.sessionId), null);
   const l2 = b.store.getLink(l.linkId);
-  assert.ok(l2.removedAt); assert.equal(l2.role, null);
+  assert.equal(l2.role, null, '역할 이름은 지운다');
   assert.ok(b.store.linkEvents(l.linkId).some((e) => e.kind === 'prompt'), '오간 기록은 남는다');
-  assert.ok(b.store.linkEvents(l.linkId).some((e) => e.kind === 'unlink' && e.data.why === 'detach'));
   assert.deepEqual(b.branch.listChildren(lead, {}).children, []);
   const sx = b.branch.summaryExtra(B).branch;
-  assert.equal(sx.parentSessionId, null); assert.equal(sx.role, null); assert.equal(sx.child, false); assert.equal(sx.depth, 1);
-  assert.equal(b.branch.summaryExtra(lead).branch.children, 0);
-  await assert.rejects(b.branch.killChild(lead, { name: 'b1' }), (e) => e.code === 'not_parent');
-  await assert.rejects(b.branch.killChild(lead, { name: 'g1' }), (e) => e.code === 'not_parent', '손자도 범위 밖');
-  await assert.rejects(b.branch.waitChild(lead, { name: 'b1' }), (e) => e.code === 'not_parent');
+  // P159: 머리줄·사이드바는 일 관계. 계보는 lineageParentSessionId에만
+  assert.equal(sx.parentSessionId, null); assert.equal(sx.lineageParentSessionId, lead.sessionId); assert.equal(sx.workParentSessionId, null); assert.deepEqual(sx.parentRelation, { relation: 'none', source: 'user' });
+  assert.equal(sx.child, false); assert.equal(sx.role, null, '독립에 "워커"가 남지 않는다'); assert.equal(sx.depth, 1);
+  assert.equal(b.branch.summaryExtra(G).branch.depth, 2, '아래는 일 단계로 다시 센다');
+  assert.equal(b.branch.summaryExtra(lead).branch.children, 0, '머리줄 하위 수는 일 자식');
+  await assert.rejects(b.branch.killChild(lead, { name: 'b1' }), (e) => e.code === 'not_sub');
+  await assert.rejects(b.branch.killChild(lead, { name: 'g1' }), (e) => ['not_sub', 'not_parent'].includes(e.code), '손자도 범위 밖');
   assert.equal(sl.info(lead).childBusy, false, '잠재우기 묶음이 풀린다');
+  assert.equal(sl.info(lead).descBusy, false);
   busy.clear(); busy.add(lead.sessionId);
   assert.equal(sl.info(B).parentBusy, false);
-  // B 아래는 그대로, 단계만 다시
+  // B 아래는 그대로
   assert.equal(G.parentSessionId, B.sessionId);
-  assert.equal(b.branch.depth(G.sessionId), 2);
-  assert.equal(b.branch.info.get(G.sessionId).depth, 2);
+  assert.equal(b.branch.relIndex().workParentOf(G.sessionId), B.sessionId);
   assert.deepEqual(b.branch.listChildren(B, {}).children.map((c) => c.name), ['g1']);
   // 다시 하면 no_parent, 다시 켜도 그대로
   assert.throws(() => b.branch.detach(B), (e) => e.code === 'no_parent');
   const again = new Branch(b, { readyWaitMs: 30 });
-  assert.equal(again.info.has(B.sessionId), false);
-  assert.equal(b.store.getSession(B.sessionId).parentSessionId, null);
-  assert.equal(again.depth(G.sessionId), 2);
+  assert.equal(again.relIndex().workParentOf(B.sessionId), null);
+  assert.equal(b.store.getSession(B.sessionId).parentSessionId, lead.sessionId);
+  // 되돌리기: relation.set auto면 다시 하위(계보를 따른다)
+  b.branch.setRelation(lead, B, 'auto', { source: 'user', by: 'user', quiet: true });
+  assert.equal(b.branch.relIndex().workParentOf(B.sessionId), lead.sessionId);
+  busy.clear(); busy.add(B.sessionId);
+  assert.equal(sl.info(lead).childBusy, true);
   b.branch.notices.stop(); again.notices.stop();
 });
 
@@ -322,14 +340,14 @@ test('P81 알림: 사람이 떼면 옛 부모와 뗀 세션에게, 하위 세션
   assert.equal(toLead.length, 1, '부모의 턴은 하나');
   const t = toLead[0].text;
   assert.match(t, /^\[Atrium 보드\] 연결이 바뀌었다\./);
-  assert.match(t, /- @k1는 이제 너의 하위 세션이 아니다\. 일을 시키지 마라\./);
+  assert.match(t, /- @k1는 이제 너의 하위 세션이 아니다\(사람이 독립으로 둠\)\. 일을 시키지 마라\./);
   assert.match(t, /- @k2가 닫혔다\(사람이 닫음\)\./);
   assert.match(t, /- @k3가 닫혔다\(스스로 끝남\)\./);
   assert.match(t, /- @k4가 닫혔다\(패널 사라짐\)\./);
   assert.ok(t.endsWith('지금 연결은 `atrium me`.\n이 알림에는 "알겠다"고만 답해라.'));
   const toK1 = notices(b, kids[0]);
   assert.equal(toK1.length, 1);
-  assert.equal(toK1[0].text.split('\n')[0], '[Atrium 보드] 너는 이제 부모 없는 세션이다(@lead에서 뗌).');
+  assert.equal(toK1[0].text.split('\n')[0], '[Atrium 보드] 너는 이제 @lead의 하위 세션이 아니다(사람이 독립으로 둠). 보고하지 않는다.');
   assert.ok(b.store.events({}).some((e) => e.kind === 'link_notice'));
   // child-kill이면 보내지 않는다
   const before = b.queued.length;
@@ -390,7 +408,7 @@ test('P81 --head: 자리는 하위 세션 줄이 아니고, 신뢰 질문 동안
   const r2 = await b.branch.spawnChild(lead, { name: 'h2', head: true, cwd: other, prompt: 'x', wait: false });
   const H2 = b.sessions.get(r2.sessionId);
   b.branch.onDeliveryEnd({ deliveryId: r2.firstPrompt.deliveryId, status: 'unconfirmed', reason: 'no hook' });
-  assert.ok(b.queued.some((q) => q.sid === lead.sessionId && /첫 요청이 들어가지 않았다/.test(q.text)), 'P79 알림이 먼저');
+  assert.ok(b.queued.some((q) => q.sid === lead.sessionId && /첫 요청이 들어가지 않았을 수 있다/.test(q.text)), 'P79 알림이 먼저');
   assert.equal(H2.parentSessionId, null);
   // 첫 요청 없음: 준비되면 뗀다. 신뢰 질문 동안은 둔다
   const r3 = await b.branch.spawnChild(lead, { name: 'h3', head: true, cwd: other, wait: false });
@@ -438,5 +456,5 @@ test('P81 안내와 스킬: 짧은 안내에 atrium me 한 줄, 스킬에 atrium
   const skill = boardSkill('atrium');
   for (const w of ['atrium me', '--head', '첫 요청 뒤 보드가 떼므로', '시키거나 기다리지 않는다']) assert.ok(skill.includes(w), w);
   assert.equal(boardSkill('delegate').split('\n---\n')[1], skill.split('\n---\n')[1]);
-  for (const r of ['Bash(atrium me)', 'Bash(atrium me *)', 'PowerShell(atrium me)', 'Bash(mtask me)']) assert.ok(BRANCH_ALLOW.includes(r), r);
+  for (const r of ['Bash(atrium me)', 'Bash(atrium me *)', 'PowerShell(atrium me)', 'Bash(mtask me)']) assert.ok(ATRIUM_ALLOW.includes(r), r);
 });

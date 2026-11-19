@@ -14,6 +14,9 @@ export const NAV_CLOSE_PX = 380; // 들어갈 때 노드가 차지할 가장 작
 export const FILL = 0.85; // 노드(덩어리)가 화면에서 차지할 몫
 export const ZOOM_MAX = 1; // 들어갈 때 배율 상한(터미널 글이 흐려지지 않게)
 export const NAV_FILL = 0.99; // P73: 크롬을 뺀 남은 칸에서 노드(덩어리)가 차지할 몫
+// P157: 화면을 노드로 옮기는 시간(ms). instant(세션 맵에서 더블클릭·Enter)는 0 = 한 번에 맞춤 보기(줌 아웃 → 이동 → 줌 인 날아가기 없음)
+export const NAV_MS = 250;
+export const navDuration = ({ instant = false } = {}) => (instant ? 0 : NAV_MS);
 export const NAV_GAP = 6; // P73: 크롬과 남은 칸 사이 틈(px, 전체 보기·영역으로 가기는 12)
 const MARGIN = 24; // 누른 노드와 화면 가장자리 사이(화면 px)
 

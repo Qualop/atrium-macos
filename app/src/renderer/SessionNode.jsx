@@ -11,11 +11,12 @@ import { shortFolder } from './lib/folder-display.js';
 // P22: 그룹 표시와 한 줄 메모 단추를 뺐다. 노드를 고르고 Delete를 누르면 X와 같은 닫기 확인을 연다(main.jsx가 store.killAsk로 알린다)
 // P28: 닫기 확인에서 Delete를 한 번 더 누르면 삭제 단추에 초점과 표시가 가고 Enter로 확정한다. Esc는 취소. 멀리·아이콘 얼굴은 흐리게 하지 않는다(styles.css)
 import { memo, useEffect, useRef, useState } from 'react';
+import { countRender } from './perf-trace.js'; // P146
 import { NodeResizer, Handle, Position, useStore as useFlowStore } from '@xyflow/react';
-import { useStore, getState, saveNode, setNodeLocal, markSeen, toast, dockOf, setOutputView, openDialog, setKillAsk, setRenaming } from './store.js';
+import { useStore, getState, matesNow, saveNode, setNodeLocal, markSeen, toast, dockOf, setOutputView, openDialog, setKillAsk, setRenaming, loadAccounts } from './store.js';
 import { shellLine } from './Workspaces.jsx';
 import { api } from './api.js';
-import { faceFor } from './lib/faces.js';
+import { tierFor, faceOfTier, termAllowed, veryClose, zoomStep } from './lib/faces.js'; // P124: 거리 단계(터미널·요약·틀)
 import { kindOf, SHAPES, stateColor, logoFor, shownKind } from './lib/kinds.js'; // P10: 아이콘 얼굴. P25: shownKind(flavor가 먼저)
 import { STATE_LABEL, EXIT_LABEL, ago, askLine } from './lib/labels.js';
 import { useT, t, errText, tMsg, tOr } from './lib/i18n.js';
@@ -38,8 +39,13 @@ import { RenameInput, useRenaming } from './Rename.jsx'; // P66: 판의 이름 �
 import { addressOf, renamed } from './lib/session-name.js';
 import { killWorktreeParam } from './lib/worktree-exit.js'; // P71: 닫기 확인의 워크트리 선택
 import { tierOf, runsRing, ringDiag } from './lib/overview.js'; // P85: 멀리 보기 강조 등급과 도는 둘레
+import { useInvRef } from './zoom-var.js'; // P112: --inv를 렌더 없이
 
 const zoomSel = (s) => s.transform[2];
+// P121: 다른 워크스페이스 노드(요약 얼굴)의 글자 크기. React로 배율을 구독하지 않고 노드 뿌리의 --inv(계단 값, zoom-var.js useInvRef stepped)로 CSS가 센다.
+//   min(n / 배율, 높이 비, 너비 비)는 아래 px()와 같은 식이다. 판을 확대·축소해도 이 얼굴은 다시 그리지 않고, 계단이 바뀔 때만 스타일을 다시 센다
+const cssPx = (n, frac, wfrac, w, h) => `min(calc(${n}px * var(--inv, 1)), ${+(h * frac).toFixed(2)}px, ${+(w * wfrac).toFixed(2)}px)`;
+const noZoom = () => 1;
 const NO_BOARD_TERMS = !boardPlan().terms; // P86: 보드 단계 1부터 터미널 대신 대화 보기(얼굴)
 // 이 배율보다 작으면 머리줄의 메모리·모델·작은 단추를 숨기고 이름과 상태만 화면 기준 크기로 보인다(사용성 평가 2026-10-31)
 const SMALL_ZOOM = 0.7;
@@ -53,8 +59,9 @@ function useTick(on) {
 export function StatePill({ s }) {
   const t = useT();
   const review = s.unseen && (s.state === 'ready' || s.state === 'shell_idle');
-  const label = s.waking ? t('sleep.waking') : review ? t('node.review') : STATE_LABEL[s.state] || s.state; // P21: 깨우는 동안
-  const title = `${STATE_LABEL[s.state] || s.state}${s.estimate ? t('node.estimate', { v: s.estimate }) : ''}`;
+  // P21: 깨우는 동안. P125: 사람이 스스로 끝낸 세션은 머리 알약도 "직접 종료"
+  const label = s.waking ? t('sleep.waking') : review ? t('node.review') : (s.state === 'exited' && s.exit && s.exit.kind === 'user' ? EXIT_LABEL.user : STATE_LABEL[s.state] || s.state);
+  const title = `${s.state}${s.estimate ? t('node.estimate', { v: s.estimate }) : ''} · term ${s.termStatus ?? '-'}`;
   return <span className={`mt-pill st-${s.state}${review ? ' st-review' : ''}${s.estimate ? ' estimate' : ''}${s.waking ? ' st-waking' : ''}`} data-state={s.state} data-waking={s.waking ? '1' : undefined} title={title}>{s.state === 'sleeping' && !s.waking && <Icon name="moon" />}{label}{s.estimate ? '?' : ''}</span>;
 }
 
@@ -73,9 +80,10 @@ function Badges({ s }) {
 // 에이전트 종류(Claude Code가 아니면), 누가 띄웠는지(F3)
 function Origin({ s }) {
   const t = useT();
-  const parent = useStore((st) => (s.parentSessionId ? st.sessions.get(s.parentSessionId) : null));
+  const lp = s.lineageParentSessionId !== undefined ? s.lineageParentSessionId : s.parentSessionId; // P159: "@x가 띄움"은 계보(사실)
+  const parent = useStore((st) => (lp ? st.sessions.get(lp) : null));
   return <>
-    {/* P25: 띄운 방법(DeepSeek). 판이 띄운 Claude Code면 hook이 붙고, 직접 명령이면 hook 없이 셸에서 뜬다 */}
+    {/* P25: 띄운 방법(런처 아이콘). 판이 띄운 Claude Code면 hook이 붙고, 직접 명령이면 hook 없이 셸에서 뜬다 */}
     {s.flavor && <span className="mt-badge kind flavor" data-kind={s.flavor} data-role="flavor-badge" title={t(s.hooked ? 'node.flavorHookedTitle' : 'node.flavorCommandTitle', { kind: kindOf(s.flavor).label })}>{kindOf(s.flavor).label}</span>}
     {s.kind === 'shell' && <span className="mt-badge kind shell" data-kind="shell" title={t('node.shellTitle')}>{t('node.shell')}</span>}
     {s.kind && s.kind !== 'claude' && s.kind !== 'shell' && <span className="mt-badge kind" data-kind={s.kind} title={t('node.kindTitle')}>{kindOf(s.kind).label}</span>}
@@ -103,11 +111,11 @@ function GitLine({ s }) {
 
 // P11: 콘솔 머리(목업): 종류 아이콘, 세션마다 다른 색 점, 이름(굵게), 표시들, 오른쪽에 상태 알약과 동작 아이콘.
 //   머리 높이와 글은 월드 28px·13px이 기준이고, 멀리 볼 때는 화면에서 11px 아래로 작아지지 않게 키운다(styles.css --inv)
-function Header({ s, onKill, onMenu, onLoops }) {
+function Header({ s, onKill, onMenu, onLoops, onModel }) {
   const t = useT();
   const waiting = s.state === 'waiting' || s.state === 'trust_wait';
   useTick(waiting);
-  const since = s.ask && s.ask.since;
+  const since = s.waitingSince || (s.ask && s.ask.since); // P141(#14): 다시 켜도 이어지는 시각
   // D1: 약 30초마다 오는 자원 이벤트에서 이 세션의 메모리
   const mem = useStore((st) => { const r = st.resources && st.resources.sessions.find((x) => x.sessionId === s.sessionId); return r ? r.memMB : null; });
   const editing = useRenaming(s.sessionId, 'node');
@@ -132,11 +140,20 @@ ${t('rename.dblHint')}`} onDoubleClick={(e) => { e.stopPropagation(); setRenamin
       <span className="mt-node-sp" />
       {s.output && s.output.long && <button className="mt-btn small nodrag mt-output-btn" data-action="output-open" title={t('node.outputTitle', { n: s.output.chars })} onClick={() => setOutputView({ sessionId: s.sessionId, turn: null })}>{t('node.output')}</button>}
       {mem != null && mem >= 1 && <span className="mt-node-meta" data-role="mem" title={t('node.memTitle')}>{mem >= 1024 ? `${(mem / 1024).toFixed(1)}GB` : `${Math.round(mem)}MB`}</span>}
-      {s.model && <span className="mt-node-meta" title={s.cwd}>{s.model}</span>}
+      <TokenSpeed s={s} />
+      {/* macOS 판: Claude Code는 누르면 모델·추론 바꾸기(ModelMenu). 다른 종류는 보이기만 한다 */}
+      {(s.kind || 'claude') === 'claude' && s.state !== 'sleeping' && s.state !== 'exited'
+        ? <button type="button" className={`mt-node-meta mt-model-chip nodrag${s.pendingModel ? ' pending' : ''}`} data-action="model-menu" title={s.pendingModel ? t('model.pendingTitle', { v: modelLabel(s.pendingModel) }) : t('model.chipTitle')} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onModel(); }}>{modelLabel(s) || t('model.unknown')}</button>
+        : s.model && <span className="mt-node-meta" title={s.cwd}>{modelLabel(s)}</span>}
       {waiting && since && <span className="mt-waited">{ago(since)}</span>}
       <StatePill s={s} />
-      <button className="mt-x nodrag" title={t('node.menuTitle')} data-action="node-menu" onClick={onMenu}><Icon name="more" /></button>
-      <button className="mt-x nodrag kill" title={t('node.killTitle')} data-action="kill" onClick={onKill}><Icon name="x" /></button>
+      {/* macOS 판: 머리 오른쪽 단추 묶음은 끌기·선택을 받지 않는 칸이다(조금 빗나가 눌러도 노드가 끌리지 않는다). 단추는 화면에서 24px 아래로 작아지지 않는다 */}
+      <span className="mt-head-actions nodrag nopan" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+        {/* macOS 판: 일하는 중이면 중지(Esc). 일하는 하위 세션도 함께 멈춘다(backend session-stop.mjs) */}
+        {(s.state === 'working' || s.state === 'shell_running') && <button type="button" className="mt-x nodrag stop" title={t('node.stopTitle')} aria-label={t('node.stopTitle')} data-action="stop" onClick={() => stopSession(s)}><Icon name="stop" /></button>}
+        <button type="button" className="mt-x nodrag" title={t('node.menuTitle')} aria-label={t('node.menuTitle')} data-action="node-menu" onClick={onMenu}><Icon name="more" /></button>
+        <button type="button" className="mt-x nodrag kill" title={t('node.killTitle')} aria-label={t('node.killTitle')} data-action="kill" onClick={onKill}><Icon name="x" /></button>
+      </span>
     </div>
   );
 }
@@ -144,20 +161,24 @@ ${t('rename.dblHint')}`} onDoubleClick={(e) => { e.stopPropagation(); setRenamin
 const oneLine = (t) => String(t || '').replace(/\s+/g, ' ').trim();
 // 멀리 얼굴(H3): 이름, 상태, 기다리는 질문(가장 크게), 마지막 사용자 요청 한 줄, 마지막 답 한 줄. 글자 크기는 화면 기준(px / 배율)이고 노드 높이에 맞춰 줄인다.
 // P10: 노드 너비에도 맞춰 줄인다(한 줄에 열몇 자는 들어가게). 이름 줄은 한 줄로 자르고, 좁으면(화면 180px 아래) 표시는 상태 필만 남긴다. 줄은 넘치면 자른다(styles.css)
-function FarFace({ s, zoom, w, h }) {
+// P121 brief: 다른 워크스페이스의 노드라 터미널 대신 이 얼굴을 보인다. 글자 크기는 노드의 --inv(배율 계단, lib/faces.js zoomStep)를 쓰는 CSS로만 바뀌고, 가까이 크기면(open) 누르면 터미널이 열린다는 한 줄을 더한다
+// P124: 요약 얼굴은 모두(고른 워크스페이스의 먼 노드도) 글자 크기를 CSS(--inv 계단 값)로 센다. 배율을 React로 구독하지 않는다
+function FarFace({ s, w, h, open = false }) {
   const t = useT();
-  const px = (n, frac, wfrac) => Math.min(n / Math.max(zoom, 0.02), h * frac, w * wfrac);
+  const px = (n, frac, wfrac) => cssPx(n, frac, wfrac, w, h);
   const waiting = s.state === 'waiting' || s.state === 'trust_wait';
-  const narrow = w * zoom < 180;
+  const narrow = useFlowStore((st) => w * zoomStep(st.transform[2]) < 180); // 좁은지만(계단 값) 구독한다
   return (
     <div className="mt-far" style={{ fontSize: px(12, 0.17, 1 / 16) }} data-role="far">
-      <div className="mt-far-name" style={{ fontSize: px(14, 0.2, 1 / 13) }}><span className="mt-far-nm">@{s.name}</span> <StatePill s={s} />{!narrow && <>{s.flavor ? <span className="mt-badge kind">{kindOf(s.flavor).label}</span> : s.kind && s.kind !== 'claude' ?<span className="mt-badge kind">{s.kind === 'shell' ? t('node.shell') : kindOf(s.kind).label}</span> : null}{s.unseen && <span className="mt-badge review">{t('node.review')}</span>}<BranchBadge s={s} /></>}</div>
+      {/* P141(#15): 상태 알약이 검토 대기(작업 완료)면 같은 칩을 또 두지 않는다. 이름은 칩보다 먼저 자리를 받는다(styles.css 끝) */}
+      <div className="mt-far-name" style={{ fontSize: px(14, 0.2, 1 / 13) }}><span className="mt-far-nm">@{s.name}</span> <StatePill s={s} />{!narrow && <>{s.flavor ? <span className="mt-badge kind">{kindOf(s.flavor).label}</span> : s.kind && s.kind !== 'claude' ?<span className="mt-badge kind">{s.kind === 'shell' ? t('node.shell') : kindOf(s.kind).label}</span> : null}{s.unseen && !(s.state === 'ready' || s.state === 'shell_idle') && <span className="mt-badge review">{t('node.review')}</span>}<BranchBadge s={s} /></>}</div>
       {waiting && <div className="mt-far-ask" data-role="far-ask" style={{ fontSize: px(15, 0.21, 1 / 14) }}>{askLine(s) || t('node.waitingForYou')}</div>}
       {s.kind === 'shell' && <div className="mt-far-line" data-role="shell-line">{shellLine(s)}</div>}
       {s.elsewhere && <div className="mt-far-line warn">↪ {t('node.workingIn', { name: s.elsewhere.name })}</div>}
       {s.state === 'exited' && <div className="mt-far-line">{EXIT_LABEL[s.exit && s.exit.kind] || t('state.exited')}</div>}
       {s.lastPrompt && <div className="mt-far-line one prompt" data-role="far-prompt"><span className="mt-far-k">{t('node.prompt')}</span> {oneLine(s.lastPrompt)}</div>}
       {s.lastAnswer && <div className="mt-far-line one" data-role="far-answer"><span className="mt-far-k">{t('node.answer')}</span> {oneLine(s.lastAnswer)}</div>}
+      {open && <div className="mt-far-line mt-brief-hint" data-role="brief-hint">{t('brief.hint')}</div>}
     </div>
   );
 }
@@ -172,24 +193,38 @@ export function KindIcon({ kind, title, state, badge = false }) {
   if (logo) return <img className="mt-kind-icon" src={logo} alt={k.label} title={title || k.label} draggable={false} data-kind={k.id} />;
   const d = SHAPES[k.shape];
   const fs = k.mark.length > 1 ? 34 : 46;
+  // P138: 글자는 SVG <text>가 아니라 HTML 글이다. 새 Chromium(웹 화면의 브라우저)은 조상의 transform이 바뀔 때마다 SVG 글을 화면 배율에 맞춰
+  // 다시 배치해, 판을 움직이는 매 프레임 셸 아이콘마다 레이아웃이 돌았다(웹 각본 레이아웃 10배). HTML 글은 transform 아래에서 다시 배치하지 않는다.
+  // 글 크기는 아이콘 상자 너비의 비율(cqw, 예전 viewBox 100의 fs)이다
   return (
-    <svg className="mt-kind-icon" viewBox="0 0 100 100" role="img" aria-label={k.label} data-kind={k.id}>
-      <title>{title || k.label}</title>
-      {d ? <path d={d} style={{ fill: k.color }} /> : <circle cx="50" cy="50" r="44" style={{ fill: k.color }} />}
-      <text x="50" y="50" dy=".36em" textAnchor="middle" fontSize={fs} fontWeight="800" style={{ fill: k.ink, fontFamily: 'var(--font-ui)' }}>{k.mark}</text>
-    </svg>
+    <span className="mt-kind-icon mt-kind-mk" role="img" aria-label={k.label} title={title || k.label} data-kind={k.id}>
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        {d ? <path d={d} style={{ fill: k.color }} /> : <circle cx="50" cy="50" r="44" style={{ fill: k.color }} />}
+      </svg>
+      <b style={{ color: k.ink, fontSize: `${fs}cqw` }}>{k.mark}</b>
+    </span>
   );
 }
-function IconFace({ s }) {
+// P124: 틀 단계(lib/faces.js tierFor, 화면 120px 아래). 노드를 가리고 외곽과 상태 색 바탕, 상태 표지 하나만 그린다(글 없음, 이름은 마우스를 올리면 제목).
+//   상태는 색만이 아니라 모양으로도 갈린다: 응답 필요 !, 작업 완료(검토 대기) ✓, 오류 ×, 작업 중 원호(둘레 빛도 돈다), 잠듦 달. 쉬는 노드와 끝난 노드는 표지 없음.
+//   표지 크기는 화면 기준(--inv 계단 값)이고 노드보다 커지지 않는다(styles.css .mt-frame-mark)
+const FRAME_MARK = { turn: 'ask', alert: 'error', review: 'done', work: 'work', sleep: 'sleep' };
+export const frameMarkOf = (tier) => FRAME_MARK[tier] || null;
+const MARK_PATH = {
+  ask: <><path d="M12 6.5v7" /><circle cx="12" cy="17.6" r=".6" /></>,
+  done: <path d="M6.5 12.4l3.6 3.6 7.4-8" />,
+  error: <path d="M7.5 7.5l9 9M16.5 7.5l-9 9" />,
+  work: <path d="M12 6.5a5.5 5.5 0 1 1-5.5 5.5" />,
+};
+function FrameFace({ s, tier }) {
   useT();
   const k = kindOf(shownKind(s));
+  const mark = frameMarkOf(tier);
   return (
-    <div className="mt-iconface mt-drag" data-role="icon-face" data-kind={k.id} style={{ '--sc': stateColor(s.state) }} title={`@${s.name} · ${k.label} · ${STATE_LABEL[s.state] || s.state}`}>
-      <KindIcon kind={shownKind(s)} state={s.state} title={`@${s.name} · ${k.label}`} />
-      {/* P11: 타일 아래쪽에 이름(화면 기준 글자 크기, 넘치면 자른다) */}
-      <span className="mt-icon-name" data-role="icon-name">{s.name}</span>
-      <span className="mt-icon-dot" data-state={s.state} />
-      {s.state === 'sleeping' && <span className="mt-icon-moon" data-role="icon-moon"><Icon name="moon" /></span>}
+    <div className="mt-iconface mt-frameface mt-drag" data-role="frame-face" data-kind={k.id} data-mark={mark || undefined} title={`@${s.name} · ${k.label} · ${STATE_LABEL[s.state] || s.state}`}>
+      {mark && <span className="mt-frame-mark" data-mark={mark} aria-hidden="true">
+        {mark === 'sleep' ? <Icon name="moon" /> : <svg viewBox="0 0 24 24">{MARK_PATH[mark]}</svg>}
+      </span>}
     </div>
   );
 }
@@ -206,14 +241,87 @@ function AskCallout({ s }) {
   );
 }
 
+// macOS 판: 머리의 모델 표시(claude- 앞머리는 뺀다)와 추론 수준
+export function modelLabel(v) {
+  if (!v) return '';
+  const m = v.model ? String(v.model).replace(/^claude-/, '').replace(/-(\d+)-(\d+)$/, ' $1.$2') : '';
+  return [m, v.effort].filter(Boolean).join(' · ');
+}
+// macOS 판: 마지막 응답의 출력 속도(초당 토큰). 10분 지난 값은 흐리게
+function TokenSpeed({ s }) {
+  const t = useT();
+  const sp = s.tokenSpeed;
+  if (!sp || !sp.tps) return null;
+  const old = Date.now() - (sp.at || 0) > 600000;
+  return <span className={`mt-node-meta mt-tps${old ? ' old' : ''}`} data-role="tps" title={t('model.tpsTitle', { n: sp.out, at: new Date(sp.at).toLocaleTimeString() })}>{sp.tps} t/s</span>;
+}
+// macOS 판: 모델·추론 바꾸기(/model, /effort). 일하는 중이면 턴이 끝난 뒤 바뀐다
+const MODELS = ['opus', 'sonnet', 'haiku', 'fable'];
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+function ModelMenu({ s, onClose }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const pick = (p) => {
+    setBusy(true);
+    api.call('session.setModel', { session: s.sessionId, ...p }).then((r) => {
+      onClose();
+      toast(r && r.applied ? t('model.applied', { name: s.name }) : t('model.queued', { name: s.name }));
+    }, (e) => { setBusy(false); toast(errText(e), 'error'); });
+  };
+  const cur = String(s.model || '').toLowerCase();
+  return (
+    <div className="mt-menu nodrag mt-model-menu" data-role="model-menu" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="mt-menu-row"><span className="dim">{t('model.model')}</span>
+        {MODELS.map((m) => <button key={m} className={`mt-btn small${cur.includes(m) ? ' on' : ''}`} data-model={m} disabled={busy} onClick={() => pick({ model: m })}>{m}</button>)}
+      </div>
+      <div className="mt-menu-row"><span className="dim">{t('model.effort')}</span>
+        {EFFORT_LEVELS.map((x) => <button key={x} className={`mt-btn small${s.effort === x ? ' on' : ''}`} data-effort={x} disabled={busy} onClick={() => pick({ effort: x })}>{x}</button>)}
+      </div>
+      <div className="mt-menu-row dim">{s.state === 'working' ? t('model.whileWorking') : t('model.hint')}</div>
+      <div className="mt-menu-row"><button className="mt-btn small ghost" onClick={onClose}>{t('common.close')}</button></div>
+    </div>
+  );
+}
+
+// macOS 판: 중지 단추. 멈춘 세션 이름을 알린다(하위 세션까지)
+export function stopSession(s) {
+  return api.call('session.stop', { session: s.sessionId }).then((r) => {
+    const names = (r && r.stopped) || [];
+    if (!names.length) toast(t('node.stopNone', { name: s.name }));
+    else toast(names.length > 1 ? t('node.stoppedTree', { name: s.name, n: names.length - (names.includes(s.name) ? 1 : 0) }) : t('node.stopped', { name: names[0] }));
+  }, (e) => toast(errText(e), 'error'));
+}
+
+// macOS 판: 이 세션을 다른 Claude 계정으로 옮긴다(같은 대화). 일하는 중이면 멈추고 옮긴 뒤 이어 하라고 알린다
+function AccountMove({ s, onClose }) {
+  const t = useT();
+  const accounts = useStore((st) => st.accounts) || [];
+  const [busy, setBusy] = useState(null);
+  useEffect(() => { loadAccounts().catch(() => {}); }, []);
+  if ((s.kind || 'claude') !== 'claude' || !s.hooked || !s.claudeAccount) return null;
+  const others = accounts.filter((a) => a.id !== s.claudeAccount);
+  if (!others.length) return null;
+  const label = (a) => (a.builtin ? t('accounts.defaultName') : a.name);
+  const move = (a) => {
+    setBusy(a.id);
+    api.call('accounts.switch', { session: s.sessionId, account: a.id, stop: true }).then(() => { onClose(); }, (e) => { setBusy(null); toast(errText(e), 'error'); });
+  };
+  const cur = accounts.find((a) => a.id === s.claudeAccount);
+  return (
+    <div className="mt-menu-row" data-role="account-move"><span className="dim">{t('accounts.moveMenu', { from: cur ? label(cur) : s.claudeAccount })}</span>
+      {others.map((a) => <button key={a.id} className="mt-btn small" data-action="account-move" data-account={a.id} disabled={!!busy || !a.loggedIn || !!a.limit} title={!a.loggedIn ? t('accounts.notLoggedIn') : a.limit ? t('accounts.limited', { time: new Date(a.limit.until).toLocaleTimeString() }) : t('accounts.moveHint')} onClick={() => move(a)}>{busy === a.id ? t('accounts.moving') : label(a)}</button>)}
+    </div>
+  );
+}
+
 // ⋯ 메뉴: 크기 단계(H7), 덩어리에서 떼기(H5), 루프 만들기(I5, P6c)
 function NodeMenu({ s, docked, onClose }) {
   const t = useT();
   const call = (method, p) => api.call(method, p).then(onClose, (e) => toast(errText(e), 'error'));
-  const [detachAsk, setDetachAsk] = useState(null); // P81: 부모에서 떼기 확인 글
+  const [detachAsk, setDetachAsk] = useState(null); // P81: 부모에서 떼기 확인 글. P159: 독립으로 두기(계보는 남는다)
   const detach = (yes) => api.call('session.detach', { session: s.sessionId, confirm: yes }).then((r) => {
     if (r && r.needsConfirm) return setDetachAsk(tMsg(r));
-    onClose(); toast(t('detach.done', { name: s.name, parent: r.from || (s.branch && s.branch.parentName) || '' }));
+    onClose(); toast(t('detach.done', { name: s.name, parent: r.from || (s.branch && (s.branch.workParentName || s.branch.parentName)) || '' }));
   }, (e) => toast(errText(e), 'error'));
   return (
     <div className="mt-menu nodrag" data-role="node-menu" onMouseDown={(e) => e.stopPropagation()}>
@@ -224,13 +332,14 @@ function NodeMenu({ s, docked, onClose }) {
       <div className="mt-menu-row"><button className="mt-btn small" data-action="rename" onClick={() => { onClose(); setRenaming(s.sessionId, 'node'); }}>{t('rename.menu')}</button><span className="dim">{renamed(s) ? t('rename.address', { address: addressOf(s) }) : t('rename.menuHint')}</span></div>
       {/* P21(D4)·P24: 잠든 노드는 그 리포를 깨운다. 잠재우기는 리포 단위라 영역 이름표 메뉴에 있다 */}
       {s.state === 'sleeping' && <div className="mt-menu-row"><button className="mt-btn small" data-action="wake" disabled={!!s.waking} onClick={() => { onClose(); wakeSession(s.sessionId); }}><Icon name="moon" />{t(sleptAlone(s) ? 'sessionSleep.menuWake' : 'sleep.menuWake')}</button><span className="dim">{t(sleptAlone(s) ? 'sessionSleep.menuWakeHint' : 'sleep.menuWakeHint')}</span></div>}
+      <AccountMove s={s} onClose={onClose} />
       {s.kind !== 'shell' && <div className="mt-menu-row"><button className="mt-btn small" data-action="loop-new" onClick={() => { onClose(); openDialog({ kind: 'loop', target: { session: s.sessionId } }); }}>{t('node.loopNew')}</button><span className="dim">{t('node.loopNewHint')}</span></div>}
       {/* P68: 리드의 하위 세션(워커)을 워크트리가 달라도 한 덩어리로 */}
       {s.branch && s.branch.children >= 2 && <div className="mt-menu-row"><button className="mt-btn small" data-action="dock-workers" onClick={() => api.call('dock.workers', { lead: s.sessionId }).then((r) => { onClose(); toast(t('dockWorkers.done', { n: (r.workers || []).length })); }, (e) => toast(errText(e), 'error'))}>{t('dockWorkers.action')}</button><span className="dim">{t('dockWorkers.hint', { n: s.branch.children })}</span></div>}
-      {/* P81: 부모가 있으면 부모에서 떼기(머리줄·사이드바·끄기와 잠재우기 묶음에서 빠진다) */}
-      {s.branch && s.branch.parentSessionId && (detachAsk
+      {/* P81: 부모가 있으면 부모에서 떼기 → P159: 일 부모(위 세션)가 있으면 독립으로 두기(child-kill·잠재우기 묶음에서 빠지고 작업 완료로 센다, 계보는 남는다) */}
+      {s.branch && s.branch.workParentSessionId && (detachAsk
         ? <div className="mt-menu-row mt-detach-ask" data-role="detach-ask"><span className="dim">{detachAsk}</span><button className="mt-btn small danger" data-action="detach-confirm" onClick={() => detach(true)}>{t('detach.confirm')}</button><button className="mt-btn small ghost" onClick={() => setDetachAsk(null)}>{t('common.cancel')}</button></div>
-        : <div className="mt-menu-row"><button className="mt-btn small" data-action="detach" onClick={() => detach(false)}>{t('detach.menu')}</button><span className="dim">{t('detach.menuHint', { parent: s.branch.parentName || '' })}</span></div>)}
+        : <div className="mt-menu-row"><button className="mt-btn small" data-action="detach" onClick={() => detach(false)}>{t('detach.menu')}</button><span className="dim">{t('detach.menuHint', { parent: s.branch.workParentName || '' })}</span></div>)}
       {docked && <div className="mt-menu-row"><button className="mt-btn small" data-action="undock" onClick={() => call('dock.remove', { session: s.sessionId })}>{dt('undock')}</button><span className="dim">{dt('undockHint')}</span></div>}
       <div className="mt-menu-row dim" data-role="dock-hint">{dt('dockHint')}</div>
       <div className="mt-menu-row"><button className="mt-btn small ghost" data-action="menu-close" onClick={onClose}>{t('common.close')}</button></div>
@@ -240,10 +349,11 @@ function NodeMenu({ s, docked, onClose }) {
 
 // P21(D4): 잠든 노드의 요약 얼굴(가까이·중간·멀리 모두). 흐리게, 달, 이름, 마지막 요청과 답 앞부분, 잠든 시각, 아낀 메모리, 깨우기.
 // 멀리 얼굴이면 글자 크기를 FarFace처럼 화면 기준으로 둔다. 크기와 자리는 그대로라 깨면 같은 자리에서 터미널이 된다
-function SleepFace({ s, zoom, w, h, far, close }) { // 깨우기 단추는 가까이 얼굴에서만(작은 얼굴은 노드를 누르면 깨운다)
+function SleepFace({ s, w, h, far, close, stepped = false }) { // 깨우기 단추는 가까이 얼굴에서만(작은 얼굴은 노드를 누르면 깨운다)
   const t = useT();
+  const zoom = useFlowStore(stepped ? noZoom : zoomSel); // P112: FarFace와 같이 이 얼굴만 배율을 구독한다. P121·P124: 요약·틀 단계는 CSS(--inv 계단 값)로
   const z = s.sleep || {};
-  const px = (n, frac, wfrac) => Math.min(n / Math.max(zoom, 0.02), h * frac, w * wfrac);
+  const px = stepped ? (n, frac, wfrac) => cssPx(n, frac, wfrac, w, h) : (n, frac, wfrac) => Math.min(n / Math.max(zoom, 0.02), h * frac, w * wfrac);
   const wake = (e) => { e.stopPropagation(); const st = getState(); if (st.navigateTo) st.navigateTo(s.sessionId, { focusTerminal: true }); else wakeSession(s.sessionId); };
   return (
     <div className={`mt-sleepface${far ? ' far' : ''}${s.waking ? ' waking' : ''}`} data-role="sleep-face" data-sleep-scope={z.scope || 'repo'} style={{ fontSize: px(13, 0.17, 1 / 16) }}>
@@ -271,10 +381,11 @@ const ringObserver = () => {
   ringIO = new IntersectionObserver((es) => { for (const e of es) e.target.dataset.off = e.isIntersecting ? '' : '1'; }, { rootMargin: '64px' });
   return ringIO;
 };
-function RunRing({ w, h, zoom }) {
+const ringStep = (st) => 1.25 ** Math.floor(Math.log(Math.max(st.transform[2], 0.02)) / Math.log(1.25)); // 줌마다 판 크기가 바뀌어 다시 그리지 않게 계단으로(작은 쪽으로 잡아 늘 덮는다)
+function RunRing({ w, h }) {
   const ref = useRef(null);
   useEffect(() => { const io = ringObserver(); const el = ref.current; if (!io || !el) return undefined; io.observe(el); return () => io.unobserve(el); }, []);
-  const zq = 1.25 ** Math.floor(Math.log(Math.max(zoom, 0.02)) / Math.log(1.25)); // 줌마다 판 크기가 바뀌어 다시 그리지 않게 계단으로(작은 쪽으로 잡아 늘 덮는다)
+  const zq = useFlowStore(ringStep); // P112: 계단이 바뀔 때만 다시 그린다
   return <span ref={ref} className="mt-node-run" aria-hidden="true" data-role="run-ring"><i style={{ '--diag': `${ringDiag(w, h, zq)}px` }} /></span>;
 }
 
@@ -283,7 +394,9 @@ function CloseWaiting({ s }) {
   return (
     <div className="mt-placeholder">
       <div>{t('node.overBudget')}</div>
-      {s.lastAnswer && <div className="mt-far-line">{t('node.lastAnswer')} {s.lastAnswer.replace(/\s+/g, ' ').slice(0, 200)}</div>}
+      {/* P124: 마지막 요청(위)과 답(아래). 멀리·잠 얼굴의 요청/응답 줄 모양 */}
+      {s.lastPrompt && <div className="mt-far-line one prompt" data-role="wait-prompt"><span className="mt-far-k">{t('node.prompt')}</span> {oneLine(s.lastPrompt)}</div>}
+      {s.lastAnswer && <div className="mt-far-line" data-role="wait-answer"><span className="mt-far-k">{t('node.answer')}</span> {oneLine(s.lastAnswer).slice(0, 200)}</div>}
     </div>
   );
 }
@@ -415,11 +528,11 @@ const onScrollbarDown = (e) => {
 };
 
 function SessionNodeInner({ id, selected }) {
+  countRender('session'); // P146: 성능 기록(켜져 있을 때만 센다)
   const t = useT();
   const s = useStore((st) => st.sessions.get(id));
   const attached = useStore((st) => st.attached && st.attached.includes(id));
   const focusTick = useStore((st) => (st.focusId === id ? st.focusTick : 0));
-  const zoom = useFlowStore(zoomSel);
   const n = useStore((st) => st.nodes.get(id));
   const [killing, setKilling] = useState(false);
   const killAsk = useStore((st) => (st.killAsk && st.killAsk.id === id ? st.killAsk.at : 0));
@@ -432,24 +545,47 @@ function SessionNodeInner({ id, selected }) {
     else openDialog({ kind: 'close', ids: [id] });
   }, [killAsk, id]);
   const [menu, setMenu] = useState(false);
+  const [modelMenu, setModelMenu] = useState(false); // macOS 판
   const [loopsOpen, setLoopsOpen] = useState(false);
   const docked = useStore((st) => dockOf(id));
   // P23: 이 덩어리 안 세션끼리 연결이 있으면 가운데 점이 보인다(Docks.jsx DockLinks가 점끼리 선을 겹쳐 그린다)
   const dockLinked = useStore((st) => { const d = dockOf(id); if (!d) return false; for (const l of st.links.values()) if (d.members.includes(l.from) && d.members.includes(l.to)) return true; return false; });
-  const prevFace = useRef(null);
+  const prevTier = useRef(null);
   const boom = useStore((st) => st.debugThrow === id);
+  // P112: 배율은 단계 값(얼굴, 작은 배율, 말풍선 조건)으로만 구독한다. 배율이 바뀌어도 단계가 그대로면 이 노드는 다시 그리지 않는다.
+  //   --inv는 useInvRef가 요소에 바로 쓴다
+  // P124: 얼굴은 거리 단계(lib/faces.js tierFor: 터미널 240px·요약 120px·틀, 경계 여유 88%)와 터미널 허용(termAllowed)으로 정한다.
+  //   단계의 이력은 마지막으로 그린 단계(prevTier)로 본다. 붙은 노드는 터미널 단계로 친다
+  const nw = n ? n.w : 0, nh = n ? n.h : 0;
+  const dist = useFlowStore((st) => tierFor(nw * st.transform[2], attached ? 'term' : prevTier.current));
+  // P121: 고른 워크스페이스 밖의 노드는 터미널 대신 요약(멀리 얼굴)을 보인다. 초점·고른 노드, 아주 가까이 확대한 노드, 이미 붙은 노드는 그대로
+  const viewWs = useStore((st) => st.viewWs);
+  const isFocus = useStore((st) => st.focusId === id);
+  const picked = useStore((st) => st.selected.includes(id));
+  const mate = useStore((st) => matesNow(st).has(id)); // P124: 초점·고른 노드와 같은 덩어리, 부모·자식이면 터미널을 가질 수 있다
+  const prevNear = useRef(false);
+  const near = useFlowStore((st) => !!n && veryClose(n, { x: st.transform[0], y: st.transform[1], zoom: st.transform[2] }, { width: st.width, height: st.height }, prevNear.current));
+  prevNear.current = near;
+  const allowed = !!s && (attached || termAllowed({ id, ws: s.workspaceKey, viewWs, focus: isFocus ? id : null, selected: picked ? new Set([id]) : null, mates: mate ? new Set([id]) : null, near }));
+  const brief = !!s && !allowed; // 다른 워크스페이스의 요약(data-brief)
+  const face = faceOfTier(dist, allowed);
+  // P124: 터미널이 아닌 얼굴(요약·틀)은 모두 배율 계단 값(lib/faces.js zoomStep, ±5%)을 쓴다. 판을 확대·축소해도 계단이 바뀔 때만 스타일을 다시 센다(P121 요약 얼굴과 같다)
+  // P127: 터미널 얼굴도 노드 뿌리의 --inv(머리줄의 화면 크기 글자, 테두리·둘레 굵기)는 계단 값이다(P124 측정에서 휠 바쁨의 약 9%).
+  //   터미널 안 글자는 --inv를 쓰지 않는다(TerminalView가 배율에 맞춰 선명하게 다시 그린다, P65)
+  const zSmall = useFlowStore((st) => zoomStep(st.transform[2]) < SMALL_ZOOM);
+  const shortNode = useFlowStore((st) => nh * zoomStep(st.transform[2]) < 160);
+  const invRef = useInvRef(0.02, id, true); // 화면 밖이면 움직이는 동안 미룬다(zoom-var.js)
   if (boom) throw new Error(t('node.debugThrow', { name: s ? s.name : id })); // 오류 경계 시험(setDebugThrow)
   if (!s || !n) return null;
-  const face = faceFor(n.w, zoom, attached ? 'close' : prevFace.current); // 경계에서 흔들리지 않게(faces.js 이력)
-  prevFace.current = face;
+  prevTier.current = dist;
   const far = face === 'far' || face === 'icon';
-  xVisible.current = face !== 'icon' && zoom >= SMALL_ZOOM; // 머리줄의 X가 보이는 조건(styles.css .z-small)
+  xVisible.current = face !== 'icon' && !zSmall; // 머리줄의 X가 보이는 조건(styles.css .z-small)
   const idle = (s.state === 'ready' || s.state === 'shell_idle') && !s.unseen && s.lastActivityAt && Date.now() - s.lastActivityAt > IDLE_DIM_MS;
   const asleep = s.state === 'sleeping'; // P21: 터미널 대신 잠든 얼굴(아이콘 얼굴은 달 표시)
   const tier = tierOf(s); // P85
 
   return (
-    <div data-tier={tier} className={`mt-node t-${tier} st-${s.state} face-${face} kind-${kindOf(shownKind(s)).id}${s.unseen ? ' unseen' : ''}${selected ? ' selected' : ''}${idle ? ' idle' : ''}${asleep ? ' asleep' : ''}${s.waking ? ' waking' : ''}${docked ? ` docked dock-${docked.dir}${dockLinked ? ' dock-linked' : ''}` : ''}${zoom < SMALL_ZOOM ? ' z-small' : ''}`} style={{ '--inv': 1 / Math.max(zoom, 0.02) }} data-session={id} data-name={s.name} data-face={face} data-asleep={asleep ? '1' : undefined} data-dock={docked ? docked.dockId : undefined} onMouseDown={() => { markSeen(id); enterSession(id); }}>
+    <div data-tier={tier} data-dist={dist} className={`mt-node t-${tier} st-${s.state} face-${face} kind-${kindOf(shownKind(s)).id}${s.unseen ? ' unseen' : ''}${selected ? ' selected' : ''}${idle ? ' idle' : ''}${asleep ? ' asleep' : ''}${s.waking ? ' waking' : ''}${docked ? ` docked dock-${docked.dir}${dockLinked ? ' dock-linked' : ''}` : ''}${zSmall ? ' z-small' : ''}`} ref={invRef} data-session={id} data-name={s.name} data-face={face} data-brief={brief ? '1' : undefined} data-asleep={asleep ? '1' : undefined} data-dock={docked ? docked.dockId : undefined} onMouseDown={() => { markSeen(id); enterSession(id); }}>
       <NodeResizer isVisible={selected && face === 'close' && !docked} minWidth={420} minHeight={260} lineClassName="mt-resize-line" handleClassName="mt-resize-handle"
         onResize={(_e, p) => setNodeLocal(id, { x: p.x, y: p.y, w: p.width, h: p.height })}
         onResizeEnd={(_e, p) => { setNodeLocal(id, { x: p.x, y: p.y, w: p.width, h: p.height }); saveNode(id, 'resize'); }} />
@@ -459,27 +595,30 @@ function SessionNodeInner({ id, selected }) {
       ))}
       {/* P23: 덩어리 안에서는 가장자리 손잡이 대신 가운데 점으로 잇는다(분할선과 겹치지 않게, 잇기 모드에서만 끈다) */}
       {docked && <Handle type="source" position={Position.Top} id="c" className="mt-handle h-c nodrag" title={t('dock.dotTitle')} />}
-      {runsRing(tier, face) && <RunRing w={n.w} h={n.h} zoom={zoom} />}
-      {face !== 'icon' && <Header s={s} onKill={() => setKilling(true)} onMenu={() => setMenu((m) => !m)} onLoops={() => setLoopsOpen((o) => !o)} />}
+      {runsRing(tier, face) && <RunRing w={n.w} h={n.h} />}
+      {face !== 'icon' && <Header s={s} onKill={() => setKilling(true)} onMenu={() => setMenu((m) => !m)} onLoops={() => setLoopsOpen((o) => !o)} onModel={() => { setMenu(false); setModelMenu((m) => !m); }} />}
       {face === 'icon' && <IconRename s={s} />}
       {!far && <GitLine s={s} />}
       {!far && <ResponseNotice s={s} />}
-      {far && (s.state === 'waiting' || s.state === 'trust_wait') && (face === 'icon' || n.h * zoom < 160) && <AskCallout s={s} />}
+      {far && (s.state === 'waiting' || s.state === 'trust_wait') && (face === 'icon' || shortNode) && <AskCallout s={s} />}
       {/* P31: 가까이(터미널)가 아닌 얼굴은 본문 어디를 끌어도 머리줄처럼 노드를 옮긴다(mt-drag, Canvas.jsx onNodeDragStart). 누르기만 하면 들어간다(H4).
           단추·입력·링크는 nodrag. 대화 보기의 스크롤 막대를 누른 것은 끌기로 넘기지 않는다 */}
       <div className={`mt-node-body${face !== 'close' ? ' mt-drag' : ''}`} onMouseDownCapture={face === 'middle' ? onScrollbarDown : undefined}>
         <NodeBoundary id={id} label={face === 'close' ? 'terminal' : face} compact>
-          {asleep && face !== 'icon' && <SleepFace s={s} zoom={zoom} w={n.w} h={n.h} far={face === 'far'} close={face === 'close'} />}
-          {!asleep && face === 'close' && (attached ? <TerminalView sessionId={id} width={n.w} height={n.h} focusTick={focusTick} onActivate={() => markSeen(id)} onInput={() => markInteracted(id)} /> : NO_BOARD_TERMS ? <ChatView s={s} /> : <CloseWaiting s={s} />)}
+          {asleep && face !== 'icon' && <SleepFace s={s} w={n.w} h={n.h} far={face === 'far'} close={face === 'close'} stepped />}
+          {/* P124: 붙은 터미널은 얼굴이 요약·틀로 바뀌어도 판이 놓을 때까지(Canvas HOLD_MS) 숨겨 둔 채 남긴다. 휠로 배율이 단계 경계를 오갈 때마다
+              xterm·WebGL을 새로 만들고 셸 기록을 다시 쓰던 것(한 번에 100ms 넘는 끊김)을 없앤다. 감싸개는 display: contents라 자리와 크기는 그대로다 */}
+          {!asleep && (attached ? <div className={`mt-term-slot${face === 'close' ? '' : ' hold'}`} data-role="term-slot" data-hold={face === 'close' ? undefined : '1'}><TerminalView sessionId={id} width={n.w} height={n.h} focusTick={focusTick} onActivate={() => markSeen(id)} onInput={() => markInteracted(id)} /></div> : face === 'close' ? (NO_BOARD_TERMS ? <ChatView s={s} /> : <CloseWaiting s={s} />) : null)}
           {!asleep && face === 'middle' && <ChatView s={s} />}
-          {!asleep && face === 'far' && <FarFace s={s} zoom={zoom} w={n.w} h={n.h} />}
-          {face === 'icon' && <IconFace s={s} />}
+          {!asleep && face === 'far' && <FarFace s={s} w={n.w} h={n.h} open={brief && dist === 'term'} />}
+          {face === 'icon' && <FrameFace s={s} tier={tier} />}
         </NodeBoundary>
         {!far && <div className="mt-node-overlays">
           {s.interruptedTurn && <InterruptedBanner s={s} />}
         </div>}
         {killing && <KillConfirm s={s} onClose={() => setKilling(false)} />}
         {menu && <NodeMenu s={s} docked={!!docked} onClose={() => setMenu(false)} />}
+        {modelMenu && <ModelMenu s={s} onClose={() => setModelMenu(false)} />}
         {loopsOpen && <SessionLoopList s={s} onClose={() => setLoopsOpen(false)} />}
       </div>
     </div>
@@ -489,9 +628,9 @@ function SessionNodeInner({ id, selected }) {
 // P66: 아이콘 얼굴에는 머리줄이 없다. F2로 이름을 바꿀 때만 노드 위에 입력칸을 띄운다(글자는 화면 기준 크기)
 function IconRename({ s }) {
   const editing = useRenaming(s.sessionId, 'node');
-  const zoom = useFlowStore(zoomSel);
+  const invRef = useInvRef(0.05); // P112: 이름을 고치지 않는 동안은 배율로 다시 그리지 않는다
   if (!editing) return null;
-  return <div className="mt-icon-rename nodrag" style={{ '--inv': 1 / Math.max(zoom, 0.05) }}><RenameInput s={s} where="node" /></div>;
+  return <div className="mt-icon-rename nodrag" ref={invRef}><RenameInput s={s} where="node" /></div>;
 }
 
 export const SessionNode = memo(SessionNodeInner);

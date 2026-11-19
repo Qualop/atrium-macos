@@ -61,6 +61,7 @@ export function trashPlan(items, { roots = [], dirExists = () => false } = {}) {
     const k = pathKey(file);
     const base = file.split(/[\\/]/).pop() || '';
     const no = (reason) => refused.push({ convId: it.convId, reason });
+    if (it.harness && it.harness !== 'claude') { no('codex'); continue; } // P133: Codex 대화 기록은 지우지 않는다(Codex의 기록, 판은 읽기만)
     if (!path.isAbsolute(file) || k.split('/').includes('..')) { no('bad_path'); continue; }
     if (!rootKeys.some((r) => k.startsWith(r + '/'))) { no('outside_root'); continue; }
     if (!UUID_FILE.test(base) || !UUID.test(String(it.convId || '')) || base.slice(0, -6).toLowerCase() !== String(it.convId).toLowerCase()) { no('not_uuid'); continue; }
@@ -74,7 +75,7 @@ export function trashPlan(items, { roots = [], dirExists = () => false } = {}) {
   }
   return { ok, refused };
 }
-export const REFUSE_LABEL = { trash_failed: "휴지통으로 이동 실패", bad_path: "유효하지 않은 경로", outside_root: "대화 기록 폴더 외부의 파일", not_uuid: "파일명이 대화 ID(UUID) 형식과 다름", desktop: '데스크톱 앱 대화', board_session: '보드 세션의 대화', running: "실행 중인 대화", bound: "다른 터미널에서 사용 중인 대화", not_missed: "정리 대상이 아닌 대화", not_found: "대화 목록에서 찾을 수 없음" };
+export const REFUSE_LABEL = { trash_failed: "휴지통으로 이동 실패", bad_path: "유효하지 않은 경로", outside_root: "대화 기록 폴더 외부의 파일", not_uuid: "파일명이 대화 ID(UUID) 형식과 다름", desktop: '데스크톱 앱 대화', board_session: '보드 세션의 대화', running: "실행 중인 대화", bound: "다른 터미널에서 사용 중인 대화", not_missed: "정리 대상이 아닌 대화", not_found: "대화 목록에서 찾을 수 없음", codex: "Codex 대화(보드는 지우지 않음)" };
 
 // 파일과 폴더를 Windows 휴지통으로(Microsoft.VisualBasic FileSystem, 대화상자 없이). 경로 목록은 JSON 파일로 넘긴다(따옴표 문제 없이).
 // → { trashed: [path], failed: [{ path, error }] }. 지운 뒤 그 경로가 남아 있으면 실패로 본다

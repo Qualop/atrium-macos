@@ -212,22 +212,35 @@ html:lang(en) .mt-cmd-input::placeholder { font-size: 14px; white-space: nowrap;
 
 /* 머리: 월드 28px, 글 13px. 멀리서는 화면 11px 아래로 작아지지 않게 키운다(노드 높이를 먹지 않게 40px까지) */
 .mt-node-head { display: flex; align-items: center; gap: .42em; height: 2.15em; flex: none; padding: 0 .55em 0 .8em; background: var(--con-head); border-radius: calc(var(--con-radius) - 1.5px) calc(var(--con-radius) - 1.5px) 0 0;
-  cursor: grab; white-space: nowrap; overflow: hidden; font-size: clamp(13px, calc(11px * var(--inv, 1)), 40px); font-weight: 600; color: var(--chrome-text); }
+  cursor: grab; white-space: nowrap; overflow: hidden; font-size: clamp(14px, calc(13.5px * var(--inv, 1)), 44px); font-weight: 600; color: var(--chrome-text); } /* macOS 판(가독성): 화면에서 13.5px 아래로 작아지지 않게(예전 11px) */
 .mt-head-kind { width: 1.3em; height: 1.3em; flex: none; display: inline-flex; }
 .mt-head-kind .mt-kind-icon { width: 100%; height: 100%; }
 .mt-head-dot { width: .62em; height: .62em; border-radius: 50%; flex: none; margin-left: .15em; }
 .mt-node-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; flex: 0 0 auto; max-width: 42%; }
 .mt-head-badges { display: flex; align-items: center; gap: .35em; min-width: 0; flex: 0 1 auto; overflow: hidden; }
 .mt-node-sp { flex: 1; min-width: .3em; }
-.mt-node-meta { color: var(--dim-2); font-size: .85em; font-weight: 500; font-family: var(--font-mono); }
+.mt-node-meta { color: var(--dim-2); font-size: .9em; font-weight: 500; font-family: var(--font-mono); }
 .mt-waited { color: var(--accent-2); font-size: .85em; font-family: var(--font-mono); }
 .mt-x { display: inline-flex; align-items: center; justify-content: center; width: 1.45em; height: 1.45em; border: none; background: none; color: var(--term-dim); cursor: pointer; padding: 0; border-radius: .3em; flex: none; }
 .mt-x .mt-i { width: 1.08em; height: 1.08em; stroke-width: 1.9; }
 .mt-x:hover { color: var(--chrome-text); background: var(--chrome-bg-hi); }
 .mt-x.kill:hover { color: var(--bad); }
 .mt-node-head .mt-btn.small { height: 1.6em; font-size: .85em; padding: 0 .55em; border-radius: .5em; }
-.mt-node-head .mt-badge { font-size: .8em; }
-.mt-node.z-small .mt-node-head .mt-node-meta, .mt-node.z-small .mt-node-head .mt-x, .mt-node.z-small .mt-node-head .mt-output-btn { display: none; }
+.mt-node-head .mt-badge { font-size: .86em; }
+/* macOS 판: 출력 속도(.mt-tps)와 모델·추론(.mt-model-chip)은 작은 노드에서도 보인다(사용자 요청, 2026-11-19). 메모리 칸만 숨긴다 */
+.mt-node.z-small .mt-node-head .mt-node-meta:not(.mt-tps):not(.mt-model-chip), .mt-node.z-small .mt-node-head .mt-x, .mt-node.z-small .mt-node-head .mt-output-btn { display: none; }
+/* macOS 판(사용성): 머리의 ⋯·× 단추. 화면에서 24px보다 작아지지 않게(--inv = 1/배율), 머리 높이 전체를 누를 칸으로 쓰고, 두 단추 사이를 띄운다.
+   작은 노드(z-small)에서도 노드 위에 마우스를 올리면 보인다 */
+.mt-head-actions { display: inline-flex; align-items: stretch; align-self: stretch; gap: .2em; margin-left: .15em; margin-right: -.35em; padding: 0 .1em; flex: none; cursor: default; }
+.mt-node-head .mt-head-actions .mt-x { position: relative; align-self: center; width: max(1.85em, calc(24px * var(--inv, 1))); height: min(100%, max(1.7em, calc(24px * var(--inv, 1)))); border-radius: .4em; }
+.mt-node-head .mt-head-actions .mt-x .mt-i { width: 1.15em; height: 1.15em; }
+.mt-node-head .mt-head-actions .mt-x::before { content: ''; position: absolute; inset: -.25em -.1em; }
+.mt-node-head .mt-head-actions .mt-x.stop { color: var(--warn, #d97706); } /* macOS 판: 중지 단추 */
+.mt-node-head .mt-head-actions .mt-x.stop:hover { color: var(--bad); background: color-mix(in srgb, var(--bad) 16%, transparent); }
+.mt-node-head .mt-head-actions .mt-x.kill:hover { color: var(--bad); background: color-mix(in srgb, var(--bad) 16%, transparent); }
+.mt-node-head .mt-head-actions .mt-x:active { transform: scale(.94); }
+.mt-node-head .mt-head-actions .mt-x:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mt-node.z-small:hover .mt-node-head .mt-x, .mt-node.z-small:focus-within .mt-node-head .mt-x { display: inline-flex; }
 .mt-node-body { flex: 1; position: relative; min-height: 0; border-radius: 0 0 calc(var(--con-radius) - 1.5px) calc(var(--con-radius) - 1.5px); overflow: hidden; }
 .mt-node.docked, .mt-node.docked .mt-node-head, .mt-node.docked .mt-node-body { border-radius: 0; }
 .mt-node.face-far, .mt-node.face-middle { cursor: pointer; }
@@ -273,7 +286,7 @@ html:lang(en) .mt-cmd-input::placeholder { font-size: 14px; white-space: nowrap;
 .mt-term .xterm-viewport { overflow-y: hidden !important; background-color: var(--term-bg) !important; }
 .mt-term-note { position: absolute; right: 10px; bottom: 8px; color: var(--dim); font-size: 12px; }
 .mt-term-cover { position: absolute; inset: 0; display: grid; place-content: center; gap: 8px; background: var(--con-overlay); text-align: center; }
-.mt-term-hint { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); background: var(--panel-3); padding: 4px 10px; border-radius: 8px; font-size: 12px; }
+.mt-term-hint { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); background: var(--panel-3); padding: 5px 12px; border-radius: 8px; font-size: max(13.5px, calc(13px * var(--inv, 1))); }
 .mt-placeholder { padding: 16px; color: var(--dim); display: grid; gap: 8px; }
 
 /* 중간 얼굴: 대화 보기. 글은 화면에서 12.5px 남짓(줄여 볼수록 월드 글을 키운다, 44px까지). P11: 붙여 묶은 좁은 노드처럼 배율이 커도 중간 얼굴이면 글이 넘치게 크지 않게 아래 끝을 13px로 */
@@ -356,8 +369,16 @@ img.mt-kind-icon { object-fit: contain; }
 .mt-tail-tool_use, .mt-tail-tool_result { color: var(--dim); }
 
 /* ⋯ 메뉴 */
-.mt-menu { position: absolute; top: 6px; right: 8px; z-index: 7; background: var(--panel); border: 1px solid var(--panel-line); border-radius: var(--panel-radius); padding: 10px 12px; display: grid; gap: 8px; box-shadow: var(--panel-shadow); font-size: 12.5px; }
+.mt-menu { position: absolute; top: 6px; right: 8px; z-index: 7; background: var(--panel); border: 1px solid var(--panel-line); border-radius: var(--panel-radius); padding: 10px 12px; display: grid; gap: 8px; box-shadow: var(--panel-shadow); font-size: max(14px, calc(13.5px * var(--inv, 1))); } /* macOS 판(가독성): 노드 메뉴도 화면 크기 하한 */
+.mt-menu .mt-btn.small { height: 2em; font-size: .92em; }
 .mt-menu-row { display: flex; gap: 6px; align-items: center; }
+.mt-response-choices { display: block; margin-top: .2em; color: var(--dim-2); font-size: .92em; } /* macOS 판: 권한 선택지 옮김 */
+/* macOS 판: 머리의 모델·추론 단추와 출력 속도 */
+.mt-model-chip { border: 1px solid transparent; background: none; cursor: pointer; padding: .1em .4em; border-radius: .35em; }
+.mt-model-chip:hover { border-color: var(--panel-line); background: var(--chrome-bg-hi); color: var(--chrome-text); }
+.mt-model-chip.pending { border-style: dashed; border-color: var(--warn, #d97706); }
+.mt-tps { opacity: .9; } .mt-tps.old { opacity: .45; }
+.mt-model-menu .mt-btn.small.on { border-color: var(--accent, #3b82f6); color: var(--accent, #3b82f6); }
 
 /* 노드 오류 경계 */
 .mt-node-error { position: absolute; inset: 0; display: grid; align-content: center; gap: 8px; padding: 16px; background: var(--bad-band); color: var(--text); z-index: 5; }
@@ -385,11 +406,15 @@ img.mt-kind-icon { object-fit: contain; }
 .mt-region.hot .mt-region-dot { background: var(--accent); box-shadow: 0 0 .5em var(--accent); }
 .mt-region-name { font-family: var(--font-ui); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--chrome-text); }
 .mt-region-meta { color: var(--term-dim); }
-.mt-region-acts { display: none; align-items: center; gap: .35em; }
+.mt-region-acts { display: none; align-items: center; gap: .45em; height: 100%; }
 .mt-region-head:hover .mt-region-acts, .mt-region-head.acts .mt-region-acts { display: inline-flex; }
-.mt-region-head .mt-btn.small { height: 1.75em; font-size: .82em; padding: 0 .6em; border-radius: .5em; font-family: var(--font-ui); }
-.mt-region-chev { display: inline-flex; border: 0; background: none; color: var(--term-dim); cursor: pointer; padding: 0; }
-.mt-region-chev .mt-i { width: .95em; height: .95em; stroke-width: 2; }
+/* macOS 판(사용성): 이름표 단추를 이름표 높이에 맞춰 키운다(화면에서 약 28px, 글자 .9em). 예전은 1.75em·.82em로 화면 약 18px였다 */
+.mt-region-head .mt-btn.small { height: calc(100% - .5em); min-height: 1.9em; font-size: .9em; padding: 0 .85em; border-radius: .55em; font-family: var(--font-ui); }
+.mt-region-chev { display: inline-flex; align-items: center; justify-content: center; align-self: stretch; min-width: 2em; border: 0; border-radius: .5em; background: none; color: var(--term-dim); cursor: pointer; padding: 0 .3em; }
+.mt-region-chev:hover { background: var(--chrome-bg-hi); color: var(--chrome-text); }
+.mt-region-head.pinned .mt-region-chev { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.mt-region-head.pinned .mt-region-chev .mt-i { transform: rotate(180deg); }
+.mt-region-chev .mt-i { width: 1.1em; height: 1.1em; stroke-width: 2; }
 .mt-region-head .mt-ws-c { font-family: var(--font-ui); font-size: .82em; }
 .mt-ws-c { padding: 0 .55em; border-radius: .8em; font-weight: 650; }
 .mt-ws-c.working { background: var(--accent-soft); color: var(--st-working); }
@@ -541,18 +566,11 @@ img.mt-kind-icon { object-fit: contain; }
 .mt-warns { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); width: min(760px, calc(100% - 180px)); display: grid; gap: 6px; z-index: 41; }
 .mt-warnbar { background: var(--warn-band); color: var(--text); padding: 8px 12px; font-size: 12.5px; border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); border-radius: 10px; box-shadow: var(--chrome-shadow); }
 .mt-warnbar.bad { background: var(--bad-band); border-color: color-mix(in srgb, var(--bad) 50%, transparent); }
-/* P40: 설정의 herdr 경로 칸 */
-.mt-set-path { display: flex; gap: 6px; align-items: center; min-width: 0; }
-.mt-set-path .mt-set-text { flex: 1 1 auto; min-width: 0; width: 100%; }
-/* P40: herdr 띠(못 찾음, 다른 프로토콜, 검증하지 않은 버전, 새 버전) */
-.mt-herdr-band { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-.mt-herdr-band .mt-herdr-head { flex: 1 1 360px; min-width: 0; line-height: 1.45; }
+/* P40: 터미널 서버 띠(hc 준비 안 됨, 호환 안 됨)와 옛 판 옮기기 띠(P129) */
+.mt-term-band { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.mt-term-band .mt-term-band-head { flex: 1 1 360px; min-width: 0; line-height: 1.45; }
 .mt-warnbar-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .mt-warnbar-actions a.mt-btn { text-decoration: none; }
-.mt-herdr-tried { flex: 1 0 100%; font-size: 12px; }
-.mt-herdr-tried summary { cursor: pointer; color: var(--text-dim, inherit); }
-.mt-herdr-tried ul { margin: 4px 0 0; padding-left: 18px; max-height: 140px; overflow: auto; }
-.mt-herdr-tried li { overflow-wrap: anywhere; }
 
 /* 복귀 요약 */
 .mt-return { position: absolute; top: 60px; right: 74px; width: min(620px, 50vw); max-height: 60vh; overflow: auto; z-index: 37; background: var(--panel); border: 1px solid var(--panel-line); border-radius: var(--panel-radius); padding: 10px 12px; box-shadow: var(--panel-shadow); }
@@ -1496,7 +1514,6 @@ html.mt-lite .mt-node-run, html.mt-lite .mt-splash-lit { display: none !importan
 .mt-mm-edge.link path.line { stroke: var(--mm-wire-faint); stroke-dasharray: 4 4; }
 .mt-mm-edge.rel-prompt path.line { stroke-dasharray: 1.5 4; }
 .mt-mm-edge.cross path.line { stroke-dasharray: 6 4; }
-.mt-mm-edge.rel-human path.line { stroke: var(--mm-wire-faint); stroke-dasharray: none; }
 .mt-mm-edge.active path.line { stroke: color-mix(in srgb, var(--st-working) 55%, transparent); }
 .mt-mm-edge.turn path.line { stroke: color-mix(in srgb, var(--attn) 45%, transparent); }
 .mt-mm-edge.hot path.line { stroke: var(--mm-wire-hot); stroke-width: 1.75; }
@@ -1504,7 +1521,6 @@ html.mt-lite .mt-node-run, html.mt-lite .mt-splash-lit { display: none !importan
 .mt-mm-edge.hot.turn path.line { stroke: var(--attn); }
 .mt-mm-edge.recede { opacity: 0.12; }
 /* 나, 워크스페이스 머리 글 */
-.mt-mm-you { position: absolute; box-sizing: border-box; border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--accent-2) 60%, transparent); color: var(--accent-2); display: grid; place-items: center; font-size: 11.5px; font-weight: 650; cursor: default; transition: opacity .15s ease; }
 .mt-mm-ws { position: absolute; display: flex; align-items: center; gap: 6px; height: 18px; margin-left: -5px; padding: 0 5px; border: 0; border-radius: 5px; background: none; color: var(--dim); font: 600 11.5px var(--font-ui); letter-spacing: .02em; white-space: nowrap; overflow: hidden; cursor: pointer; }
 .mt-mm-ws:hover { color: var(--text-2); background: var(--panel-2); }
 .mt-mm-ws .caret:empty { display: none; }
@@ -1564,7 +1580,7 @@ html.mt-lite .mt-node-run, html.mt-lite .mt-splash-lit { display: none !importan
 .mt-mm-dot .mt-mm-av .mt-kind-icon { width: 12px; height: 12px; }
 .mt-mm-dots-label { position: absolute; font: 500 11px/18px var(--font-mono); color: var(--dim-2); white-space: nowrap; pointer-events: none; transition: opacity .15s ease; }
 /* 가리키기: 그 세션의 관계만 또렷하게, 거르기: 맞지 않는 세션은 흐리게(자리 그대로) */
-.mt-mm-card.recede, .mt-mm-row.recede, .mt-mm-dot.recede, .mt-mm-you.recede, .mt-mm-dots-label.recede { opacity: 0.26; }
+.mt-mm-card.recede, .mt-mm-row.recede, .mt-mm-dot.recede, .mt-mm-dots-label.recede { opacity: 0.26; }
 .mt-mm-card.fdim, .mt-mm-row.fdim, .mt-mm-dot.fdim { opacity: 0.3; }
 /* 오른쪽 요약 열 */
 .mt-mm-sum { flex: none; width: 288px; box-sizing: border-box; display: flex; flex-direction: column; padding: 18px 20px 14px; border-left: 1px solid var(--panel-line); overflow-y: auto; }
@@ -1666,7 +1682,6 @@ html.mt-lite .mt-node-run, html.mt-lite .mt-splash-lit { display: none !importan
 /* 선: 조금 또렷하게(판 위 2.23:1). 상태 색과 가리키기는 다시 적는다(같은 무게라 뒤가 이긴다) */
 .mt-mm-edge path.line { stroke: var(--mm-wire-2); }
 .mt-mm-edge.link path.line { stroke: var(--mm-wire); }
-.mt-mm-edge.rel-human path.line { stroke: var(--mm-wire-faint); }
 .mt-mm-edge.active path.line { stroke: color-mix(in srgb, var(--st-working) 60%, transparent); }
 .mt-mm-edge.turn path.line { stroke: color-mix(in srgb, var(--attn) 50%, transparent); }
 .mt-mm-edge.hot path.line { stroke: var(--mm-wire-hot); }
@@ -1710,11 +1725,11 @@ html:not(.mt-lite):not([data-work-light="off"]):not([data-work-light="system"]) 
 
 /* 응답 안내는 네이티브 터미널로 연결한다. 선택지나 승인 입력을 대신하지 않는다. */
 .mt-response { display: flex; align-items: center; gap: 12px; padding: 7px 10px; flex: none; min-width: 0; color: var(--text); background: var(--con-head); border-bottom: 1px solid var(--con-line); }
-.mt-response-copy { flex: 1; min-width: 0; display: grid; gap: 2px; font-size: 12px; line-height: 1.35; }
-.mt-response-copy strong { color: var(--warn); font-size: 12px; font-weight: 650; }
+.mt-response-copy { flex: 1; min-width: 0; display: grid; gap: 2px; font-size: max(13.5px, calc(13px * var(--inv, 1))); line-height: 1.4; } /* macOS 판(가독성) */
+.mt-response-copy strong { color: var(--warn); font-size: 1em; font-weight: 650; }
 .mt-response[data-kind="error"] strong { color: var(--bad); }
 .mt-response-context { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; white-space: pre-line; }
-.mt-response .mt-btn { flex: none; }
+.mt-response .mt-btn { flex: none; font-size: max(13px, calc(12.5px * var(--inv, 1))); height: auto; min-height: 2em; padding: .3em .85em; }
 .mt-response .mt-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .mt-effective-approval { display: grid; gap: 3px; margin: 6px 0; font-size: 12px; line-height: 1.4; color: var(--dim); }
 .mt-effective-approval strong { color: var(--text); font-weight: 650; }
@@ -1726,3 +1741,734 @@ html:not(.mt-lite):not([data-work-light="off"]):not([data-work-light="system"]) 
 .mt-ln-form .mt-ln-foot { position: sticky; bottom: 0; margin-top: auto; padding: 7px 0 2px; background: var(--panel); z-index: 2; align-self: stretch; }
 .mt-modal[data-role="spawn"] { scroll-padding-bottom: 56px; }
 .mt-modal[data-role="spawn"] > .mt-card-actions { position: sticky; bottom: 0; padding: 8px 0 2px; background: var(--panel); z-index: 2; }
+/* P112: 터미널 칸(.mt-term-wrap) 안에는 --inv를 쓰는 규칙이 없다. 여기서 값을 고정해 두면 판 배율이 바뀌어 노드의 --inv가 바뀔 때
+   xterm 하위 요소의 스타일을 다시 세지 않는다(브라우저는 상속 값이 그대로인 요소 아래로 내려가지 않는다) */
+.mt-term-wrap { --inv: 1; }
+
+/* P115: 설정의 연결 탭(호출자 탭과 같은 틀). 줄: 이름, 프로토콜, 주소·인증 변수, 쓰는 런처, 단추. 확인 결과는 줄 아래 */
+.mt-cn { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; }
+.mt-cn .mt-set-note { margin: 0; }
+.mt-cn-row { display: grid; grid-template-columns: minmax(80px, 140px) minmax(90px, 150px) minmax(0, 1fr) minmax(0, 160px) auto; align-items: center; gap: 8px; min-height: 34px; padding: 0 6px; border-radius: 8px; }
+.mt-cn-row:hover { background: var(--panel-2); }
+.mt-cn-name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mt-cn-proto { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mt-cn-url, .mt-cn-used { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mt-cn-url { color: var(--text-2); }
+.mt-cn-rowcheck { grid-column: 1 / -1; padding: 0 0 4px; }
+.mt-cn-check { font-size: 12px; }
+.mt-cn-check .ok { color: var(--ok, var(--text-2)); }
+.mt-cn-check .bad, .mt-set-hint.bad { color: var(--warn); }
+.mt-cn-form { height: 100%; display: grid; grid-template-rows: auto auto 1fr; gap: 8px; align-content: start; }
+.mt-ln-f > [data-role="launcher-connection-hint"] { grid-column: 1 / -1; }
+
+/* P117: 설정 › 터미널(옛 판 옮기기 결과 목록, P129) */
+.mt-tmigrate { grid-column: 1 / -1; display: grid; gap: 8px; }
+.mt-tmove-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 240px; overflow-y: auto; font-size: 12px; }
+.mt-tmove-list li { display: grid; grid-template-columns: minmax(80px, 1fr) 70px minmax(120px, 1.4fr) minmax(0, 1.4fr); gap: 8px; align-items: baseline; padding: 3px 6px; border-radius: 6px; background: var(--surface-2, rgba(255, 255, 255, 0.03)); }
+.mt-tmove-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mt-tmove-kind, .mt-tmove-why { color: var(--text-3, var(--text-2)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mt-tmove-result.moved { color: var(--ok, var(--text-2)); }
+.mt-tmove-result.failed { color: var(--warn); }
+
+/* ---------- P119: 작업 완료(끝난 턴을 아직 안 봄, 맨 위 세션만) 카드. 상태 색(일함 주황, 응답 필요, 오류 빨강, 쉼)과 겹치지 않는 보라에 모양을 더한다:
+   위 가장자리에 걸친 "✓ 작업 완료" 꼬리표(끝 표식), 굵은 보라 테두리와 왼쪽 3px 띠, 왼쪽에서 옅어지는 보라 바탕. 움직이지 않아 움직임 줄이기에서도 같다 */
+.mt-mm-card.t-review { border-color: var(--st-review); box-shadow: inset 3px 0 0 var(--st-review), 0 0 0 1px color-mix(in srgb, var(--st-review) 35%, transparent); background: linear-gradient(90deg, color-mix(in srgb, var(--st-review) 14%, var(--mm-card-2)) 0%, var(--mm-card-2) 62%); }
+.mt-mm-card.t-review.lead { background: linear-gradient(90deg, color-mix(in srgb, var(--st-review) 14%, var(--mm-card-lead-2)) 0%, var(--mm-card-lead-2) 62%); }
+.mt-mm-card.t-review .mt-mm-name { color: var(--text); }
+.mt-mm-donetag { position: absolute; top: -8px; right: 16px; z-index: 1; display: inline-flex; align-items: center; gap: 3px; height: 15px; padding: 0 6px 0 4px; border-radius: 8px; background: var(--st-review); color: #1a1430; font: 700 10px/15px var(--font-ui); letter-spacing: .01em; white-space: nowrap; pointer-events: none; }
+.mt-mm-donetag svg, .mt-pm-donetag svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mt-mm-av[data-badge=review] { border-color: var(--st-review); }
+.mt-mm-badge.b-review { width: 11px; height: 11px; right: -4px; bottom: -4px; font-size: 7px; color: #1a1430; }
+/* 머리의 거르기 탭: 작업 완료가 있으면 개수를 보라 알약으로 */
+.mt-mm-filter.c-done:not([data-n="0"]) .mt-mm-fn { padding: 0 6px; border-radius: 8px; background: var(--st-review); color: #1a1430; font-weight: 700; }
+.mt-mm-sec[data-role=mm-sum-review] .mt-mm-sech, .mt-mm-sec[data-role=mm-sum-review] .mt-mm-sech i { color: var(--st-review); }
+
+/* ---------- P120: 영역·워크트리 상자·그룹 틀 이름표가 길거나 영역이 좁아도 단추에 닿게. 자리가 모자라면 단추 줄이 먼저 줄고
+   (잘린 단추는 ⌄·오른쪽 클릭 메뉴로 모은다), 다음에 세는 값, 마지막에 이름(경로)이 말줄임으로 준다. ⌄와 상태 칩은 줄지 않는다 ---------- */
+.mt-region-head > * { flex: none; }
+.mt-region-head > .mt-region-name, .mt-region-head > .mt-wtarea-name, .mt-wsgroup-head > .mt-wsgroup-name { flex: 0 1 auto; min-width: 1.5em; overflow: hidden; text-overflow: ellipsis; }
+.mt-region-head > .mt-region-meta, .mt-region-head > .mt-wtarea-meta { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mt-region-head > .mt-region-acts { flex: 0 100000 auto; min-width: 0; overflow: hidden; }
+.mt-region-head > .mt-region-acts > .mt-btn { flex: none; }
+.mt-wsgroup-head > * { flex: none; }
+/* P121: 고른 워크스페이스 밖 노드의 요약 얼굴(가까이 크기)에서 누르면 터미널이 열린다는 한 줄. 맨 아래에 옅게 */
+.mt-far .mt-brief-hint { margin-top: auto; color: var(--chrome-text-4); font-size: .9em; -webkit-line-clamp: 1; }
+
+/* P124: 틀 단계(노드가 화면 120px 아래, SessionNode FrameFace). 글 없이 외곽·상태 색 바탕·가운데 상태 표지 하나.
+   표지는 색 원판 위 어두운 기호라 색만이 아니라 모양으로도 갈린다(! 응답 필요, ✓ 작업 완료, × 오류, 원호 작업 중, 달 잠듦). 크기는 화면 30px(계단 --inv), 노드 높이의 60%를 넘지 않는다 */
+.mt-frameface { gap: 0; padding: 0; }
+.mt-frame-mark { width: min(calc(30px * var(--inv, 1)), 34%); aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; background: var(--mk, var(--dim)); color: var(--icon-bg); flex: none; }
+.mt-frame-mark svg { width: 72%; height: 72%; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.mt-frame-mark circle { fill: currentColor; }
+.mt-frame-mark[data-mark="ask"] { --mk: var(--attn); }
+.mt-frame-mark[data-mark="done"] { --mk: var(--st-review); }
+.mt-frame-mark[data-mark="error"] { --mk: var(--st-error); }
+.mt-frame-mark[data-mark="work"] { --mk: var(--run, var(--st-working)); }
+.mt-frame-mark[data-mark="sleep"] { --mk: var(--con-idle-line); color: var(--con-idle-text); }
+.mt-node.face-icon.t-turn { background: color-mix(in srgb, var(--attn) 14%, var(--icon-bg)); border-color: var(--attn); }
+.mt-node.face-icon.t-review { background: color-mix(in srgb, var(--st-review) 12%, var(--icon-bg)); }
+.mt-node.face-icon.t-alert { background: color-mix(in srgb, var(--st-error) 14%, var(--icon-bg)); }
+
+/* P124: 붙은 터미널을 얼굴이 바뀐 동안 숨겨 둔다(SessionNode .mt-term-slot.hold). 자리를 그대로 두어 크기를 다시 재지 않고, 그리지도 누르지도 않는다 */
+.mt-term-slot { display: contents; }
+.mt-term-slot.hold { visibility: hidden; }
+.mt-term-slot.hold .mt-term-wrap { pointer-events: none; }
+
+/* ---------- P127: 판을 움직이는 동안(lib/work-light.js motionPauser, 문서 뿌리 data-board-moving) 판 노드의 작업 중 둘레 회전판을 멈춘다.
+   회전판의 모양·색은 그대로라 작업 중 테두리는 보이고, 움직임이 멎고 400ms 뒤 멈춘 자리에서 이어서 돈다. 미션 맵 카드의 빛은 건드리지 않는다 */
+html[data-board-moving="1"] .mt-node-run > i { animation-play-state: paused; }
+
+/* ---------- P128a: 판을 움직이는 동안 둘레 회전판을 숨긴다(사용자 결정 2026-11-12). 멈추기만 해서는 회전판이 층으로 남아 끌기 비용이 거의 줄지 않았다(P127 측정).
+   숨겨도 상태 색 테두리와 빛 그림자는 남고, 움직임이 멎고 400ms 뒤 다시 보여 돈다 */
+html[data-board-moving="1"] .mt-node-run { visibility: hidden; }
+
+/* ---------- P134: 미션 맵 폴더 상자(Mission.jsx, lib/mission-layout.js FOLDER). 같은 폴더(사이드바 가상 그룹)의 워크스페이스 판들을 감싸는 사각형.
+   바탕은 지도 바탕과 거의 같고 테두리만 판보다 또렷하다. 머리(위 30px)에 폴더 이름과 세션 수. 상자 안 판은 조금 더 옅게(겹친 면이 무겁지 않게).
+   상자를 넘는 선(outside)은 선 층(.mt-mm-svg)이 상자 위라 그대로 지나가고, 나무 밖 선이라도 판 위 선 색으로 또렷하게 ---------- */
+.mt-mm-folder { position: absolute; box-sizing: border-box; border-radius: 14px; background: var(--mm-folder); border: 1px solid var(--mm-folder-line); pointer-events: none; }
+.mt-mm-fhead { position: absolute; left: 12px; right: 12px; top: 6px; height: 18px; display: flex; align-items: center; gap: 6px; color: var(--text); font: 650 12.5px var(--font-ui); letter-spacing: .01em; white-space: nowrap; overflow: hidden; }
+.mt-mm-fhead::before { content: ""; flex: none; width: 10px; height: 8px; border: 1.5px solid var(--dim-2); border-radius: 2px 2px 3px 3px; border-top-width: 3px; }
+.mt-mm-fhead .nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mt-mm-fhead .n { font: 500 11px var(--font-mono); color: var(--dim-2); }
+.mt-mm-fhead .needs { font: 650 11px var(--font-mono); color: var(--attn); pointer-events: auto; }
+.mt-mm-plate.inf { border-color: transparent; }
+.mt-mm-edge.outside.link path.line { stroke: var(--mm-wire-2); }
+
+/* ---------- P137: 폴더 상자 안의 워크스페이스 상자. 두 겹(폴더 > 워크스페이스)이 읽히게 겹마다 테두리 밝기·여백·머리 글 크기를 달리한다.
+   폴더: 가장 밝은 테두리(--mm-folder-line-2), 바탕은 지도와 거의 같고, 머리 글 13px·굵게. 워크스페이스: 한 단 옅은 테두리(--mm-ws-line)와 판 바탕, 머리 글 12px.
+   폴더 밖 워크스페이스도 같은 워크스페이스 상자다(P101 판과 같은 모양, 테두리 토큰만 같게) ---------- */
+.mt-mm-plate, .mt-mm-plate.inf { border-color: var(--mm-ws-line); }
+.mt-mm-plate.inf { background: var(--mm-plate-in); }
+.mt-mm-folder { border-radius: 16px; border-color: var(--mm-folder-line-2); }
+.mt-mm-fhead { left: 14px; right: 14px; top: 7px; height: 18px; font: 700 13px var(--font-ui); }
+
+/* ---------- P138: 종류 아이콘 글자(셸 >_ 등)는 HTML 글이다(SessionNode.jsx KindIcon). 새 Chromium은 판을 움직이는 매 프레임 SVG <text>를 다시 배치했다.
+   상자는 예전 svg처럼 정사각형(높이 %가 정해지지 않으면 너비만큼), 글 크기는 상자 너비의 비율(cqw) ---------- */
+.mt-kind-mk { position: relative; display: inline-block; aspect-ratio: 1; container-type: inline-size; vertical-align: middle; }
+.mt-kind-mk > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.mt-kind-mk > b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--font-ui); font-weight: 800; line-height: 1; white-space: nowrap; }
+
+/* ---------- P141(#15): 먼 얼굴 이름 줄. 이름이 먼저 자리를 받고(줄이 좁으면 이름만 말줄임), 알약·칩이 먼저 줄거나 잘린다 ---------- */
+.mt-far-name > .mt-far-nm { flex: 0 0 auto; max-width: 100%; }
+.mt-far-name > :not(.mt-far-nm) { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: clip; }
+
+/* ---------- P141(#17): 전달 칩의 상태 글은 한 줄. 좁으면 보낸 글이 먼저 줄고, 상태 글은 말줄임 ---------- */
+.mt-delivery > b { flex: none; white-space: nowrap; }
+.mt-delivery-st { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mt-delivery-text { flex: 1 1 0; min-width: 0; }
+
+/* ---------- P141(#15): 절전 얼굴. 머리줄·요청 줄은 줄어들지 않고(겹치던 것), 요청은 한 줄, 남은 높이는 답 줄이 쓴다.
+   머리줄은 이름이 먼저 자리를 받고 "…부터 절전 중"·아낀 메모리가 말줄임으로 준다 ---------- */
+.mt-sleepface > * { flex-shrink: 0; }
+.mt-sleepface > [data-role="sleep-answer"] { flex-shrink: 1; min-height: 0; }
+.mt-sleepface .mt-far-line.one { -webkit-line-clamp: 1; }
+.mt-sleep-head > .mt-far-nm, .mt-sleep-head > .mt-sleep-moon { flex: 0 0 auto; max-width: 100%; }
+.mt-sleep-head > .mt-sleep-at, .mt-sleep-head > .mt-sleep-saved { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- P142: 명령 바 입력칸 ----------
+   글칸(.mt-cmd-field)이 위아래 여백 18px를 쥐고, textarea는 여백 없이 높이만 JS가 정한다(그려진 글 높이, 상한 18줄·창 높이의 42%).
+   상한에 닿으면 textarea 안쪽만 스크롤되어 위아래 여백이 그대로다. 겹(.mt-cmd-mirror)은 textarea 밑에 같은 글을 같은 폭·줄 꺾임으로
+   투명하게 그리고, 앞머리 @태그 자리에만 알약 바탕을 칠한다(글자·커서·고르기·IME는 textarea가 그린다).
+   바는 아래 기준으로 위로 자라고, 마크·받는 세션·단추는 아래 줄에 붙어 흔들리지 않는다 */
+.mt-cmd { align-items: flex-end; }
+.mt-cmd > .mt-mark { margin-bottom: 16px; }
+.mt-cmd > .mt-cmd-thread, .mt-cmd > .mt-cmd-send { margin-bottom: 14px; }
+.mt-cmd-field { position: relative; flex: 1; min-width: 0; padding: 18px 0; cursor: text; }
+.mt-cmd-field > .mt-cmd-input, .mt-cmd-mirror { font-family: inherit; font-size: 15px; font-weight: 400; line-height: 1.45; letter-spacing: normal; tab-size: 4;
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; scrollbar-gutter: stable;
+  scrollbar-width: auto; scrollbar-color: auto; } /* 판 전체의 표준 얇은 막대(화살표가 붙는다) 대신 아래 -webkit 막대(6px, 화살표 없음)를 쓴다. 겹과 입력칸의 폭이 같아야 한다 */
+.mt-cmd-field > .mt-cmd-input { position: relative; z-index: 1; display: block; width: 100%; min-height: 0; padding: 0; margin: 0; overflow-x: hidden; overflow-y: hidden; overscroll-behavior: contain; background: transparent; }
+.mt-cmd-field[data-scroll="1"] > .mt-cmd-input { overflow-y: auto; }
+.mt-cmd-mirror { position: absolute; left: 0; right: 0; top: 18px; bottom: 18px; overflow: hidden; color: transparent; pointer-events: none; user-select: none; }
+.mt-cmd-mirror-in { padding: 0; margin: 0; }
+.mt-cmd-input::-webkit-scrollbar, .mt-cmd-mirror::-webkit-scrollbar { width: 6px; background: transparent; }
+.mt-cmd-input::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--chrome-text-3) 70%, transparent); border-radius: 3px; }
+.mt-cmd-input::-webkit-scrollbar-thumb:hover { background: var(--chrome-text-3); }
+/* 앞머리 @태그: 알약 바탕과 테두리. 자리를 넓히지 않도록 바깥 그림자로만 그린다 */
+.mt-cmd-tag { border-radius: 4px; background: color-mix(in srgb, var(--accent) 20%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); }
+.mt-cmd-tag.to-unknown, .mt-cmd-tag.to-shell { background: color-mix(in srgb, var(--bad) 16%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bad) 65%, transparent); }
+/* 글 중간의 @이름은 받지 않는다: 밑줄 점선만 */
+.mt-cmd-tag.inline { background: none; box-shadow: none; text-decoration: underline dotted color-mix(in srgb, var(--chrome-text) 45%, transparent); text-underline-offset: 3px; }
+/* 받는 세션 칩: 단추 옆, 아래 줄 */
+.mt-cmd-to { flex: none; display: flex; align-items: center; gap: 4px; max-width: 38%; min-width: 0; margin-bottom: 17px; overflow: hidden; }
+.mt-cmd-to-arrow { flex: none; font-size: 12px; color: var(--chrome-text-3); }
+.mt-cmd-to-chip { flex: 0 1 auto; min-width: 0; max-width: 140px; height: 22px; padding: 0 7px; border-radius: 11px; display: inline-flex; align-items: center; gap: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11.5px; font-weight: 600; color: var(--accent-2); background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.mt-cmd-to-chip .n { font-weight: 500; color: color-mix(in srgb, currentColor 75%, transparent); }
+.mt-cmd-to-chip.st-unknown, .mt-cmd-to-chip.st-shell { color: var(--bad); background: var(--bad-bg); border-color: color-mix(in srgb, var(--bad) 60%, transparent); border-style: dashed; text-decoration: line-through; }
+.mt-cmd-to-chip.more { flex: none; color: var(--chrome-text-2); background: none; border-color: var(--chrome-line-2); }
+/* 칩 줄은 바가 자란 만큼 위로 비킨다(CommandBar가 판에 --mt-cmd-grow를 둔다) */
+.mt-chips { bottom: calc(104px + var(--mt-cmd-grow, 0px)); }
+
+/* ---------- P146: 판 움직임 비용 줄이기(P144 원인 1·7) ---------- */
+/* 원인 1: xterm은 그릴 때마다 숨은 입력칸(.xterm-helper-textarea)의 left·top·width·height를 커서 자리로 다시 쓴다. 그 페인트 변화 하나에 판 문서 전체의
+   층 나누기(layerize)가 돌아, 터미널이 출력하는 동안 거의 매 프레임 주 스레드를 썼다. 초점 없는 터미널의 입력칸은 제자리(왼쪽 위 1px)에 묶는다.
+   초점 있는 터미널(xterm이 .focus를 단다)은 그대로 커서를 따라가므로 한국어 IME 후보창 자리는 그대로다. 초점이 오면 묶임이 풀리고 xterm이 쓴 자리로 간다 */
+.xterm:not(.focus) .xterm-helper-textarea { left: 0 !important; top: 0 !important; width: 1px !important; height: 1px !important; }
+/* 원인 7: 판을 움직이는 동안 대화 노드의 큰 그림자(--con-shadow 18px 흐림)를 뺀다(고른 테두리는 남긴다) */
+html[data-board-moving="1"] .mt-cv { box-shadow: none; }
+html[data-board-moving="1"] .mt-cv.selected { box-shadow: 0 0 0 calc(2px * var(--inv, 1)) var(--info); }
+html[data-board-moving="1"] .mt-cv.flash, html[data-board-moving="1"] .react-flow__node.flash .mt-cv { box-shadow: 0 0 0 calc(3px * var(--inv, 1)) var(--accent); }
+/* 화면에서 먼 대화 노드(ConvoNode.jsx away)는 얼굴 없이 틀만 그린다. 그림자도 뺀다 */
+.mt-cv.away { box-shadow: none; }
+
+/* ---------- P149: 이전 미션 맵 다듬기(P147 부대 모양을 되돌린 뒤). 정보는 하나도 덜지 않는다(Mission.jsx 머리 주석).
+   1) 큰 창 맞춤 배율: 덮개(.mt-mission)의 --mm-z(lib/mission-layout.js missionScale, 1~1.35)를 머리줄·지도·요약 열에 zoom으로 준다. 지도는 칸 폭 ÷ 배율로 놓으므로 가로 스크롤이 없다.
+   2) 위계: 폴더 머리 16px 750 > 워크스페이스 머리 14px 650 > 카드 이름 13.5px 650. 3) 카드 네 줄(역할 · 상태 · 팀 / 일 / 메타)과 쉬는 알약 두 줄, 이름·상태·일은 또렷하게(본문 대비 4.5 넘게), 메타만 옅게.
+   4) 줄마다 min-width 0과 말줄임으로 카드 밖으로 넘지 않는다(일 줄은 두 줄까지 감싼 뒤 말줄임, 전체 글은 풍선 도움말). 5) 빛 원뿔을 카드 248×96에 맞춰 150 → 184px(모서리까지 닿게) ---------- */
+.mt-mission-head, .mt-mission-canvas, .mt-mm-sum { zoom: var(--mm-z, 1); }
+.mt-mm-fhead { top: 6px; height: 22px; font: 750 16px var(--font-ui); color: var(--text); }
+.mt-mm-fhead .n { font-size: 12px; }
+.mt-mm-fhead .needs { font-size: 12px; }
+.mt-mm-ws { height: 22px; font: 650 14px var(--font-ui); color: var(--text-2); }
+.mt-mm-ws .n, .mt-mm-ws .needs { font-size: 11.5px; }
+.mt-mm-card { gap: 3px; padding: 0 34px 0 12px; }
+.mt-mm-c1 { height: 18px; }
+.mt-mm-name { font-size: 13.5px; font-weight: 650; }
+.mt-mm-c2 { min-width: 0; font-size: 12px; line-height: 16px; color: var(--text-2); }
+.mt-mm-c2 b { color: var(--text); font-weight: 600; }
+.mt-mm-card.t-turn .mt-mm-c2 { color: var(--text-2); }
+.mt-mm-card.t-work .mt-mm-c2 .st { color: var(--st-working); }
+.mt-mm-card.t-work.shell .mt-mm-c2 .st { color: var(--st-shell_running); }
+.mt-mm-card.t-turn .mt-mm-c2 .st { color: var(--attn-text); }
+.mt-mm-card.t-alert .mt-mm-c2 .st { color: var(--st-error); }
+.mt-mm-card.t-review .mt-mm-c2 .st { color: var(--st-review); }
+.mt-mm-task { min-width: 0; font-size: 12.5px; line-height: 16px; max-height: 32px; color: var(--text); overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.mt-mm-c2 .tm { color: var(--dim); }
+.mt-mm-c3 { font-family: var(--font-ui); font-size: 11.5px; }
+.mt-mm-task.k-last, .mt-mm-task.k-none { color: var(--dim); }
+.mt-mm-task.k-ask { color: var(--attn-text); }
+.mt-mm-task.k-err { color: var(--st-error); }
+.mt-mm-c3 { color: var(--dim-2); }
+.mt-mm-row { flex-direction: column; align-items: stretch; justify-content: center; gap: 2px; padding: 0 30px 0 10px; }
+.mt-mm-r1 { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; line-height: 16px; white-space: nowrap; overflow: hidden; }
+.mt-mm-row .mt-mm-r1 .nm { flex: 0 1 auto; max-width: 60%; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); font-weight: 600; }
+.mt-mm-row .mt-mm-r1 .rl { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
+.mt-mm-r1 .st { flex: none; margin-left: auto; padding-left: 6px; font-size: 11.5px; color: var(--dim); }
+.mt-mm-rl2 { min-width: 0; font: 500 11.5px/14px var(--font-ui); color: var(--dim-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mt-mm-row .mt-mm-av.sm { top: 7px; margin-top: 0; }
+.mt-mm-row.t-sleep .mt-mm-r1 .nm, .mt-mm-row.t-done .mt-mm-r1 .nm { color: var(--dim); font-weight: 550; }
+.mt-mm-row.t-done .mt-mm-r1 .nm { text-decoration: line-through; text-decoration-color: var(--dim-2); }
+.mt-mm-lspin::before { width: 184px; height: 184px; margin: -92px 0 0 -92px; }
+/* P149: 가로로 늘린 원뿔(.mt-mm-lspin)이 카드 밖까지 스크롤 넓이를 늘려 오른쪽 끝 카드에서 가로 스크롤이 생겼다. 고리 안으로 자른다(보이는 것은 가리개가 이미 고리 안만) */
+.mt-mm-lring { overflow: hidden; }
+
+/* ---------- P152: 미션 맵 A "Territories"(MissionTerr.jsx, lib/mission-terr.js). 사용자가 고른 시안 A(experiments/mm-concepts Main.dc.html)의 생김새를 따른다.
+   덮개 전체가 무한 캔버스(.mt-ta-vp)이고 그 위에 떠 있는 판(.mt-ta-hud: 위 줄, 범례, 미니맵·줌, 살펴보기 띠)이 있다. 세계(.mt-ta-world)는 transform 하나로 움직인다.
+   확대 단계는 세계의 클래스(lv-far 멀리 < 60% ≤ lv-mid 보통 ≤ 120% < lv-near 가까이)로만 갈아 끼운다: 멀리는 카드가 이름·상태 큰 글 타일, 머리 글·칩이 커지고 선 이름표를 숨긴다.
+   색은 시안 값(푸른 검정 바탕, 폴더마다 색 점선 영토), 상태 색은 앱 토큰(--st-*). 글꼴은 앱 글꼴(--font-ui) ---------- */
+.mt-ta { padding-top: 0; display: block; overflow: hidden; color: #e8ece9; background: #090d0d;
+  --ta-bg: #090d0d; --ta-isle: #0f1615; --ta-isle-loose: #0d1312; --ta-card: #141c1b; --ta-card-lead: #18201e; --ta-card-idle: #0f1514; --ta-hud: rgba(13, 19, 18, 0.95);
+  --ta-line: rgba(220, 240, 232, 0.13); --ta-dim: #a9b5b1; --ta-text: #e8ece9; --ta-strong: #f6f8f7; }
+.mt-ta button { font-family: inherit; }
+.mt-ta-vp { position: absolute; left: 0; right: 0; top: 60px; bottom: 0; overflow: hidden; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+  background-color: var(--ta-bg); background-image: radial-gradient(circle, rgba(150, 205, 190, 0.13) 1.2px, transparent 1.6px); background-size: 32px 32px; }
+.mt-ta-vp.dragging { cursor: grabbing; }
+.mt-ta-loading { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); color: var(--ta-dim); font-size: 14px; }
+.mt-ta-world { position: absolute; left: 0; top: 0; width: 1px; height: 1px; transform-origin: 0 0; }
+.mt-ta-world.glide { transition: transform 0.45s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.mt-ta[data-moving="1"] .mt-ta-world, .mt-ta-world.glide { will-change: transform; }
+
+/* 영토(폴더): 폴더마다 색이 돈다 */
+.mt-ta-terr { position: absolute; border-radius: 56px; border: 2px dashed var(--tc); background: color-mix(in srgb, var(--tc) 6%, transparent); box-sizing: border-box; pointer-events: none; }
+.mt-ta-terr.c0, .mt-ta-mini .mt.c0 { --tc: rgba(95, 196, 176, 0.55); --tl: #7fd6c4; }
+.mt-ta-terr.c1, .mt-ta-mini .mt.c1 { --tc: rgba(122, 167, 240, 0.55); --tl: #98bdf6; }
+.mt-ta-terr.c2, .mt-ta-mini .mt.c2 { --tc: rgba(226, 178, 76, 0.55); --tl: #f0c86c; }
+.mt-ta-terr.c3, .mt-ta-mini .mt.c3 { --tc: rgba(232, 130, 160, 0.55); --tl: #f2a7bf; }
+.mt-ta-terr.c4, .mt-ta-mini .mt.c4 { --tc: rgba(140, 200, 110, 0.55); --tl: #b2dc98; }
+.mt-ta-terr.c5, .mt-ta-mini .mt.c5 { --tc: rgba(200, 180, 150, 0.55); --tl: #e2d0b2; }
+.mt-ta-thead { position: absolute; left: 48px; top: 30px; right: 48px; display: flex; align-items: baseline; gap: 18px; white-space: nowrap; overflow: hidden; }
+.mt-ta-tname { font-size: 44px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--tl); }
+.mt-ta-tsub { font-size: 20px; color: var(--ta-dim); }
+.lv-far .mt-ta-thead { top: -24px; overflow: visible; }
+.lv-far .mt-ta-tname { font-size: 84px; }
+.lv-far .mt-ta-tsub { font-size: 34px; }
+
+/* 섬(워크스페이스) */
+.mt-ta-isl { position: absolute; border-radius: 32px; background: var(--ta-isle); border: 1.5px solid rgba(220, 240, 232, 0.12); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45); box-sizing: border-box; }
+.mt-ta-isl.loose { border-style: dashed; border-color: rgba(220, 240, 232, 0.28); background: var(--ta-isle-loose); }
+.mt-ta-ihead { position: absolute; left: 36px; right: 36px; top: 22px; display: flex; align-items: center; gap: 14px; }
+.mt-ta-iname { font-size: 26px; font-weight: 700; color: #f1f5f2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mt-ta-iico { width: 26px; height: 26px; flex: none; fill: none; stroke: #8fb4aa; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.mt-ta-itag { font-size: 15px; color: var(--ta-dim); border: 1px solid rgba(220, 240, 232, 0.2); border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
+.mt-ta-ichips { margin-left: auto; display: flex; gap: 8px; flex: none; }
+.mt-ta-ichip { display: flex; align-items: center; gap: 7px; font-size: 15px; color: #d6deda; background: #172120; border-radius: 999px; padding: 4px 11px 4px 9px; white-space: nowrap; }
+.mt-ta-ichip b { font-weight: 700; color: var(--white); }
+.mt-ta-ichip i { width: 9px; height: 9px; border-radius: 50%; background: var(--sc); display: block; }
+.lv-far .mt-ta-ihead { top: 16px; }
+.lv-far .mt-ta-iname { font-size: 46px; }
+.lv-far .mt-ta-iico { width: 40px; height: 40px; }
+.lv-far .mt-ta-itag { display: none; }
+.lv-far .mt-ta-ichips { gap: 10px; }
+.lv-far .mt-ta-ichip { font-size: 30px; padding: 8px 20px 8px 16px; gap: 12px; }
+.lv-far .mt-ta-ichip .lb { display: none; } /* 멀리는 점과 수만(이름이 칩에 밀려 잘리지 않게), 글은 보통 단계에서 */
+.lv-far .mt-ta-ichip i { width: 18px; height: 18px; }
+
+/* 무리(팀) */
+.mt-ta-ring { position: absolute; border-radius: 26px; border: 1.5px dashed rgba(224, 131, 94, 0.32); background: rgba(224, 131, 94, 0.035); box-sizing: border-box; pointer-events: none; }
+.mt-ta-rlabel { position: absolute; left: 22px; right: 22px; top: 11px; font-size: 15px; color: #e7b39d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mt-ta-rlabel b { color: #ffd2bf; font-weight: 600; }
+.lv-far .mt-ta-rlabel { font-size: 26px; top: 7px; }
+
+/* 상태 색(시안 st-*, 값은 앱 토큰) */
+.mt-ta .st-needs { --sc: var(--st-waiting); } .mt-ta .st-error { --sc: #ef8099; } .mt-ta .st-working { --sc: var(--st-working); } .mt-ta .st-working.shell { --sc: #3fd18a; }
+.mt-ta .st-done { --sc: var(--st-review); } .mt-ta .st-ready { --sc: #a9a69b; } .mt-ta .st-sleeping { --sc: var(--st-sleeping); } .mt-ta .st-exited { --sc: #8d8a80; }
+
+/* 관계 선(SVG 한 장): 띄움 실선, 역할 연결 파선, 시킴 주황, 다른 워크스페이스 보라 점선. 나무 밖 연결(link)은 옅게 */
+.mt-ta-edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.mt-ta-edge { fill: none; stroke: var(--ec); stroke-width: 2; stroke-linejoin: round; }
+.mt-ta-edge.k-spawn { --ec: rgba(140, 214, 190, 0.6); }
+.mt-ta-edge.k-role { --ec: #7aa7f0; stroke-dasharray: 9 6; }
+.mt-ta-edge.k-prompt { --ec: #e0835e; }
+.mt-ta-edge.k-cross { --ec: #b48cf2; stroke-width: 3; stroke-dasharray: 0.1 7; stroke-linecap: round; }
+.mt-ta-edge.link { opacity: 0.55; stroke-width: 1.5; }
+.mt-ta-edge.hot { stroke-width: 3.5; opacity: 1; }
+.lv-far .mt-ta-edge { stroke-width: 5; }
+.lv-far .mt-ta-edge.k-cross { stroke-width: 7; stroke-dasharray: 0.1 14; }
+.lv-far .mt-ta-edge.link { stroke-width: 3; }
+.mt-ta-elab { position: absolute; transform: translate(-50%, -50%); font-size: 13px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--ta-isle); border: 1px solid var(--ec); color: var(--ta-text); white-space: nowrap; pointer-events: none; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+.mt-ta-elab.k-spawn { --ec: rgba(140, 214, 190, 0.6); } .mt-ta-elab.k-role { --ec: #7aa7f0; } .mt-ta-elab.k-prompt { --ec: #e0835e; } .mt-ta-elab.k-cross { --ec: #b48cf2; }
+.lv-far .mt-ta-elab { display: none; }
+
+/* 카드: 자리(.mt-ta-slot) 안의 누를 수 있는 판(.mt-ta-card). 멀리 타일(.mt-ta-tile)과 보통 사실(.mt-ta-full)을 단계로 갈아 끼운다 */
+.mt-ta-slot { position: absolute; border-radius: 16px; }
+.mt-ta-card { position: absolute; inset: 0; isolation: isolate; display: block; box-sizing: border-box; padding: 14px 16px; border-radius: 16px; background: var(--ta-card); border: 1px solid var(--ta-line); color: var(--ta-text); cursor: pointer; font-size: 15px; line-height: 1.38; text-align: left; }
+.mt-ta-slot.lead .mt-ta-card { background: var(--ta-card-lead); }
+.mt-ta-slot.idle .mt-ta-card { background: var(--ta-card-idle); border-color: rgba(220, 240, 232, 0.08); }
+.mt-ta-slot.st-needs .mt-ta-card { border: 2px solid var(--st-waiting); background: #1d1c0e; }
+.mt-ta-slot.st-error .mt-ta-card { border: 2px solid var(--st-error); background: #1e1013; }
+.mt-ta-slot.st-done .mt-ta-card { border: 1.5px solid rgba(185, 166, 240, 0.7); }
+.mt-ta-slot.sel .mt-ta-card { outline: 3px solid #f4f7f5; outline-offset: 6px; }
+.mt-ta-card:focus-visible { outline: 3px solid #75ec9c; outline-offset: 6px; }
+.lv-far .mt-ta-slot.sel .mt-ta-card { outline-width: 8px; outline-offset: 10px; }
+.mt-ta-full { display: flex; flex-direction: column; gap: 6px; height: 100%; min-width: 0; }
+.mt-ta-tile { display: none; flex-direction: column; justify-content: center; gap: 8px; height: 100%; min-width: 0; }
+.lv-far .mt-ta-full { display: none; }
+.lv-far .mt-ta-tile { display: flex; }
+.mt-ta-tile .tn { font-size: 40px; font-weight: 700; color: var(--ta-strong); line-height: 1.05; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.mt-ta-tile .ts { display: flex; align-items: center; gap: 12px; font-size: 27px; font-weight: 600; color: var(--sc); white-space: nowrap; overflow: hidden; }
+.mt-ta-tile .ts i { width: 18px; height: 18px; border-radius: 50%; background: var(--sc); display: block; flex: none; }
+.mt-ta-slot.st-sleeping .ts i, .mt-ta-slot.st-sleeping .cst i { background: transparent; border: 2px solid var(--sc); box-sizing: border-box; }
+.mt-ta-full .c1 { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.mt-ta-full .cname { font-size: 19px; font-weight: 700; color: var(--ta-strong); min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
+.mt-ta-slot.st-exited .cname, .mt-ta-slot.st-exited .tn { text-decoration: line-through; text-decoration-color: rgba(200, 200, 190, 0.5); color: #c9cdc9; }
+.mt-ta-full .cst { margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; color: var(--sc); white-space: nowrap; flex: none; }
+.mt-ta-full .cst i { width: 9px; height: 9px; border-radius: 50%; background: var(--sc); display: block; }
+.mt-ta-full .cago { color: var(--ta-dim); font-weight: 500; }
+.mt-ta-full .c2 { display: flex; align-items: center; gap: 0 7px; font-size: 13.5px; color: #b8c3bf; flex-wrap: wrap; min-width: 0; }
+.mt-ta-full .crole { color: var(--ta-text); font-weight: 600; }
+.mt-ta-slot.lead .crole { color: #ffd2bf; }
+.mt-ta-full .hb { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 5px; border-radius: 5px; border: 1px solid rgba(220, 240, 232, 0.28); color: #dbe4e0; line-height: 16px; }
+.mt-ta-full .dotsep { color: #6f7b77; }
+.mt-ta-full .c3 { color: var(--ta-text); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.mt-ta-full .c3 b { font-weight: 600; color: var(--sc); margin-right: 5px; }
+.mt-ta-slot.idle .c3 { color: #c3cbc8; }
+.mt-ta-slot.idle .c3 b { color: var(--ta-dim); }
+.mt-ta-slot.st-needs .c3 { color: var(--attn-text); }
+.mt-ta-full .cerr { font-size: 13.5px; color: #ffb3c1; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.mt-ta-full .c4 { display: none; margin-top: auto; font-size: 13px; color: var(--ta-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lv-near .mt-ta-full .c4 { display: block; }
+
+/* 진행 중 테두리 빛: P107 빛 층(.mt-mm-light·.mt-mm-lring·.mt-mm-lspin, 도는 조건은 위 P107 덩어리 그대로)을 340×184 카드와 단계에 맞춘다.
+   --lf = 굵기 배율(보통 1.5, 멀리 3: 멀리서 2px 고리는 1px 밑으로 가늘어져 보이지 않는다). 원뿔은 카드 대각선을 덮게 키운다 */
+.mt-ta-slot.st-working .mt-ta-card { --mm-run: var(--st-working); border-color: transparent; }
+.mt-ta-slot.st-working.shell .mt-ta-card { --mm-run: var(--st-shell_running); }
+.mt-ta-world { --lf: 1.5; }
+.mt-ta-world.lv-far { --lf: 3; }
+.mt-ta .mt-mm-light { inset: calc(-1px * var(--lf)); border-width: calc(2px * var(--lf)); border-radius: calc(16px + 1px * var(--lf)); box-shadow: 0 0 22px -6px var(--mm-run); }
+.mt-ta .mt-mm-lring { inset: calc(-6px * var(--lf)); border-width: calc(4px * var(--lf)); padding: calc(2px * var(--lf)); border-radius: calc(16px + 6px * var(--lf));
+  -webkit-mask: linear-gradient(to bottom, transparent 0, rgb(0 0 0 / 0.55) calc(4px * var(--lf)), transparent calc(11px * var(--lf)), transparent calc(100% - 11px * var(--lf)), rgb(0 0 0 / 0.55) calc(100% - 4px * var(--lf)), transparent 100%), linear-gradient(to right, transparent 0, rgb(0 0 0 / 0.55) calc(4px * var(--lf)), transparent calc(11px * var(--lf)), transparent calc(100% - 11px * var(--lf)), rgb(0 0 0 / 0.55) calc(100% - 4px * var(--lf)), transparent 100%), linear-gradient(black 0 0) content-box, linear-gradient(black 0 0) padding-box;
+  -webkit-mask-composite: source-over, source-over, xor, source-over; mask-composite: add, add, exclude, add; }
+.mt-ta .mt-mm-lspin { transform: scaleX(1.9); }
+.mt-ta .mt-mm-lspin::before { width: 290px; height: 290px; margin: -145px 0 0 -145px; }
+
+/* 떠 있는 판(HUD) */
+.mt-ta-hud { position: absolute; z-index: 5; background: var(--ta-hud); border: 1px solid rgba(220, 240, 232, 0.12); border-radius: 16px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5); color: var(--ta-text); }
+.mt-ta-top { left: 20px; right: 20px; top: 78px; height: 60px; display: flex; align-items: center; gap: 18px; padding: 0 8px 0 22px; box-sizing: border-box; min-width: 0; }
+.mt-ta-title { font-weight: 700; font-size: 19px; white-space: nowrap; }
+.mt-ta-sub { font-size: 13.5px; color: var(--ta-dim); white-space: nowrap; }
+.mt-ta-attn { display: flex; gap: 8px; margin-left: 4px; min-width: 0; overflow: hidden; align-items: center; }
+.mt-ta-abtn { display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 14px; border-radius: 11px; border: 1px solid var(--ac); background: var(--ab); color: var(--attn-text); font-size: 14px; cursor: pointer; white-space: nowrap; max-width: 300px; min-width: 0; flex: 0 1 auto; }
+.mt-ta-abtn.st-needs { --ac: rgba(255, 224, 61, 0.6); --ab: #262210; }
+.mt-ta-abtn.st-error { --ac: rgba(224, 96, 122, 0.7); --ab: #2a1217; color: #ffd0d9; }
+.mt-ta-abtn b { font-weight: 700; flex: none; }
+.mt-ta-abtn .tx { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mt-ta-abtn i { width: 9px; height: 9px; border-radius: 50%; background: var(--sc); display: block; flex: none; }
+.mt-ta-abtn:hover { filter: brightness(1.15); }
+.mt-ta-amore { font-size: 13px; color: var(--ta-dim); white-space: nowrap; }
+.mt-ta-spacer { flex: 1; }
+.mt-ta-iconbtn { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 11px; border: 1px solid transparent; background: transparent; color: #dbe4e0; cursor: pointer; }
+.mt-ta-iconbtn:hover { background: #1a2423; }
+.mt-ta-x { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.mt-ta-legend { left: 20px; bottom: 20px; padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: #c3cbc8; max-width: 330px; }
+.mt-ta-hint { font-size: 12.5px; color: var(--ta-dim); }
+.mt-ta-legend .lg { display: flex; align-items: center; gap: 10px; }
+.mt-ta-legend .l { width: 34px; height: 0; border-top: 2px solid var(--ec); display: block; flex: none; }
+.mt-ta-legend .l.k-spawn { --ec: rgba(140, 214, 190, 0.6); }
+.mt-ta-legend .l.k-role { --ec: #7aa7f0; border-top-style: dashed; }
+.mt-ta-legend .l.k-prompt { --ec: #e0835e; }
+.mt-ta-legend .l.k-cross { --ec: #b48cf2; border-top-style: dotted; border-top-width: 3px; }
+.mt-ta-legend .ring { width: 30px; height: 16px; border-radius: 6px; display: block; flex: none; background: var(--ta-card); outline: 2px solid var(--st-working); }
+.mt-ta-dock { right: 20px; bottom: 20px; padding: 12px; display: flex; flex-direction: column; gap: 10px; box-sizing: border-box; }
+.mt-ta-mini { position: relative; border-radius: 10px; background: #0b1110; overflow: hidden; border: 1px solid rgba(220, 240, 232, 0.08); cursor: pointer; }
+.mt-ta-mini .mt { position: absolute; border-radius: 6px; border: 1px dashed var(--tc); box-sizing: border-box; pointer-events: none; }
+.mt-ta-mini .mt.none { --tc: rgba(220, 240, 232, 0.35); }
+.mt-ta-mini .md { position: absolute; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; background: var(--sc); pointer-events: none; }
+.mt-ta-mini .mv { position: absolute; border: 1.5px solid #f4f7f5; border-radius: 3px; background: rgba(244, 247, 245, 0.06); box-sizing: border-box; pointer-events: none; }
+.mt-ta-lvrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; background: #0b1110; border-radius: 10px; padding: 3px; }
+.mt-ta-lvrow .lv { height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--ta-dim); font-size: 13px; cursor: pointer; }
+.mt-ta-lvrow .lv.on { background: #233130; color: var(--white); font-weight: 600; }
+.mt-ta-zrow { display: flex; align-items: center; gap: 6px; }
+.mt-ta-zrow .zb { height: 40px; min-width: 40px; display: grid; place-items: center; border-radius: 10px; border: 1px solid rgba(220, 240, 232, 0.14); background: var(--ta-card); color: var(--ta-text); cursor: pointer; font-size: 14px; padding: 0 10px; }
+.mt-ta-zrow .zb svg { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+.mt-ta-zrow .zb:hover, .mt-ta-lvrow .lv:hover { background: #1f2b29; }
+.mt-ta-zrow .zpct { flex: 1; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
+.mt-ta-insp { left: 50%; bottom: 20px; transform: translateX(-50%); width: min(660px, calc(100% - 680px)); min-width: 340px; padding: 14px 14px 14px 20px; display: flex; align-items: center; gap: 12px; box-sizing: border-box; }
+.mt-ta-insp .col { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.mt-ta-insp .nm { font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+.mt-ta-insp .ln { font-size: 13.5px; color: #c3cbc8; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.mt-ta-insp .ln.err { color: #ffb3c1; }
+.mt-ta-insp.st-needs { border-color: rgba(255, 224, 61, 0.5); }
+.mt-ta-insp.st-error { border-color: rgba(224, 96, 122, 0.6); }
+.mt-ta-pbtn { height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid rgba(220, 240, 232, 0.18); background: #1a2423; color: #f1f5f2; font-size: 14px; cursor: pointer; white-space: nowrap; flex: none; }
+.mt-ta-pbtn.pri { background: var(--accent); border-color: var(--accent); color: #04140b; font-weight: 600; }
+.mt-ta-pbtn:hover { filter: brightness(1.1); }
+/* 좁은 창(1400px 아래): 살펴보기 띠가 뜨면 범례 자리(왼쪽 아래)를 쓴다(미니맵과 겹치지 않게) */
+@media (max-width: 1400px) {
+  .mt-ta-insp { width: min(640px, calc(100% - 340px)); left: 20px; transform: none; }
+  .mt-ta-legend:has(~ .mt-ta-insp) { display: none; }
+}
+
+/* ---------- P153: 세션 맵 다듬기(MissionTerr.jsx, lib/mission-terr.js). 위 P152 덩어리를 덮는다.
+   글꼴은 앱 기본 글꼴(--font-ui) 하나, 강조는 굵기로만(폴더 이름도 대문자·넓은 자간 없이 사이드바처럼). 배경은 판과 같은 색·점 격자(간격·점 크기를 paint가 배율에 맞춰 쓴다).
+   카드 320×150(시안), 태그된 카드(명령줄 받는 세션)는 초록 테두리. 단계 단추·미니맵·범례·살펴보기 띠는 없다. 섬 머리는 끌어 폴더를 옮기는 손잡이 ---------- */
+.mt-ta { font-family: var(--font-ui); background: var(--canvas); }
+.mt-ta-vp { background: var(--canvas); }
+.mt-ta-bg { position: absolute; inset: 0; pointer-events: none; --dot-r: 1px; background-image: radial-gradient(circle, var(--canvas-dot) var(--dot-r), transparent calc(var(--dot-r) + 0.6px)); }
+.mt-ta-tname { font-size: 40px; letter-spacing: normal; text-transform: none; }
+.mt-ta-tsub { font-size: 19px; }
+.lv-far .mt-ta-tname { font-size: 72px; }
+.lv-far .mt-ta-tsub { font-size: 32px; }
+.lv-far .mt-ta-thead { top: -14px; }
+.mt-ta-terr { transition: background-color .15s, border-color .15s; }
+.mt-ta-terr.drop { border-style: solid; border-width: 4px; background: color-mix(in srgb, var(--tc) 20%, transparent); }
+/* 섬 머리: 이름과 칩. 칩이 넘치면 다음 줄로 내려가 가려진다(멀리 단계 큰 이름이 잘리지 않게) */
+.mt-ta-ihead { height: 40px; flex-wrap: wrap; align-content: flex-start; overflow: hidden; cursor: grab; border-radius: 12px; }
+.mt-ta-ihead:hover .mt-ta-iname { text-decoration: underline; text-decoration-color: rgba(220, 240, 232, 0.35); text-underline-offset: 4px; }
+.mt-ta-iname { overflow: visible; flex: none; }
+.lv-far .mt-ta-ihead { height: 58px; top: 14px; }
+.mt-ta-isl.moving { z-index: 6; opacity: 0.9; outline: 3px dashed rgba(220, 240, 232, 0.5); outline-offset: 6px; transition: none; }
+.mt-ta.isle-moving .mt-ta-ihead, .mt-ta.isle-moving .mt-ta-vp { cursor: grabbing; }
+/* 카드: 줄 넷이 150px에 든다. 셋째 줄(일)은 두 줄, 오류가 있으면 일 한 줄과 오류 한 줄. 관계 줄은 늘 맨 아래 */
+.mt-ta-card { padding: 13px 16px; }
+.mt-ta-full { gap: 5px; }
+.mt-ta-full .c2 { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; }
+.mt-ta-full .c3 { -webkit-line-clamp: 3; } /* 카드 높이(lib/mission-terr.js cardHeight)가 세 줄까지 잡는다 */
+.mt-ta-full .c3.one { -webkit-line-clamp: 1; }
+.mt-ta-full .cerr { -webkit-line-clamp: 2; }
+.mt-ta-full .c4 { display: block; }
+.mt-ta-tile .tn { font-size: 38px; }
+.mt-ta-tile .ts { font-size: 26px; }
+.mt-ta-slot.tagged .mt-ta-card { outline: 3px solid var(--accent); outline-offset: 5px; }
+.lv-far .mt-ta-slot.tagged .mt-ta-card { outline-width: 8px; outline-offset: 9px; }
+.mt-ta-slot.st-done .mt-ta-card { border: 1.5px solid var(--st-review); }
+.mt-ta .mt-mm-donetag { top: -9px; right: 18px; }
+/* 멀리: 작업 완료는 타일의 상태 글 자리에 표식으로 한 번만(테두리 꼬리표는 숨긴다) */
+.mt-ta-world.lv-far .mt-mm-donetag { display: none; }
+.mt-ta-tdone { display: inline-flex; align-items: center; gap: 0.2em; color: var(--st-review); }
+.mt-ta-tdone svg { width: 0.85em; height: 0.85em; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+/* 멀리 타일 글은 화면 크기 하한을 지킨다(MissionTerr.jsx paint가 --ik = 1/배율, --tl = 이름 줄 수를 쓴다): 이름 12.5px, 상태 10.5px 이상 */
+.mt-ta-world.lv-far .mt-ta-card { padding: 10px 10px; }
+.mt-ta-world.lv-far .mt-ta-tile { gap: 4px; justify-content: flex-end; }
+.mt-ta-world.lv-far .mt-ta-tile .tn { font-size: clamp(40px, calc(12.5px * var(--ik, 1)), 60px); line-height: 1.08; letter-spacing: -0.015em; -webkit-line-clamp: var(--tl, 2); overflow-wrap: anywhere; }
+.mt-ta-world.lv-far .mt-ta-tile .ts { font-size: clamp(32px, calc(10.5px * var(--ik, 1)), 48px); line-height: 1.2; gap: 0.35em; flex: none; }
+.mt-ta-world.lv-far .mt-ta-tile .ts i { width: 0.6em; height: 0.6em; }
+.mt-ta-world.lv-far .mt-ta-iname { font-size: clamp(46px, calc(14px * var(--ik, 1)), 58px); }
+.mt-ta-world.lv-far .mt-ta-rlabel { font-size: clamp(26px, calc(11px * var(--ik, 1)), 34px); top: 4px; }
+/* 진행 중 빛: 테두리 전체가 옅은 상태 색으로 보이고 그 위를 가는 혜성이 돈다(판 노드 고리와 같은 느낌). 굵기 배율은 보통 1, 멀리 2.4 */
+.mt-ta-world { --lf: 1; }
+.mt-ta-world.lv-far { --lf: 2.4; }
+html:not(.mt-lite):not([data-work-light="off"]):not([data-work-light="system"]) .mt-ta .mt-ta-slot .mt-mm-light { border-color: color-mix(in srgb, var(--mm-run) 45%, transparent); background-color: color-mix(in srgb, var(--mm-run) 5%, transparent); box-shadow: 0 0 18px -8px var(--mm-run); }
+@media (prefers-reduced-motion: no-preference) {
+  html:not(.mt-lite)[data-work-light="system"] .mt-ta .mt-ta-slot .mt-mm-light { border-color: color-mix(in srgb, var(--mm-run) 45%, transparent); background-color: color-mix(in srgb, var(--mm-run) 5%, transparent); box-shadow: 0 0 18px -8px var(--mm-run); }
+}
+/* 위 줄의 도움말, 오른쪽 아래 줌 */
+.mt-ta-top .mt-ta-hint { font-size: 12.5px; color: var(--ta-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.mt-ta-zoom { right: 20px; bottom: 26px; padding: 8px; display: flex; align-items: center; gap: 6px; }
+.mt-ta-zoom .zb { height: 40px; min-width: 40px; display: grid; place-items: center; border-radius: 10px; border: 1px solid rgba(220, 240, 232, 0.14); background: #141c1b; color: var(--ta-text); cursor: pointer; font-size: 14px; padding: 0 10px; }
+.mt-ta-zoom .zb svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.mt-ta-zoom .zpct { min-width: 54px; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
+/* 세션 맵이 열린 동안 아래 통합 명령줄은 덮개 위에 늘 보인다(판의 칩 줄·도구는 덮개 밑에 남는다) */
+.mt-bottom[data-mission="1"] { z-index: 40; }
+
+/* ---------- P153 r7: 세션 맵 PC = 시안 B "Lineage"(MissionLineage.jsx, lib/mission-lineage.js). 위 P152·P153 덩어리(.mt-ta-*)를 .mt-sm 안에서 덮는다.
+   생김(띠·기둥·줄·칸·카드·선·위 줄·칸 머리·목차 레일)은 시안 B를 따르고, 사용자가 정한 것이 이긴다: 앱 기본 글꼴(강조는 굵기, 대문자·자간 없음), 무채색(제목·바탕·띠에 색 없음,
+   색은 상태 점·상태 글·응답 필요·오류 테두리·작업 중 빛·작업 완료 꼬리표·관계 선 종류만, 선 색은 채도를 낮춤), 얇은 선(1px 낮은 알파), 가벼운 글(이름 550), 판과 같은 배경 ---------- */
+.mt-sm { --ln-line: rgba(255, 252, 240, 0.09); --ln-line-2: rgba(255, 252, 240, 0.14); --ln-dim: #a3a097; --ln-text: #e6e3da; --ln-strong: #f3f0e8; --ln-hud: rgba(15, 15, 13, 0.95); color: var(--ln-text); }
+.mt-sm .mt-ta-vp { top: 60px; }
+/* 폴더 띠와 기둥 */
+.mt-sm-band { position: absolute; left: 0; box-sizing: border-box; border-top: 1px solid var(--ln-line-2); background: rgba(255, 252, 240, 0.012); pointer-events: none; transition: background-color .15s; }
+.mt-sm-band.odd { background: rgba(255, 252, 240, 0.024); }
+.mt-sm-band.drop { background: rgba(255, 252, 240, 0.07); box-shadow: inset 0 0 0 2px rgba(255, 252, 240, 0.28); }
+.mt-sm-spine { position: absolute; left: 0; top: 0; bottom: 0; width: 210px; box-sizing: border-box; padding: 26px 16px; border-right: 1px solid var(--ln-line); display: flex; flex-direction: column; gap: 7px; }
+.mt-sm-spine .fk { font-size: 12px; color: var(--ln-dim); }
+.mt-sm-spine .fn { font-size: 22px; font-weight: 600; color: var(--ln-strong); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mt-sm-spine .fs { font-size: 13.5px; color: var(--ln-dim); }
+.mt-sm-spine .fbar { margin-top: 6px; height: 6px; display: flex; gap: 2px; border-radius: 3px; overflow: hidden; }
+.mt-sm-spine .fbar i { display: block; height: 100%; background: var(--sc); flex-basis: 0; }
+.mt-sm .lv-far .mt-sm-spine .fk { font-size: clamp(18px, calc(9px * var(--ik, 1)), 26px); }
+.mt-sm .lv-far .mt-sm-spine .fn { font-size: clamp(26px, calc(11.5px * var(--ik, 1)), 32px); }
+.mt-sm .lv-far .mt-sm-spine .fs { font-size: clamp(18px, calc(9.5px * var(--ik, 1)), 24px); }
+.mt-sm .lv-far .mt-sm-spine .fbar { height: 16px; }
+/* 워크스페이스 줄과 머리(끌어 폴더 옮기기 손잡이) */
+.mt-sm-row { position: absolute; box-sizing: border-box; border-top: 1px dashed var(--ln-line); pointer-events: none; }
+.mt-sm-row.first { border-top: 0; }
+.mt-sm-row.moving { z-index: 6; background: rgba(255, 252, 240, 0.04); outline: 1px dashed var(--ln-line-2); }
+.mt-sm-head { position: absolute; left: 22px; top: 22px; width: 300px; display: flex; flex-direction: column; gap: 9px; pointer-events: auto; cursor: grab; }
+.mt-sm-head .wsn { display: flex; align-items: center; gap: 9px; font-size: 18px; font-weight: 600; color: var(--ln-strong); min-width: 0; }
+.mt-sm-head .wsn > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mt-sm-head:hover .wsn > span { text-decoration: underline; text-decoration-color: var(--ln-line-2); text-underline-offset: 4px; }
+.mt-sm-head .mt-ta-iico { width: 18px; height: 18px; stroke: var(--ln-dim); }
+.mt-sm-head .wsc { display: flex; flex-wrap: wrap; gap: 5px; }
+.mt-sm-head .wsc > span { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--ln-dim); background: rgba(255, 252, 240, 0.05); border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+.mt-sm-head .wsc i { width: 7px; height: 7px; border-radius: 50%; background: var(--sc); display: block; }
+.mt-sm-head .wsc b { color: var(--ln-text); font-weight: 600; }
+.mt-sm .lv-far .mt-sm-head { width: 460px; top: 24px; gap: 14px; }
+.mt-sm .lv-far .mt-sm-head .wsn { font-size: clamp(30px, calc(12.5px * var(--ik, 1)), 46px); gap: 14px; }
+.mt-sm .lv-far .mt-sm-head .mt-ta-iico { width: 1em; height: 1em; }
+.mt-sm .lv-far .mt-sm-head .wsc > span { font-size: clamp(20px, calc(9.5px * var(--ik, 1)), 30px); padding: 4px 12px; gap: 9px; border-radius: 9px; }
+.mt-sm .lv-far .mt-sm-head .wsc i { width: 0.6em; height: 0.6em; }
+.mt-sm-div { position: absolute; width: 0; border-left: 1px dashed var(--ln-line-2); pointer-events: none; }
+/* 카드(시안 B: 각진 모서리 10, 얇은 테두리, 리드는 조금 밝게) */
+.mt-sm .mt-ta-card { padding: 12px 14px; border-radius: 10px; background: rgba(255, 252, 240, 0.04); border: 1px solid var(--ln-line-2); color: var(--ln-text); font-size: 13.5px; line-height: 1.38; }
+.mt-sm .mt-ta-slot { border-radius: 10px; }
+.mt-sm .mt-ta-slot.lead .mt-ta-card { background: rgba(255, 252, 240, 0.065); border-color: rgba(255, 252, 240, 0.2); }
+.mt-sm .mt-ta-slot.idle .mt-ta-card { background: rgba(255, 252, 240, 0.022); border-color: rgba(255, 252, 240, 0.07); }
+.mt-sm .mt-ta-slot.st-needs .mt-ta-card { border: 1px solid color-mix(in srgb, var(--st-waiting) 80%, transparent); background: color-mix(in srgb, var(--st-waiting) 7%, #121210); }
+.mt-sm .mt-ta-slot.st-error .mt-ta-card { border: 1px solid color-mix(in srgb, var(--st-error) 80%, transparent); background: color-mix(in srgb, var(--st-error) 7%, #121210); }
+.mt-sm .mt-ta-slot.st-done .mt-ta-card { border: 1px solid color-mix(in srgb, var(--st-review) 65%, transparent); }
+.mt-sm .mt-ta-slot.st-working .mt-ta-card { border-color: transparent; }
+.mt-sm .mt-ta-slot.tagged .mt-ta-card { outline: 2px solid var(--accent); outline-offset: 4px; }
+.mt-sm .lv-far .mt-ta-slot.tagged .mt-ta-card { outline-width: 6px; outline-offset: 7px; }
+.mt-sm .mt-ta-full { gap: 4px; }
+.mt-sm .mt-ta-full .c1 { gap: 8px; }
+.mt-sm-lead { flex: none; font-size: 10.5px; font-weight: 600; line-height: 15px; padding: 0 5px; border-radius: 4px; border: 1px solid rgba(255, 252, 240, 0.28); color: var(--ln-dim); }
+.mt-sm .mt-ta-full .cname { font-size: 15.5px; font-weight: 550; color: var(--ln-strong); white-space: nowrap; text-overflow: ellipsis; display: block; overflow: hidden; }
+.mt-sm .mt-ta-full .cst { font-size: 12.5px; font-weight: 500; }
+.mt-sm .mt-ta-full .cst i { width: 7px; height: 7px; }
+.mt-sm .mt-ta-full .c2 { font-size: 12px; color: var(--ln-dim); gap: 0 6px; }
+.mt-sm .mt-ta-full .crole { font-size: 12px; font-weight: 500; color: var(--ln-text); }
+.mt-sm .mt-ta-slot.lead .crole { color: var(--ln-text); }
+.mt-sm .mt-ta-full .hb { font-size: 10px; font-weight: 600; border: 0; background: rgba(255, 252, 240, 0.08); color: var(--ln-text); border-radius: 4px; padding: 0 5px; line-height: 16px; }
+.mt-sm .mt-ta-full .c3 { font-size: 13.5px; color: var(--ln-text); }
+.mt-sm .mt-ta-full .c3 b { font-weight: 550; }
+.mt-sm .mt-ta-slot.idle .c3 { color: #bcb8ae; }
+.mt-sm .mt-ta-full .cerr { font-size: 12.5px; }
+.mt-sm .mt-ta-full .c4 { font-size: 12px; color: var(--ln-dim); }
+.mt-sm .mt-ta-full .cago { color: var(--ln-dim); font-weight: 400; }
+/* 멀리 타일: 이름 한 줄(넘치면 말줄임) + 상태. 화면 글 하한(이름 11.5px·상태 10px)은 --ik(1/배율) */
+.mt-sm .mt-ta-world.lv-far .mt-ta-card { padding: 10px 14px; }
+.mt-sm .mt-ta-world.lv-far .mt-ta-tile { justify-content: center; gap: 6px; }
+.mt-sm .mt-ta-world.lv-far .mt-ta-tile .tn { display: block; font-size: clamp(30px, calc(11.5px * var(--ik, 1)), 48px); font-weight: 550; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0; -webkit-line-clamp: unset; }
+.mt-sm .mt-ta-world.lv-far .mt-ta-tile .ts { font-size: clamp(24px, calc(10px * var(--ik, 1)), 40px); font-weight: 500; line-height: 1.15; }
+/* 관계 선: 종류마다 모양과 채도를 낮춘 색, 화살촉 */
+.mt-sm .mt-ta-edge { stroke-width: 1.6; opacity: 0.9; }
+.mt-sm .mt-ta-edge.k-spawn, .mt-sm .mt-sm-tip.k-spawn, .mt-sm .mt-ta-elab.k-spawn { --ec: #5fa98a; }
+.mt-sm .mt-ta-edge.k-role, .mt-sm .mt-sm-tip.k-role, .mt-sm .mt-ta-elab.k-role { --ec: #7d97c6; }
+.mt-sm .mt-ta-edge.k-prompt, .mt-sm .mt-sm-tip.k-prompt, .mt-sm .mt-ta-elab.k-prompt { --ec: #c48d70; }
+.mt-sm .mt-ta-edge.k-cross, .mt-sm .mt-sm-tip.k-cross, .mt-sm .mt-ta-elab.k-cross { --ec: #a28fcc; }
+.mt-sm .mt-ta-edge.k-role { stroke-dasharray: 7 5; }
+.mt-sm .mt-ta-edge.k-cross { stroke-width: 2.2; stroke-dasharray: 0.1 6; stroke-linecap: round; }
+.mt-sm-tip path { fill: var(--ec); }
+.mt-sm .lv-far .mt-ta-edge { stroke-width: 3.5; }
+.mt-sm .lv-far .mt-ta-edge.k-cross { stroke-width: 5; stroke-dasharray: 0.1 12; }
+.mt-sm .mt-ta-elab { transform: translate(-50%, -50%); font-size: 11.5px; font-weight: 500; padding: 1px 7px; border-radius: 5px; background: var(--canvas); border: 1px solid color-mix(in srgb, var(--ec) 70%, transparent); color: var(--ln-text); max-width: 200px; }
+/* 위 줄: 제목, 나를 기다리는 것·작업 중·작업 완료 알약, 줌, 닫기 */
+.mt-sm .mt-ta-hud { background: var(--ln-hud); border: 0 solid var(--ln-line); border-radius: 0; box-shadow: none; }
+.mt-sm-top { left: 0; right: 0; top: 60px; height: 52px; border-bottom-width: 1px !important; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 20px; box-sizing: border-box; min-width: 0; }
+.mt-sm-top .mt-ta-title { font-size: 15px; font-weight: 600; margin-right: 6px; }
+.mt-sm-top .mt-ta-attn { display: flex; gap: 6px; min-width: 0; overflow: hidden; align-items: center; }
+.mt-sm-pill { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 8px; border: 1px solid var(--ln-line-2); background: transparent; color: var(--ln-text); font: 500 12.5px var(--font-ui); cursor: pointer; white-space: nowrap; flex: none; }
+.mt-sm-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--sc); display: block; flex: none; }
+.mt-sm-pill b { font-weight: 600; color: var(--ln-strong); }
+.mt-sm-pill span { color: var(--ln-dim); }
+.mt-sm-pill.st-needs { border-color: color-mix(in srgb, var(--st-waiting) 55%, transparent); }
+.mt-sm-pill.st-error { border-color: color-mix(in srgb, var(--st-error) 55%, transparent); }
+.mt-sm-pill.quiet { cursor: default; border-color: transparent; }
+.mt-sm-pill:not(.quiet):hover { background: rgba(255, 252, 240, 0.05); }
+.mt-sm-zgrp { display: flex; align-items: center; gap: 2px; border: 1px solid var(--ln-line); border-radius: 9px; padding: 2px; }
+.mt-sm-zgrp .zb { height: 28px; min-width: 28px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--ln-text); cursor: pointer; font: 500 12.5px var(--font-ui); padding: 0 8px; }
+.mt-sm-zgrp .zb:hover { background: rgba(255, 252, 240, 0.06); }
+.mt-sm-zgrp .zb svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.mt-sm-zgrp .zpct { min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--ln-text); }
+.mt-sm .mt-ta-iconbtn { width: 36px; height: 36px; border-radius: 8px; color: var(--ln-text); }
+/* 칸 머리(세계 칸을 따라 옮겨 간다, paint가 transform) */
+.mt-sm-cols { left: 0; right: 0; top: 112px; height: 34px; border-bottom-width: 1px !important; overflow: hidden; pointer-events: none; }
+.mt-sm-cols .colh { position: absolute; left: 0; top: 9px; font-size: 11.5px; font-weight: 500; letter-spacing: 0.04em; color: var(--ln-dim); white-space: nowrap; will-change: transform; }
+.mt-sm .st-needs { --sc: var(--st-waiting); } .mt-sm .st-error { --sc: #ef8099; } .mt-sm .st-working { --sc: var(--st-working); } .mt-sm .st-working.shell { --sc: #3fd18a; }
+.mt-sm .st-done { --sc: var(--st-review); } .mt-sm .st-ready { --sc: #a9a69b; } .mt-sm .st-sleeping { --sc: var(--st-sleeping); } .mt-sm .st-exited { --sc: #8d8a80; }
+/* 진행 중 빛: 시안처럼 테두리 전체가 옅게 보이고 가는 혜성이 돈다 */
+.mt-sm .mt-ta-world { --lf: 0.8; }
+.mt-sm .mt-ta-world.lv-far { --lf: 2; }
+.mt-sm .mt-mm-light { border-radius: calc(10px + 1px * var(--lf)); }
+.mt-sm .mt-mm-lring { border-radius: calc(10px + 6px * var(--lf)); }
+
+/* ---------- P153 r8: 작업 완료는 옛 지도처럼(테두리·왼쪽 띠·가로 그라데이션 + 꼬리표), 모든 배율에서. 폴더 띠 사이를 띄우고 띠 머리 선을 또렷하게. 카드 미리 보기 ---------- */
+.mt-sm .mt-ta-slot.st-done .mt-ta-card { border: 1px solid color-mix(in srgb, var(--st-review) 80%, transparent); box-shadow: inset 3px 0 0 var(--st-review); background: linear-gradient(90deg, color-mix(in srgb, var(--st-review) 18%, #151412) 0%, #151412 62%); }
+.mt-sm .mt-ta-world.lv-far .mt-mm-donetag { display: inline-flex; transform: scale(clamp(1.6, calc(var(--ik, 1) * 0.85), 3.2)); transform-origin: right top; }
+.mt-sm .mt-ta-tile .dim, .mt-sm-peek .dim { color: var(--ln-dim); }
+.mt-sm-band { border-top: 1px solid rgba(255, 252, 240, 0.22); border-bottom: 1px solid rgba(255, 252, 240, 0.08); }
+.mt-sm-band .mt-sm-spine { background: rgba(255, 252, 240, 0.02); }
+/* 미리 보기: 덮개 위 떠 있는 판(마우스를 받지 않는다) */
+.mt-sm-peek { position: absolute; z-index: 8; pointer-events: none; box-sizing: border-box; padding: 12px 14px; border-radius: 10px; background: rgba(20, 19, 17, 0.98); border: 1px solid var(--ln-line-2); box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55); display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; line-height: 1.4; color: var(--ln-text); max-height: calc(100% - 200px); overflow: hidden; }
+.mt-sm-peek.st-needs { border-color: color-mix(in srgb, var(--st-waiting) 60%, transparent); }
+.mt-sm-peek.st-error { border-color: color-mix(in srgb, var(--st-error) 60%, transparent); }
+.mt-sm-peek .pk1 { display: flex; align-items: center; gap: 8px; }
+.mt-sm-peek .pk1 b { font-size: 14.5px; font-weight: 600; color: var(--ln-strong); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mt-sm-peek .pst { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--sc); font-weight: 500; white-space: nowrap; }
+.mt-sm-peek .pst i { width: 7px; height: 7px; border-radius: 50%; background: var(--sc); display: block; }
+.mt-sm-peek .pk2 { color: var(--ln-dim); font-size: 12px; }
+.mt-sm-peek .lb { display: block; font-size: 11px; font-weight: 600; color: var(--ln-dim); margin-bottom: 1px; }
+.mt-sm-peek .pkt, .mt-sm-peek .pkq, .mt-sm-peek .pka { overflow-wrap: anywhere; }
+.mt-sm-peek .pka .txt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; color: #cfcbc1; }
+.mt-sm-peek .pkq { color: var(--attn-text); }
+.mt-sm-peek .opts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.mt-sm-peek .opts span { border: 1px solid var(--ln-line-2); border-radius: 5px; padding: 0 6px; color: var(--ln-text); font-size: 11.5px; }
+.mt-sm-peek .pke { color: #ffb3c1; overflow-wrap: anywhere; }
+.mt-sm-peek .pkv { display: flex; flex-direction: column; gap: 1px; font-size: 11.5px; }
+.mt-sm-peek .pks { margin: 0; padding: 7px 9px; border-radius: 6px; background: #0c0c0a; border: 1px solid var(--ln-line); font: 11px/1.35 var(--font-mono); color: #cfcbc1; white-space: pre; overflow: hidden; max-height: 160px; }
+.mt-sm-peek .pkn { font-size: 11.5px; }
+
+/* P155: 줄 머리 옮기기는 Alt+끌기만. Alt 없이는 줄 머리도 보기 칸처럼 시점 이동 커서이고 밑줄이 없다.
+   Alt를 누르고 있으면(.mt-ta-vp[data-alt="1"], MissionLineage.jsx) 줄 머리에 옮기기 커서와 강조 */
+.mt-sm .mt-sm-head { cursor: inherit; }
+.mt-sm .mt-sm-head:hover .wsn > span { text-decoration: none; }
+.mt-sm .mt-ta-vp[data-alt="1"] .mt-sm-head { cursor: move; }
+.mt-sm .mt-ta-vp[data-alt="1"] .mt-sm-head:hover { outline: 1px dashed var(--ln-line-2); outline-offset: 6px; border-radius: 4px; background: rgba(255, 252, 240, 0.04); }
+.mt-sm .mt-ta-vp[data-alt="1"] .mt-sm-head:hover .wsn > span { text-decoration: underline; text-decoration-color: var(--ln-line-2); text-underline-offset: 4px; }
+.mt-sm.isle-moving .mt-ta-vp, .mt-sm.isle-moving .mt-sm-head { cursor: grabbing; }
+
+/* P153 r9: 사이드바에서 고른 세션 카드·워크스페이스 줄·폴더 띠를 세 번 반짝인다. 사용자 PC는 늘 움직임 줄이기라 OS 값이 아니라 판 설정 workLight를 따른다(켬 기본 = 돈다, 끔 = 멈춘 강조) */
+@keyframes mt-sm-blink { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 45% { box-shadow: 0 0 0 4px var(--ln-blink), 0 0 26px 2px var(--ln-blink); } }
+@keyframes mt-sm-blink-area { 0%, 100% { background-color: transparent; } 45% { background-color: rgba(255, 252, 240, 0.09); } }
+.mt-sm { --ln-blink: color-mix(in srgb, var(--accent) 75%, transparent); }
+.mt-sm .mt-ta-slot.blink .mt-ta-card { animation: mt-sm-blink 0.6s ease-in-out 3; }
+.mt-sm .mt-ta-world.lv-far .mt-ta-slot.blink .mt-ta-card { animation-name: mt-sm-blink; outline: 6px solid var(--ln-blink); outline-offset: 6px; }
+.mt-sm-row.blink, .mt-sm-band.blink { animation: mt-sm-blink-area 0.6s ease-in-out 3; outline: 2px solid var(--ln-blink); outline-offset: -2px; }
+html[data-work-light="off"] .mt-sm .blink, html[data-work-light="off"] .mt-sm .blink .mt-ta-card, html.mt-lite .mt-sm .blink .mt-ta-card { animation: none !important; outline: 3px solid var(--ln-blink); outline-offset: 4px; }
+@media not (prefers-reduced-motion: no-preference) { html[data-work-light="system"] .mt-sm .blink, html[data-work-light="system"] .mt-sm .blink .mt-ta-card { animation: none; outline: 3px solid var(--ln-blink); outline-offset: 4px; } }
+/* P153 r11: 관계 선(동료·계보), 깊이 접기 칩, Alt+카드 끌기(관계 바꾸기), 줄 잡는 자리(MissionLineage.jsx) */
+.mt-sm .mt-ta-edge.k-peer, .mt-sm .mt-sm-tip.k-peer { --ec: #b4b0a5; }
+.mt-sm .mt-sm-tip.k-peer circle { fill: var(--ec); }
+.mt-sm .mt-ta-edge.k-peer { stroke-width: 1.8; }
+.mt-sm .mt-ta-edge.k-lineage { --ec: rgba(255, 252, 240, 0.32); stroke-width: 1.2; stroke-dasharray: 2 6; stroke-linecap: round; opacity: 0.8; }
+.mt-sm .lv-far .mt-ta-edge.k-lineage { stroke-width: 2.4; stroke-dasharray: 3 10; }
+.mt-sm-fold { position: absolute; left: 100%; top: 50%; transform: translate(12px, -50%); z-index: 2; height: 34px; padding: 0 14px; border-radius: 17px; border: 1px dashed var(--ln-line-2); background: var(--ln-hud); color: var(--ln-dim); font: 600 16px var(--font-ui); white-space: nowrap; cursor: pointer; }
+.mt-sm-fold:hover, .mt-sm-fold:focus-visible { color: var(--ln-strong); border-color: var(--ln-dim); border-style: solid; }
+.mt-sm-fold.open { border-style: solid; }
+.mt-sm .lv-far .mt-sm-fold { height: auto; padding: 0.25em 0.8em; border-radius: 1em; font-size: clamp(20px, calc(10px * var(--ik, 1)), 34px); transform: translate(16px, -50%); }
+.mt-sm .mt-ta-vp[data-alt="1"] .mt-ta-card { cursor: move; }
+.mt-sm .mt-ta-slot.moving { z-index: 8; opacity: 0.85; pointer-events: none; }
+.mt-sm .mt-ta-slot.moving .mt-ta-card { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); border-color: var(--ln-dim); }
+.mt-sm .mt-ta-slot.drop-target .mt-ta-card { outline: 2px solid var(--ln-drop, #8fb7a5); outline-offset: 4px; }
+.mt-sm.mt-ta.card-moving .mt-ta-vp, .mt-sm .mt-ta-vp.card-moving { cursor: move; }
+.mt-sm-drop { position: absolute; z-index: 7; box-sizing: border-box; border: 2px dashed var(--ln-drop, #8fb7a5); border-radius: 10px; background: rgba(143, 183, 165, 0.07); pointer-events: none; }
+.mt-sm-drop[data-kind="peer"] { --ln-drop: #b4b0a5; border-color: var(--ln-drop); background: rgba(180, 176, 165, 0.07); }
+.mt-sm-drop[data-kind="none"] { --ln-drop: #a3a097; border-color: var(--ln-drop); background: rgba(163, 160, 151, 0.06); }
+.mt-sm-drop .lb { position: absolute; left: 0; bottom: calc(100% + 6px); padding: 3px 9px; border-radius: 6px; background: var(--ln-hud); border: 1px solid var(--ln-line-2); color: var(--ln-strong); font: 600 12.5px var(--font-ui); white-space: nowrap; }
+.mt-sm .lv-far .mt-sm-drop { border-width: max(4px, calc(2px * var(--ik, 1))); border-radius: 14px; }
+.mt-sm .lv-far .mt-sm-drop .lb { font-size: max(20px, calc(12.5px * var(--ik, 1))); padding: 0.2em 0.6em; border-radius: 0.4em; }
+.mt-sm-grab { position: absolute; left: 0; top: 0; bottom: 0; pointer-events: none; border-radius: 6px; }
+.mt-sm .mt-ta-vp[data-alt="1"] .mt-sm-grab { pointer-events: auto; cursor: move; }
+.mt-sm .mt-ta-vp[data-alt="1"] .mt-sm-grab:hover, .mt-sm .mt-ta-vp[data-alt="1"] .mt-sm-grab:has(+ .mt-sm-head:hover) { background: rgba(255, 252, 240, 0.04); outline: 1px dashed var(--ln-line-2); outline-offset: -6px; }
+.mt-sm.isle-moving .mt-sm-grab { cursor: grabbing; }
+
+/* P157 세션 맵: (1) 예전에는 설정의 호출자 목록(.mt-ln-row:hover)이 세션 맵 줄에도 걸렸다. P161에서 세션 맵 이름 머리를 .mt-sm-*로 나눠 그 덮개 줄은 없앴다.
+   (2) 옮기기 안내는 Alt를 누른 동안에만 작은 글로(풍선 title은 없앴다). (3) 폴더 기둥은 폭이 이름에 맞춰 늘고(style width, lib/mission-lineage.js spineWidth) 이름은 말줄임 없이, 수는 두 줄 */
+.mt-sm-althint { display: none; font-size: 12px; color: var(--ln-dim); white-space: nowrap; }
+.mt-sm .mt-ta-vp[data-alt="1"] .mt-sm-althint { display: block; }
+.mt-sm .lv-far .mt-sm-althint { font-size: clamp(18px, calc(9px * var(--ik, 1)), 26px); }
+.mt-sm-spine .fn { overflow: visible; text-overflow: clip; }
+.mt-sm-spine .fs { display: flex; flex-direction: column; gap: 2px; white-space: nowrap; }
+
+/* ---------- P158: 명령줄 위 전달 칩 다듬기 ----------
+   세션 맵이 열린 동안에는 판의 칩 줄(.mt-chips)이 덮개 밑에 숨으므로 그 자리(54px)를 비우지 않고 명령줄 바로 위(판의 칩 줄과 같은 8px 사이)에 붙인다.
+   bottom이 바 높이(100%)를 따르므로 명령줄이 여러 줄로 자라도, 사이드바·창 크기로 바 너비가 바뀌어도 따라간다. 너비는 바 너비 안(가장자리를 넘지 않음) */
+.mt-bottom[data-mission="1"] .mt-bottom-above { bottom: calc(100% + 8px); width: 100%; }
+/* 대기 중 칩의 수정: 칩이 글 칸으로 바뀐다(머리 줄 · 글 칸 · 단추 줄) */
+.mt-delivery.mt-delivery-edit { flex-direction: column; align-items: stretch; height: auto; width: min(560px, 100%); max-width: none; padding: 8px 10px; gap: 6px; border-radius: 14px; }
+.mt-delivery-edit-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mt-delivery-edit-input { width: 100%; box-sizing: border-box; resize: none; min-height: 30px; max-height: 220px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--chrome-line); background: color-mix(in srgb, var(--chrome-bg) 70%, #000); color: inherit; font: inherit; font-size: 13px; line-height: 1.45; outline: none; }
+.mt-delivery-edit-input:focus { border-color: color-mix(in srgb, var(--warn) 60%, transparent); }
+.mt-delivery-edit-foot { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.mt-delivery-edit-hint { flex: 1 1 auto; min-width: 0; font-size: 11.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* P162: 데스크톱 창의 그림 칩([Image 1])과 마우스를 올렸을 때의 작은 미리보기. 칩은 겹에 태그처럼 그린다(글자는 textarea가 그린다) */
+.mt-cmd-img { border-radius: 4px; background: color-mix(in srgb, var(--chrome-text) 12%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--chrome-text) 38%, transparent); }
+.mt-cmd-img-preview { position: absolute; z-index: 5; transform: translateY(calc(-100% - 8px)); display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 6px; border-radius: 10px;
+  background: var(--panel, #1b1a17); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px color-mix(in srgb, var(--chrome-text) 18%, transparent); pointer-events: none; }
+.mt-cmd-img-preview img { display: block; max-width: 240px; max-height: 240px; border-radius: 6px; }
+.mt-cmd-img-preview span { font-size: 11px; color: color-mix(in srgb, var(--chrome-text) 70%, transparent); }
+
+/* P161: 설정 "연결" 칸의 빈 상태 */
+.mt-cn-empty { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px dashed var(--panel-line); border-radius: 8px; font-size: 12.5px; line-height: 1.45; color: var(--text-2); }
+.mt-cn-empty b { font-size: 13px; color: var(--text); }
+
+/* P163: 세션 맵 얇은 줄(하위가 셋 이상인 세션 아래 절전 하위). 카드와 같은 폭, 높이 LINE.THIN(30), 상태 점 + 이름 + 지난 시간(흐리게) 한 줄 */
+.mt-sm .mt-ta-slot.thin { border-radius: 7px; }
+.mt-sm .mt-ta-slot.thin .mt-ta-card { padding: 0 12px; border-radius: 7px; display: flex; align-items: center; }
+.mt-sm-thin { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; font-size: 13px; line-height: 1; }
+.mt-sm-thin i { flex: none; width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--sc); box-sizing: border-box; }
+.mt-sm-thin .cname { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ln-text); font-weight: 500; }
+.mt-sm-thin .cago { flex: none; color: var(--ln-dim); font-size: 12px; }
+.mt-sm .mt-ta-world.lv-far .mt-ta-slot.thin .mt-ta-card { padding: 0 12px; }
+.mt-sm .mt-ta-world.lv-far .mt-sm-thin { font-size: clamp(19px, calc(10px * var(--ik, 1)), 23px); gap: 12px; }
+.mt-sm .mt-ta-world.lv-far .mt-sm-thin i { width: 12px; height: 12px; border-width: 2.5px; }
+.mt-sm .mt-ta-world.lv-far .mt-sm-thin .cago { font-size: 18px; }
+
+/* P164: 쉬는 세션 카드의 뒤 일 표시(뒤 셸·뒤 하위 에이전트). 작업 중 빛과 달리 조용한 무채색 알약, 움직이지 않는다. 끝나면 사라진다 */
+.mt-bg-ico { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.mt-bg-badge { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 1px 7px; border-radius: 999px; border: 1px solid rgba(255, 252, 240, 0.18); background: rgba(255, 252, 240, 0.05); color: #cfcbc1; font-size: 11.5px; font-weight: 500; line-height: 1.5; white-space: nowrap; }
+.mt-sm .mt-ta-full .c1 .mt-bg-badge { align-self: center; }
+.mt-bg-tile { display: inline-flex; align-items: center; gap: 0.2em; margin-left: 0.4em; color: #cfcbc1; font-size: 0.8em; font-weight: 500; }
+.mt-sm-peek .pkbg { display: flex; flex-direction: column; gap: 2px; color: var(--ln-text); }
+.mt-sm-peek .pkbg .it { display: flex; align-items: baseline; gap: 6px; font-size: 12px; min-width: 0; }
+.mt-sm-peek .pkbg .it .mt-bg-ico { align-self: center; color: var(--ln-dim); }
+.mt-sm-peek .pkbg .it b { font-weight: 600; flex: none; }
+.mt-sm-peek .pkbg .it .lbl { font-family: var(--font-mono); font-size: 11.5px; color: #cfcbc1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- P165: 음성 입력(Voice.jsx) ----------
+   명령줄 왼쪽 마크 옆의 마이크 단추. 듣는 중은 빨간 점(고정 표시, 움직이지 않는다), 연결 중은 흐리게, 오류는 빨간 테두리.
+   녹음 중에는 textarea 글자를 투명하게 하고 겹(.mt-cmd-mirror)이 글을 그려 미확정 들은 글(.mt-cmd-live)을 흐리게 보인다(커서는 textarea 그대로) */
+.mt-voice-btn { position: relative; width: 30px; height: 30px; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  border: 1.3px solid var(--cmd-btn-line); background: none; color: var(--chrome-text); }
+.mt-voice-btn .mt-i { width: 16px; height: 16px; }
+.mt-voice-btn:hover { border-color: var(--chrome-text-3); }
+.mt-voice-btn[data-state="connecting"], .mt-voice-btn[data-state="stopping"] { color: var(--chrome-text-3); border-style: dashed; }
+.mt-voice-btn[data-state="listening"] { border-color: var(--badge); color: var(--badge-text); background: var(--badge-bg); }
+.mt-voice-btn[data-state="error"] { border-color: var(--bad); color: var(--bad); }
+.mt-voice-dot { position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--badge); box-shadow: 0 0 0 2px var(--chrome-bg-2); }
+.mt-cmd > .mt-voice-btn { margin-bottom: 14px; margin-left: -4px; }
+.mt-cmd-field[data-voice="1"] > .mt-cmd-input { color: transparent; caret-color: var(--chrome-text); }
+.mt-cmd-field[data-voice="1"] .mt-cmd-mirror { color: var(--chrome-text); }
+.mt-cmd-field[data-voice="1"] .mt-cmd-live { color: color-mix(in srgb, var(--chrome-text) 45%, transparent); }
+
+/* macOS 판: 설정 › Claude 계정 */
+.mt-acct { display: grid; gap: 10px; align-content: start; }
+.mt-acct-list { display: grid; gap: 4px; }
+.mt-acct-row { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 4px 8px; border-radius: 8px; }
+.mt-acct-row:hover { background: var(--panel-2); }
+.mt-acct-main { flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(80px, 160px) minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.mt-acct-name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mt-acct-dir { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mt-acct-status { font-size: 12px; white-space: nowrap; }
+.mt-acct-status.ok { color: var(--ok, var(--text-2)); }
+.mt-acct-status.warn { color: var(--warn); }
+.mt-acct-actions { display: flex; gap: 6px; flex: none; }
+.mt-acct-order { display: flex; align-items: center; gap: 2px; flex: none; }
+.mt-acct-rank { width: 18px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-2); }
+.mt-acct-mv { min-width: 26px; padding-inline: 0; }
+.mt-acct-failover { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.mt-acct-failover input { margin-top: 3px; }
+.mt-acct-failover .mt-set-note { margin: 0; }
+.mt-acct-add { display: grid; grid-template-columns: minmax(120px, 200px) minmax(0, 1fr) auto; align-items: end; gap: 8px; }

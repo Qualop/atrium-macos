@@ -11,17 +11,19 @@ const labelMap = (ns, keys) => new Proxy({}, {
 });
 
 export const STATE_LABEL = labelMap('state', ['starting', 'trust_wait', 'ready', 'working', 'waiting', 'error', 'exited', 'shell_idle', 'shell_running', 'sleeping']);
-export const EXIT_LABEL = labelMap('exit', ['normal', 'herdr_stopped', 'trust_declined', 'other']);
+export const EXIT_LABEL = labelMap('exit', ['normal', 'user', 'terminal_stopped', 'trust_declined', 'other']);
 export const DELIVERY_LABEL = labelMap('delivery', ['queued', 'sending', 'sent', 'confirmed', 'unconfirmed', 'failed', 'cancelled']);
-export const WAIT_REASON_LABEL = labelMap('waitReason', ['waiting', 'starting', 'trust_wait', 'working', 'user_typing', 'no_agent', 'herdr_down', 'sleeping']);
+export const WAIT_REASON_LABEL = labelMap('waitReason', ['waiting', 'starting', 'trust_wait', 'working', 'user_typing', 'no_agent', 'terminal_down', 'sleeping', 'editing']); // P158: editing(판 칩에서 고치는 중)
 
 export function deliveryText(d) {
   const base = DELIVERY_LABEL[d.status] || d.status;
   if (!d.reason) return base;
   if (d.reason === 'typed') return t('delivery.withReason', { base, reason: t('typeNow.typed') }); // P90: 일하는 중에 Claude Code 대기 메시지로 넣었다
-  if (d.status === 'queued' && d.reason === 'draft') return t('delivery.withReason', { base, reason: t('typeNow.draft') });
+  if (d.reason === 'draft') return t('delivery.withReason', { base, reason: t('typeNow.draft') }); // P141(#17): 보내는 중(sending)에도 원문 까닭 대신 사전 글
   if (d.status === 'queued') return t('delivery.withReason', { base, reason: WAIT_REASON_LABEL[d.reason] || d.reason });
   if (d.status === 'cancelled' && d.reason === 'user') return base;
+  if (/^draft_(moved|restored|partial|stashed|held)$/.test(d.reason)) return t('delivery.withReason', { base, reason: t(`draftAside.${d.reason.slice(6)}`) }); // P128
+  if (d.reason === 'input_box_other') return t('delivery.withReason', { base, reason: t('deliveryBox.otherText') }); // P126
   return t('delivery.withReason', { base, reason: d.reason });
 }
 

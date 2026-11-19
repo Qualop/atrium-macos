@@ -18,7 +18,7 @@ const data = {
     { id: 'l1', name: 'echo it', harness: 'command', icon: '', preview: { line: 'echo hi', typed: true, env: [] } },
   ],
   favorites: ['codex', 'claude', 'l1'],
-  harnesses: [{ id: 'claude', fields: ['model', 'effort', 'permissionMode', 'allowHerdr', 'args', 'env', 'checkUrl'], models: ['haiku'] }, { id: 'codex', fields: ['model', 'args'], models: ['gpt-6-astra'] }, { id: 'shell', fields: [] }, { id: 'command', fields: ['command', 'env'] }],
+  harnesses: [{ id: 'claude', fields: ['model', 'effort', 'permissionMode', 'args', 'env', 'checkUrl'], models: ['haiku'] }, { id: 'codex', fields: ['model', 'args'], models: ['gpt-6-astra'] }, { id: 'shell', fields: [] }, { id: 'command', fields: ['command', 'env'] }],
 };
 
 test('P33 레일 아이콘: 고른 아이콘, 하네스 로고, 셸, 직접 명령은 머리글자', () => {

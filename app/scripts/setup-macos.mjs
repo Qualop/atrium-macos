@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { HERDR_VERSION } from '../../backend/src/config.mjs';
+import { MAC_HC_PINS } from '../../backend/src/hc/pin.mjs';
 
 if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch)) throw new Error('macOS Apple Silicon 또는 Intel이 필요합니다.');
 requireSupportedNode();
@@ -34,5 +35,20 @@ if (!valid()) {
   }
 }
 fs.chmodSync(dest, 0o755);
+// herdr-core(hc): 보드의 터미널 엔진. 고정한 공식 tar.gz(Developer ID 서명 그대로)를 받아 둔다. 보드가 처음 뜰 때 데이터 폴더에 풀고 서명을 확인한다
+const hcPin = MAC_HC_PINS[process.arch];
+const hcDest = path.join(root, '.tools', 'hc', `${hcPin.version}-${hcPin.target}.tar.gz`);
+const hcValid = () => fs.existsSync(hcDest) && crypto.createHash('sha256').update(fs.readFileSync(hcDest)).digest('hex') === hcPin.sha256;
+if (!hcValid()) {
+  console.log(`herdr-core ${hcPin.version} (${hcPin.target}) 다운로드`);
+  const response = await fetch(hcPin.url, { signal: AbortSignal.timeout(120000) });
+  if (!response.ok) throw new Error(`다운로드 실패: ${response.status}`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (crypto.createHash('sha256').update(bytes).digest('hex') !== hcPin.sha256) throw new Error('herdr-core 체크섬 불일치');
+  fs.mkdirSync(path.dirname(hcDest), { recursive: true });
+  const temporary = `${hcDest}.${crypto.randomUUID()}.tmp`;
+  try { fs.writeFileSync(temporary, bytes, { mode: 0o644, flag: 'wx' }); fs.renameSync(temporary, hcDest); }
+  finally { try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; } }
+}
 for (const folder of ['backend', 'app']) execFileSync('npm', ['ci', '--no-audit', '--no-fund'], { cwd: path.join(root, folder), stdio: 'inherit' });
 console.log('설치 완료. app 폴더에서 npm run mac으로 실행하세요.');

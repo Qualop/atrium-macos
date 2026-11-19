@@ -155,7 +155,7 @@ async function boot() {
   const tsw = new TailscaleWatch({ port, bin: 'tailscale', run: fakeRun(state) });
   await tsw.refresh();
   const logs = [];
-  const web = new WebServer({ cfg: { remoteEnabled: true, port, dataDir: dir, profile: 'dev', herdrSession: 'atrium-dev-test' }, store, api: null, tailscale: tsw, log: (m) => logs.push(m) });
+  const web = new WebServer({ cfg: { remoteEnabled: true, port, dataDir: dir, profile: 'dev', terminalSession: 'atrium-dev-test' }, store, api: null, tailscale: tsw, log: (m) => logs.push(m) });
   const apiToken = 'board-api-token-for-test';
   const api = new ApiServer({ token: apiToken, handlers: { ...web.handlers(), whoami: (p, c) => ({ kind: c.auth.kind, remote: c.remote, tsNode: c.auth.tsNode || null }) }, authorize: (req) => web.authorize(req, apiToken), onClose: () => {} });
   web.api = api;

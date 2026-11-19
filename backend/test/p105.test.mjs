@@ -8,7 +8,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { repoSleepPlan, sleepTarget, sessionActivity, backgroundOf, parseExitBackground, Sleeper, SLEEP_REASONS, SLEEP_RETRY_MS, SLEEP_RETRY_MAX_MS, BG_HOOK_MAX_MS, isActivity } from '../src/sleep.mjs';
 import { isToolCommand } from '../src/resources.mjs';
-import { newRuntime, deriveState, applyHerdrStatus, applyAgentDetected, applyAgentReleased, applyHook } from '../src/state.mjs';
+import { newRuntime, deriveState, applyTermStatus, applyAgentDetected, applyAgentReleased, applyHook } from '../src/state.mjs';
 import { transcriptPathFor } from '../src/launch.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p105-'));
@@ -93,7 +93,7 @@ function fakeBoard({ exitScreen = null, kids = [], panes = [], panesFail = false
     cfg: { claudeProjects: root, killWaitMs: 600 }, sessions, store, queue, killing: new Set(), log: () => {},
     hooked: (s) => s.rt.hooked !== false, relay: { stats: () => [], detach: () => {} },
     features: { loops: { activeCount: () => 0 }, settings: { get: () => ({ sleepAfterMin: 30, sessionSleepAfterMin: 0 }) } }, // P111: 리포 규칙만 본다(세션 규칙은 p111.test.mjs)
-    requireHerdr: () => {},
+    requireTerminal: () => {},
     resolve: (ref) => sessions.get(ref) || [...sessions.values()].find((s) => s.name === ref),
     broadcastSession: (s, o) => calls.push(['broadcast', s.name, deriveState(s.rt).state, o && o.cause]),
     adapter: {
@@ -105,9 +105,9 @@ function fakeBoard({ exitScreen = null, kids = [], panes = [], panesFail = false
         calls.push(['paneKeys', pane, k.join('+')]);
         const s = [...sessions.values()].find((x) => x.paneId === pane);
         if (k[0] === 'enter') {
-          if (exitScreen === 'bg') { screen = BG_SCREEN; applyHerdrStatus(s.rt, 'blocked'); }
+          if (exitScreen === 'bg') { screen = BG_SCREEN; applyTermStatus(s.rt, 'blocked'); }
           else if (exitScreen !== 'stuck') setTimeout(() => applyAgentReleased(s.rt), 30);
-        } else if (k[0] === 'esc' && screen === BG_SCREEN) { screen = PROMPT; applyHerdrStatus(s.rt, 'idle'); }
+        } else if (k[0] === 'esc' && screen === BG_SCREEN) { screen = PROMPT; applyTermStatus(s.rt, 'idle'); }
       },
       workspacePanes: async () => { if (panesFail) throw Object.assign(new Error('x'), { code: 'herdr_error' }); return panes; },
       closeWorkspace: async (id) => { calls.push(['closeWorkspace', id]); },
@@ -116,9 +116,9 @@ function fakeBoard({ exitScreen = null, kids = [], panes = [], panesFail = false
     },
   };
   const rt = newRuntime({ kind: 'claude', hooked: true });
-  applyAgentDetected(rt); applyHerdrStatus(rt, 'idle');
+  applyAgentDetected(rt); applyTermStatus(rt, 'idle');
   rt.lastActivityAt = Date.now() - 40 * MIN; rt.lastHookAt = Date.now() - 40 * MIN; rt.launchedAt = Date.now() - 60 * MIN;
-  const s = { sessionId: ID(1), name: 'a1', cwd, kind: 'claude', origin: 'board', paneId: 'w1:p1', herdrWorkspaceId: 'w1', agentName: 'a1', settingsPath: 'C:/d/a1.json', rt, touchedAt: Date.now() - 40 * MIN };
+  const s = { sessionId: ID(1), name: 'a1', cwd, kind: 'claude', origin: 'board', paneId: 'w1:p1', termWorkspaceId: 'w1', agentName: 'a1', settingsPath: 'C:/d/a1.json', rt, touchedAt: Date.now() - 40 * MIN };
   sessions.set(s.sessionId, s);
   const f = transcriptPathFor(root, cwd, s.sessionId); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, '{}\n');
   const readTable = async () => ({ procs: new Map([[9001, { pid: 9001, ppid: 1, ws: 50 * 1048576, name: 'powershell.exe' }], [9002, { pid: 9002, ppid: 9001, ws: 300 * 1048576, name: 'claude.exe' }]]) });
@@ -155,7 +155,7 @@ test('P105 저절로: 뒤 셸 프로세스가 도는 세션의 리포는 잠들�
 test('P105 hook: Stop의 background_tasks가 있으면 잠들지 않고, 그 뒤 프로세스에 도구 명령이 없으면 끝난 것으로 본다(낡은 목록)', async () => {
   const { s, sl, calls, proc } = fakeBoard({ kids: [BASH] });
   applyHook(s.rt, { hook_event_name: 'Stop', background_tasks: [{ id: 'b1', type: 'shell', status: 'running', command: 'ping -n 900 localhost' }] }, Date.now() - 40 * MIN);
-  assert.deepEqual(s.rt.bg.tasks, [{ id: 'b1', type: 'shell' }], '명령 글은 남기지 않는다(P92)');
+  assert.deepEqual(s.rt.bg.tasks, [{ id: 'b1', type: 'shell', label: 'ping -n 900 localhost' }], 'P164: 세션 맵에 보일 한 줄만 남긴다');
   assert.equal(sl.plan('', 'auto').why, 'background');
   await sl.tick();
   assert.equal(exits(calls), 0);
@@ -216,8 +216,8 @@ test('P105 실패: /exit 뒤에도 claude가 남으면 그 세션을 미루고(�
   e.until = Date.now() - 1;
   assert.equal(sl.plan('', 'auto').why, null);
   // 같은 리포에 다른 세션이 있으면 그 세션은 잠든다
-  const rt2 = newRuntime({ kind: 'claude', hooked: true }); applyAgentDetected(rt2); applyHerdrStatus(rt2, 'idle'); rt2.lastHookAt = Date.now() - 40 * MIN; rt2.launchedAt = Date.now() - 60 * MIN;
-  const s2 = { ...s, sessionId: ID(2), name: 'a2', paneId: 'w2:p1', herdrWorkspaceId: 'w2', rt: rt2 };
+  const rt2 = newRuntime({ kind: 'claude', hooked: true }); applyAgentDetected(rt2); applyTermStatus(rt2, 'idle'); rt2.lastHookAt = Date.now() - 40 * MIN; rt2.launchedAt = Date.now() - 60 * MIN;
+  const s2 = { ...s, sessionId: ID(2), name: 'a2', paneId: 'w2:p1', termWorkspaceId: 'w2', rt: rt2 };
   fs.writeFileSync(transcriptPathFor(b.cfg.claudeProjects, s.cwd, s2.sessionId), '{}\n');
   b.sessions.set(s2.sessionId, s2);
   e.until = Date.now() + MIN;

@@ -9,7 +9,7 @@ import { closeHttp } from '../src/backend.mjs';
 // handleHttp만 쓰는 Branch: 인증은 통과, 처리(dispatch)는 끝나지 않는다(준비를 기다리는 atrium child 흉내)
 function stuckBranch() {
   const br = Object.create(Branch.prototype);
-  br.b = { cfg: { herdrSession: 'atrium-test', port: 0 }, log() {} };
+  br.b = { cfg: { terminalSession: 'atrium-test', port: 0 }, log() {} };
   br.auth = () => ({ s: { sessionId: 's1' } });
   br.dispatch = () => new Promise(() => {});
   return br;

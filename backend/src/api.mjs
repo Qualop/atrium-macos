@@ -10,8 +10,9 @@ export const REMOTE_DEFLATE = { threshold: 512, zlibDeflateOptions: { level: 1 }
 export class ApiServer {
   // authorize(req): P48 연결 허락. { kind: 'local' }(판 API 토큰), { kind: 'device', device, remote? }(기기 토큰), null(막음). 없으면 판 API 토큰만 본다
   // ready: P54 백엔드가 다 뜰 때 풀리는 약속. 그 전에 온 요청은 기다렸다가 처리한다(뜨는 중인 백엔드의 빈 필드나 아직 없는 처리기를 부르지 않게)
-  constructor({ token, handlers, onClose, onOpen, log, authorize, ready = null }) {
+  constructor({ token, handlers, onClose, onOpen, log, authorize, ready = null, onBinary = null }) {
     this.ready = ready;
+    this.onBinary = onBinary; // P165
     this.token = token; this.handlers = handlers; this.onClose = onClose; this.onOpen = onOpen || (() => {}); this.log = log || (() => {}); this.authorize = authorize || null;
     this.wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
     this.wssRemote = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024, perMessageDeflate: REMOTE_DEFLATE }); // P49
@@ -60,8 +61,10 @@ export class ApiServer {
     }
     this.clients.add(client);
     this.onOpen(client);
-    ws.on('message', async (raw) => {
+    ws.on('message', async (raw, isBinary) => {
       const sendError = (id, code, message) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ id: id ?? null, error: { code, message } })); };
+      // P165: 바이너리 프레임은 음성 입력의 소리다(voice.mjs). 처리기가 없으면 버린다
+      if (isBinary) { if (this.onBinary) { try { this.onBinary(client, raw); } catch (e) { this.log(`api binary failed: ${e.message}`); } } return; }
       let msg;
       try { msg = JSON.parse(String(raw)); } catch { return sendError(null, 'bad_json', 'invalid JSON'); }
       if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.method !== 'string' || !msg.method

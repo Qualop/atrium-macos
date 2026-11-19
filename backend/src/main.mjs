@@ -1,5 +1,5 @@
 // 백엔드 실행: node src/main.mjs [--dev]
-// 환경 변수 ATRIUM_PROFILE, ATRIUM_HERDR_SESSION, ATRIUM_PORT, ATRIUM_DATA_DIR(옛 이름 MTASK_*도 받는다)로 프로필 기본값을 바꿀 수 있다.
+// 환경 변수 ATRIUM_PROFILE, ATRIUM_TERMINAL_SESSION, ATRIUM_PORT, ATRIUM_DATA_DIR(옛 이름 MTASK_*와 터미널 세션의 옛 이름도 받는다, config.mjs)로 프로필 기본값을 바꿀 수 있다.
 import { loadConfig } from './config.mjs';
 import { Backend } from './backend.mjs';
 

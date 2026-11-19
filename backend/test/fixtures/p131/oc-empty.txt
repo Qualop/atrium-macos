@@ -1,0 +1,119 @@
+   P115 ok. Summary: the user ra +
+
+  ┃                                                                                                                                                             P115 ok. Summary: the user ran probe
+  ┃  hello there                                                                                                                                                commands for the p115 experiment.
+  ┃
+                                                                                                                                                                Context
+     P115 ok. Summary: the user ran probe commands for the p115 experiment.                                                                                     15 tokens
+                                                                                                                                                                0% used
+     Build · demo-model · 33ms · 333.3 tok/s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · demo-model demo connection
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  C:\work\demo                                                                                                        15 (0%)  ctrl+p commands    C:\work\demo

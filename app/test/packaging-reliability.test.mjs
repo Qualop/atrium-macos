@@ -22,6 +22,11 @@ function fixture(t, version = '0.2.0') {
   write('backend/src/runtime.mjs', fs.readFileSync(new URL('../../backend/src/runtime.mjs', import.meta.url)));
   write('backend/src/config.mjs', "export const HERDR_VERSION = '0.9.5'; export const HERDR_PROTOCOLS = [22];");
   write('backend/src/platform.mjs', 'export const findExecutable = () => null;');
+  // herdr-core(hc) 고정값: 픽스처 내려받기와 같은 SHA-256. 고정 tar.gz는 이미 받아 둔 것으로 둔다
+  const hcPin = (target) => ({ version: '0.1.20', generation: 1, target, url: 'https://fixture.invalid/hc.tar.gz', sha256: digest, signer: 'TeamIdentifier=FIXTURE', identifier: 'dev.herdr.core' });
+  write('backend/src/hc/pin.mjs', `export const MAC_HC_PINS = ${JSON.stringify({ arm64: hcPin('macos-aarch64'), x64: hcPin('macos-x86_64') })};\nexport const HC_PIN = MAC_HC_PINS[process.arch] || MAC_HC_PINS.arm64;\n`);
+  write(`.tools/hc/0.1.20-${process.arch === 'x64' ? 'macos-x86_64' : 'macos-aarch64'}.tar.gz`, 'download fixture');
+  write('app/licenses/herdr-core-LICENSE', 'fixture license');
   write('app/src/main/main.mjs', 'process.stdout.write(JSON.stringify({ path: process.env.PATH }));');
   write('app/package.json', JSON.stringify({ type: 'module', version, main: 'src/main/main.mjs' }));
   for (const file of ['app/dist/index.html', 'app/assets/atrium-icon-256.png', 'app/THIRD_PARTY_NOTICES.txt', 'app/node_modules/react/index.js', 'backend/bin/atrium.mjs', 'backend/scripts/bridge.mjs', 'backend/node_modules/ws/index.js', 'backend/node_modules/ws/LICENSE', 'LICENSE', `.tools/herdr/0.9.5-${process.arch}/herdr`, 'app/node_modules/electron/dist/LICENSE', 'app/node_modules/electron/dist/LICENSES.chromium.html', 'app/node_modules/electron/dist/Electron.app/Contents/Info.plist']) write(file, 'fixture');

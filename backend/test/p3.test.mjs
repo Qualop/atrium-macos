@@ -1,4 +1,4 @@
-// P3 단위 시험: herdr와 claude 없이 돌릴 수 있는 규칙들(C3 대책, 그룹·묶음, 복귀 요약, 자원, D3). E1·E3 시험은 P4에서 기능과 함께 뺐다
+// P3 단위 시험: 터미널 서버와 claude 없이 돌릴 수 있는 규칙들(C3 대책, 그룹·묶음, 복귀 요약, 자원). D3(화면 클라이언트 세기)는 P129에서 herdr와 함께 뺐다. E1·E3 시험은 P4에서 기능과 함께 뺐다
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,8 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { recoveryPlan, argvHasSettings, buildResumeArgs, buildResumeArgv } from '../src/launch.mjs';
 import { summarizeChanges } from '../src/changes.mjs';
-import { parseClientLogLine } from '../src/herdr/adapter.mjs';
-import { tuiClientsFor, descendants, argvOf } from '../src/resources.mjs';
+import { descendants } from '../src/resources.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p3-'));
 const SETTINGS = 'C:/x/.dev/data/sessions/s1.json';
@@ -44,14 +43,14 @@ test('A3: 복귀 요약은 바뀐 것만 한 줄씩, 같은 세션의 같은 종
     ev(5, 'c', 'state', { from: 'working', to: 'error', error: { type: 'rate_limit' } }),
     ev(6, 'd', 'state', { from: 'ready', to: 'exited', exit: { kind: 'normal' } }),
     ev(6, 'd', 'closed', { reason: 'killed' }), // 같은 끄기: 한 번으로 센다
-    ev(7, 'e', 'state', { from: 'working', to: 'exited', exit: { kind: 'herdr_stopped' } }),
+    ev(7, 'e', 'state', { from: 'working', to: 'exited', exit: { kind: 'terminal_stopped' } }),
     ev(8, 'e', 'turn_interrupted', { state: 'working', prompt: 'long job' }),
-    ev(9, null, 'herdr_disconnected', { expected: false }),
-    ev(10, null, 'herdr_connected', {}),
+    ev(9, null, 'terminal_disconnected', { expected: false }),
+    ev(10, null, 'terminal_connected', {}),
   ];
   const names = { a: 'a', b: 'b', c: 'c', d: 'd', e: 'e' };
   const lines = summarizeChanges(events, { nameOf: (s) => names[s], current: new Map([['a', { state: 'ready' }], ['b', { state: 'ready' }], ['c', { state: 'error' }], ['e', { state: 'ready' }]]) });
-  assert.deepEqual(lines.map((l) => `${l.kind}:${l.name || ''}`), ['needs_you:b', 'error:c', 'interrupted:e', 'exited:d', 'turn_done:a', 'herdr:']);
+  assert.deepEqual(lines.map((l) => `${l.kind}:${l.name || ''}`), ['needs_you:b', 'error:c', 'interrupted:e', 'exited:d', 'turn_done:a', 'terminal:']);
   const done = lines.find((l) => l.kind === 'turn_done');
   assert.equal(done.count, 2); assert.equal(done.text, 'second answer line');
   assert.equal(lines.find((l) => l.kind === 'needs_you').stillOpen, false); // 지금은 풀림
@@ -80,38 +79,7 @@ test('E2: 브리핑의 마지막 지시는 사람이 쓴 지시다(거부·중�
   assert.ok(!isSyntheticUserText('일반 지시'));
 });
 
-test('D3: herdr 서버 로그에서 붙은 화면(TUI)만 센다. 판의 제어기는 빼고, 서버가 다시 뜨면 비운다', () => {
-  const lines = [
-    '2026-10-29T13:42:12.520970Z  INFO herdr::server::headless::bootstrap: herdr server started api_socket=x client_socket=y',
-    '2026-10-29T13:42:45.323737Z  INFO herdr::server::headless: client connected client_id=2 cols=93 rows=39 cell_width_px=8 cell_height_px=16 surface_active=true render_encoding=SemanticFrame',
-    '2026-10-29T13:43:10.995917Z  INFO herdr::server::headless: direct terminal client connected client_id=3 cols=80 rows=24 cell_width_px=0 cell_height_px=0',
-    '2026-10-29T13:43:10.995954Z  INFO herdr::server::headless: terminal attach client connected client_id=3 cols=80 rows=24 terminal_id=term_65',
-  ];
-  const c = new Map();
-  for (const l of lines) parseClientLogLine(l, c);
-  assert.deepEqual([...c.keys()], ['2']);
-  assert.equal(c.get('2').at, Date.parse('2026-10-29T13:42:45.323737Z'));
-  parseClientLogLine('2026-10-29T13:43:13.590710Z  INFO herdr::server::headless: client detached client_id=3', c);
-  assert.deepEqual([...c.keys()], ['2']);
-  parseClientLogLine('2026-10-29T13:43:26.312243Z  INFO herdr::server::headless: client disconnected client_id=2', c);
-  assert.equal(c.size, 0);
-  parseClientLogLine(lines[1], c);
-  parseClientLogLine(lines[0], c);
-  assert.equal(c.size, 0);
-});
-
-test('D3·D1: herdr 프로세스 명령줄에서 화면(TUI)을 고르고, 셸 아래 프로세스 메모리를 더한다', () => {
-  const exe = '"C:\\Users\\u\\.herdr\\packages\\standalone\\releases\\0.9.5\\herdr.exe"';
-  const procs = [
-    { pid: 1, cmd: `${exe} --session multitask-dev server` },
-    { pid: 2, cmd: `${exe} --session multitask-dev terminal session control w2:p1 --takeover --cols 80 --rows 24` },
-    { pid: 3, cmd: `${exe} --session multitask-dev` },
-    { pid: 4, cmd: `${exe} session attach multitask-dev` },
-    { pid: 5, cmd: `${exe} --session multitask-dev-other` },
-    { pid: 6, cmd: `${exe}` },
-  ];
-  assert.deepEqual(tuiClientsFor(procs, 'multitask-dev').map((x) => x.pid), [3, 4]);
-  assert.deepEqual(argvOf('"a b.exe" --x "c d"'), ['a b.exe', '--x', 'c d']);
+test('D1: 셸 아래 프로세스 메모리를 더한다', () => {
   const table = new Map([[10, { pid: 10, ppid: 1, ws: 100 }], [11, { pid: 11, ppid: 10, ws: 200 }], [12, { pid: 12, ppid: 11, ws: 50 }], [13, { pid: 13, ppid: 99, ws: 999 }]]);
   assert.deepEqual(descendants(table, 10).map((p) => p.pid).sort(), [10, 11, 12]);
 });

@@ -28,7 +28,7 @@ export function needsBuild() {
   try { built = fs.statSync(DIST).mtimeMs; } catch { return true; }
   return !fs.existsSync(path.join(ROOT, 'dist', 'index.html')) || Math.max(...SOURCES.map(newest)) > built;
 }
-// 부모 Claude Code 표시 변수와 ELECTRON_RUN_AS_NODE(있으면 Electron이 node로 돈다)를 뺀다. 백엔드와 herdr도 각자 한 번 더 뺀다
+// 부모 Claude Code 표시 변수와 ELECTRON_RUN_AS_NODE(있으면 Electron이 node로 돈다)를 뺀다. 백엔드와 터미널 서버도 각자 한 번 더 뺀다
 const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_EFFORT|CLAUDE_PID|CLAUDE_AGENT_SDK|ELECTRON_RUN_AS_NODE)/.test(k)));
 
 const dry = process.argv.includes('--dry-run');
@@ -36,7 +36,7 @@ const args = ['.', ...process.argv.slice(2).filter((a) => a !== '--dry-run' && a
 const build = needsBuild();
 if (dry) {
   const cfg = loadConfig({ argv: args });
-  console.log(JSON.stringify({ build, exe: ELECTRON, args, cwd: ROOT, profile: cfg.profile, herdrSession: cfg.herdrSession, port: cfg.port, dataDir: cfg.dataDir, appUserData: envVar('APP_USERDATA') || null }, null, 2));
+  console.log(JSON.stringify({ build, exe: ELECTRON, args, cwd: ROOT, profile: cfg.profile, terminalSession: cfg.terminalSession, port: cfg.port, dataDir: cfg.dataDir, appUserData: envVar('APP_USERDATA') || null }, null, 2));
   process.exit(0);
 }
 if (!fs.existsSync(ELECTRON)) { console.error(`Electron이 없다: ${ELECTRON}\napp 폴더에서 npm install을 먼저 한다`); process.exit(1); }

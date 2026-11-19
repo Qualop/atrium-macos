@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS convo_nodes (convo_id TEXT PRIMARY KEY, workspace_key
 // P10: 보관 표 archive(항목 'convo:<대화 ID>' 또는 'session:<세션 ID>'마다 손으로 보관한 시각과 꺼낸 시각). 판정은 archive.mjs.
 // P7의 "빼기"(sessions.dismissed_at)는 손 보관으로 읽는다. workspaces.auto_opened는 리포 스스로 찾기가 연 워크스페이스(빈 영역을 작게)
 // sessions에 더하는 열: 닫힌 까닭, 사이드바 목록에서 뺀 시각, 다시 열 때 다른 세션으로 옮겨 간 경우 그 세션 ID(판에 올린 claude, J2)
-export const RECALL_COLUMNS = { sessions: { close_reason: 'TEXT', dismissed_at: 'INTEGER', reopened_as: 'TEXT' }, workspaces: { auto_opened: 'INTEGER' }, convo_index: { start_at: 'INTEGER', prompt_key: 'TEXT', spawns: 'TEXT', spawn_off: 'INTEGER', subagents: 'INTEGER' } };
+export const RECALL_COLUMNS = { sessions: { close_reason: 'TEXT', dismissed_at: 'INTEGER', reopened_as: 'TEXT' }, workspaces: { auto_opened: 'INTEGER' }, convo_index: { start_at: 'INTEGER', prompt_key: 'TEXT', spawns: 'TEXT', spawn_off: 'INTEGER', subagents: 'INTEGER', harness: 'TEXT' } }; // P133: harness(NULL은 Claude Code, 'codex')
 export const RECALL_SESSION_FIELDS = { closeReason: 'close_reason', dismissedAt: 'dismissed_at', reopenedAs: 'reopened_as', settingsPath: 'settings_path', hookToken: 'hook_token', name: 'name', label: 'label', permissionMode: 'permission_mode', model: 'model', effort: 'effort' };
 
 const J = (v) => (v == null ? null : JSON.stringify(v));
@@ -27,7 +27,7 @@ const P = (s, d = null) => { if (s == null) return d; try { return JSON.parse(s)
 function convoRow(r) {
   if (!r) return null;
   return { path: r.path, convId: r.convo_id, size: r.size, mtime: r.mtime, cwd: r.cwd, branch: r.branch, entrypoints: P(r.entrypoints, []), title: r.title, titleSource: r.title_source, firstPrompt: r.first_prompt, lastPrompt: r.last_prompt, lastAnswer: r.last_answer, firstAt: r.first_at, lastAt: r.last_at, prompts: r.prompts, answers: r.answers, hasText: !!r.has_text, scannedAt: r.scanned_at,
-    startAt: r.start_at ?? null, promptKey: r.prompt_key ?? null, spawns: P(r.spawns, []), spawnOff: r.spawn_off ?? 0, subagents: r.subagents ?? 0 };
+    startAt: r.start_at ?? null, promptKey: r.prompt_key ?? null, spawns: P(r.spawns, []), spawnOff: r.spawn_off ?? 0, subagents: r.subagents ?? 0, harness: r.harness || 'claude' };
 }
 const convoNodeRow = (r) => (r ? { convId: r.convo_id, workspaceKey: r.workspace_key, x: r.x, y: r.y, w: r.w, h: r.h, shown: !!r.shown, placedAt: r.placed_at, movedAt: r.moved_at ?? null, area: r.area || '' } : null); // P27: area(놓인 워크트리 영역)
 
@@ -37,14 +37,14 @@ export function installRecall(Store) {
     convoIndex() { return this.st('SELECT * FROM convo_index').all().map(convoRow); },
     getConvoById(id) { return convoRow(this.st('SELECT * FROM convo_index WHERE convo_id = ? ORDER BY last_at DESC LIMIT 1').get(String(id).toLowerCase())); },
     putConvo(c) {
-      this.st(`INSERT INTO convo_index (path, convo_id, size, mtime, cwd, branch, entrypoints, title, title_source, first_prompt, last_prompt, last_answer, first_at, last_at, prompts, answers, has_text, scanned_at, start_at, prompt_key, spawns, spawn_off, subagents)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      this.st(`INSERT INTO convo_index (path, convo_id, size, mtime, cwd, branch, entrypoints, title, title_source, first_prompt, last_prompt, last_answer, first_at, last_at, prompts, answers, has_text, scanned_at, start_at, prompt_key, spawns, spawn_off, subagents, harness)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(path) DO UPDATE SET convo_id = excluded.convo_id, size = excluded.size, mtime = excluded.mtime, cwd = excluded.cwd, branch = excluded.branch, entrypoints = excluded.entrypoints,
                  title = excluded.title, title_source = excluded.title_source, first_prompt = excluded.first_prompt, last_prompt = excluded.last_prompt, last_answer = excluded.last_answer,
                  first_at = excluded.first_at, last_at = excluded.last_at, prompts = excluded.prompts, answers = excluded.answers, has_text = excluded.has_text, scanned_at = excluded.scanned_at,
-                 start_at = excluded.start_at, prompt_key = excluded.prompt_key, spawns = excluded.spawns, spawn_off = excluded.spawn_off, subagents = excluded.subagents`)
+                 start_at = excluded.start_at, prompt_key = excluded.prompt_key, spawns = excluded.spawns, spawn_off = excluded.spawn_off, subagents = excluded.subagents, harness = excluded.harness`)
         .run(c.path, c.convId, c.size, Math.round(c.mtime), c.cwd ?? null, c.branch ?? null, J(c.entrypoints || []), c.title ?? null, c.titleSource ?? null, c.firstPrompt ?? null, c.lastPrompt ?? null, c.lastAnswer ?? null, c.firstAt ?? null, c.lastAt ?? null, c.prompts || 0, c.answers || 0, c.hasText ? 1 : 0, c.scannedAt || Date.now(),
-          c.startAt ?? null, c.promptKey ?? null, J(c.spawns || []), c.spawnOff ?? 0, c.subagents ?? 0);
+          c.startAt ?? null, c.promptKey ?? null, J(c.spawns || []), c.spawnOff ?? 0, c.subagents ?? 0, c.harness && c.harness !== 'claude' ? c.harness : null);
     },
     setConvoSpawns(p, spawns, off) { this.st('UPDATE convo_index SET spawns = ?, spawn_off = ? WHERE path = ?').run(J(spawns || []), off || 0, p); },
     // ---------- P13: 대화 노드 ----------
@@ -58,7 +58,7 @@ export function installRecall(Store) {
     setConvoNodesShown(ids, on) { for (const id of ids) this.st('UPDATE convo_nodes SET shown = ? WHERE convo_id = ?').run(on ? 1 : 0, String(id).toLowerCase()); },
     deleteConvoNodes(ids) { for (const id of ids) this.st('DELETE FROM convo_nodes WHERE convo_id = ?').run(String(id).toLowerCase()); },
     dropConvos(paths) { for (const p of paths) this.st('DELETE FROM convo_index WHERE path = ?').run(p); },
-    clearConvos() { this.db.exec('DELETE FROM convo_index'); }, // 읽는 방법(convos.mjs CONVO_PARSER)이 바뀌면 색인을 다시 만든다
+    clearConvos(harness = null) { if (harness) this.st('DELETE FROM convo_index WHERE harness = ?').run(harness); else this.db.exec('DELETE FROM convo_index'); }, // P133: harness만(Codex 읽는 법이 바뀌면) // 읽는 방법(convos.mjs CONVO_PARSER)이 바뀌면 색인을 다시 만든다
 
     // 닫힌 세션(J2): 판에서 빠진 것(다른 세션으로 옮겨 간 것은 빼고). 닫힌 까닭은 열(P7부터)이나 판 이벤트(P6까지). 보관 여부는 부르는 쪽이 archiveMarks로 가린다(P10)
     closedSessions() {
@@ -68,13 +68,17 @@ export function installRecall(Store) {
         return { sessionId: r.session_id, name: r.name, label: r.label ?? null, cwd: r.cwd, kind: r.kind || 'claude', origin: r.origin || 'board', workspaceKey: r.workspace_key ?? null, createdAt: r.created_at, closedAt: r.closed_at, dismissedAt: r.dismissed_at ?? null, reason, runtime: P(r.runtime, null), permissionMode: r.permission_mode, model: r.model, effort: r.effort };
       });
     },
+    // P120: 닫힌 세션 기록(보관 포함, 다시 열 수 있다)이 남은 워크스페이스 키. 폴더가 없어진 빈 영역을 치울 때 이 영역은 남긴다
+    closedWorkspaceKeys() { return new Set(this.st('SELECT DISTINCT workspace_key FROM sessions WHERE closed_at IS NOT NULL AND reopened_as IS NULL AND workspace_key IS NOT NULL').all().map((r) => r.workspace_key)); },
     // 판이 아는 대화 ID(열린 세션, 닫힌 세션, 목록에서 뺀 세션 모두): 판 밖 대화 목록에서 뺀다
     boardConversations() {
       const out = new Map();
-      for (const r of this.st("SELECT session_id, kind, origin, closed_at, dismissed_at, reopened_as, runtime FROM sessions WHERE kind = 'claude'").all()) {
+      // P133: 판이 띄운 Codex 세션의 대화 ID(이어 갈 ID harness.harnessSessionId, 터미널이 아는 agentSessionId)도 판이 아는 대화다
+      for (const r of this.st("SELECT session_id, kind, origin, closed_at, dismissed_at, reopened_as, runtime, harness FROM sessions WHERE kind IN ('claude', 'codex')").all()) {
         const rt = P(r.runtime, {}) || {};
-        const ids = new Set([r.origin === 'board' || !r.origin ? r.session_id : null, rt.claudeSessionId, rt.herdr && rt.herdr.agentSessionId].filter(Boolean).map((x) => String(x).toLowerCase()));
-        for (const id of ids) { const prev = out.get(id); const v = { sessionId: r.session_id, open: r.closed_at == null, dismissed: r.dismissed_at != null, movedTo: r.reopened_as ?? null }; if (!prev || (v.open && !prev.open)) out.set(id, v); }
+        const hp = P(r.harness, {}) || {};
+        const ids = new Set((r.kind === 'codex' ? [hp.harnessSessionId, rt.term && rt.term.agentSessionId] : [r.origin === 'board' || !r.origin ? r.session_id : null, rt.claudeSessionId, rt.term && rt.term.agentSessionId]).filter(Boolean).map((x) => String(x).toLowerCase()));
+        for (const id of ids) { const prev = out.get(id); const v = { sessionId: r.session_id, kind: r.kind, open: r.closed_at == null, dismissed: r.dismissed_at != null, movedTo: r.reopened_as ?? null }; if (!prev || (v.open && !prev.open)) out.set(id, v); }
       }
       return out;
     },

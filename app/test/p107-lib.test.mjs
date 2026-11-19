@@ -56,7 +56,7 @@ test('판 설정 workLight: 고르기(on 기본, system, off), 다른 값은 거
   assert.equal(SETTINGS.workLight.type, 'choice');
   assert.equal(DEFAULTS.workLight, 'on', '사용자의 PC는 늘 움직임 줄이기라 기본은 켬');
   assert.ok(!('missionLight' in SETTINGS), '옛 이름은 없다(릴리즈 전이라 옮기기 없음)');
-  assert.match(SETTINGS.workLight.label, /보드/); assert.match(SETTINGS.workLight.label, /미션 맵/);
+  assert.match(SETTINGS.workLight.label, /보드/); assert.match(SETTINGS.workLight.label, /세션 맵/);
   assert.deepEqual(normalizePatch({ workLight: 'system' }), { workLight: 'system' });
   assert.deepEqual(normalizePatch({ workLight: ' off ' }), { workLight: 'off' });
   assert.throws(() => normalizePatch({ workLight: 'blink' }), (e) => e.code === 'bad_request');
@@ -78,8 +78,8 @@ test('두 사전: workLight 글이 같은 키로 둘 다 있다(판 노드와 �
   assert.equal(en.workLight.name, 'Working session light'); assert.equal(ko.workLight.name, '작업 중 테두리 빛');
   assert.match(ko.workLight.system, /시스템/); assert.match(en.workLight.system, /system/i);
   assert.match(ko.workLight.note, /동작 줄이기/); assert.match(en.workLight.note, /reduced motion/);
-  assert.match(ko.workLight.hint, /보드/); assert.match(ko.workLight.hint, /미션 맵/);
-  assert.match(en.workLight.hint, /board/); assert.match(en.workLight.hint, /mission map/);
+  assert.match(ko.workLight.hint, /보드/); assert.match(ko.workLight.hint, /세션 맵/);
+  assert.match(en.workLight.hint, /board/); assert.match(en.workLight.hint, /session map/);
 });
 
 test('CSS 판 노드 둘레: 설정을 따른다(켬은 움직임 줄이기에서도 돎, system은 움직임 줄이기에서 멈춤, 끔은 늘 멈춤), 미션 맵을 연 동안 멈춤, 모양·속도·가벼운 판은 그대로', () => {

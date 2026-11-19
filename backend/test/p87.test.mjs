@@ -15,7 +15,7 @@ test('web.boot: 같은 id는 새 연결에서도 한 번만, 다른 id는 새 �
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mtask-p87-'));
   const store = new Store(path.join(dir, 'board.db'));
   const tailscale = { status: () => null, on: () => {}, off: () => {}, stop: () => {} };
-  const web = new WebServer({ cfg: { remoteEnabled: true, port: 1, dataDir: dir, profile: 'dev', herdrSession: 'atrium-dev-test' }, store, api: null, tailscale, settings: () => ({ remoteAccess: true }) });
+  const web = new WebServer({ cfg: { remoteEnabled: true, port: 1, dataDir: dir, profile: 'dev', terminalSession: 'atrium-dev-test' }, store, api: null, tailscale, settings: () => ({ remoteAccess: true }) });
   try {
     const h = web.handlers()['web.boot'];
     const crash = { view: 'board', up: 14000, steps: [{ s: 'fit', t: 13000, z: 0.139 }] };

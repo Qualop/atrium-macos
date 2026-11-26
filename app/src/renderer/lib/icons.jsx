@@ -37,6 +37,7 @@ export const PATHS = {
   foldAll: 'M7 4l5 5 5-5M7 20l5-5 5 5', // P103: 모두 접기(화살 둘이 안으로)
   unfoldAll: 'M7 9l5-5 5 5M7 15l5 5 5-5', // P103: 모두 펼치기(화살 둘이 밖으로)
   mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM19 11a7 7 0 0 1-14 0M12 18v3M8 21h8', // P165: 음성 입력
+  camera: 'M3 8a2 2 0 0 1 2-2h2.5l1.5-2h6l1.5 2H19a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', // 명령 바 화면 캡처(macOS 판)
 };
 
 export function Icon({ name, className = '', title }) {

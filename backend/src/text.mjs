@@ -14,6 +14,10 @@ export function unwrapPasted(s) {
 const BOARD_NOTICE = /^\s*\[(?:atrium|multitask|mtask)\s*(?:보드|판)\]/i;
 // P159: 하위·동료의 첫 요청은 판의 관계 줄("[Atrium 보드] 관계: …") 한 줄 뒤에 진짜 지시가 온다. 그 줄만 떼면 일이고 알림이 아니다
 const RELATION_LINE = /^\s*\[(?:atrium|multitask|mtask)\s*(?:보드|판)\]\s*관계:[^\n]*(?:\n|$)/i;
+// P180: 머리 묶음의 다음 줄(관계 줄 뒤에 이어지는 판 알림 줄)
+const BOARD_LINE = /^[ \t]*\[(?:atrium|multitask|mtask)\s*(?:보드|판)\][^\n]*(?:\n|$)/i;
+// P180: 에이전트가 보낸 글이 판 알림 꼴로 시작하는가(atrium prompt·child --prompt는 이 머리로 시작할 수 없다)
+export function startsAsBoardNotice(s) { return typeof s === 'string' && BOARD_NOTICE.test(unwrapPasted(s)); }
 // P164 뒤: 뒤 일(뒤 셸·뒤 하위 에이전트)이 끝나면 Claude Code가 `<task-notification>` 글로 새 턴을 연다. 사람·에이전트의 지시가 아니라 알림이다
 const HARNESS_NOTICE = /^\s*<task-notification>/;
 // 지시로 보일 글: 알림이 아니면 그대로(붙여넣기 벗김), 관계 줄 + 지시면 관계 줄만 뗀 나머지, 알림뿐이면 null
@@ -24,7 +28,10 @@ export function promptTask(s) {
   if (!BOARD_NOTICE.test(u)) return u;
   const m = u.match(RELATION_LINE);
   if (!m) return null;
-  const rest = u.slice(m[0].length).replace(/^\s+/, '');
+  // P180: 일의 첫 요청 머리는 관계 줄 뒤에 판 알림 줄이 더 붙은 묶음이다(일, 약속). 묶음째 떼고 빈 줄 뒤의 할 일만 지시로
+  let rest = u.slice(m[0].length);
+  for (let n; (n = rest.match(BOARD_LINE)); ) rest = rest.slice(n[0].length);
+  rest = rest.replace(/^\s+/, '');
   return rest && !BOARD_NOTICE.test(rest) ? rest : null;
 }
 export function isBoardNotice(s) { return typeof s === 'string' && promptTask(s) === null; }

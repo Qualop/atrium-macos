@@ -244,16 +244,16 @@ export function markSeen(id) {
 }
 
 // P6a
-// P124: 초점·고른 노드의 짝(같은 덩어리, 부모·자식). 이 노드들도 터미널을 가질 수 있다(lib/faces.js matesOf). 같은 값이면 같은 Set을 돌려준다(구독용)
+// P124: 초점·고른 노드의 짝(같은 덩어리, 부모·자식. P167: 판에 선으로 바로 이어진 세션). 이 노드들도 터미널을 가질 수 있다(lib/faces.js matesOf). 같은 값이면 같은 Set을 돌려준다(구독용)
 let matesMemo = { key: '', set: new Set() };
 let matesIn = null; // 마지막으로 센 입력(초점, 고른 목록, 덩어리, 세션 맵). 같으면 다시 세지 않는다(노드마다 구독한다)
 export function matesNow(st = state) {
-  if (matesIn && matesIn[0] === st.focusId && matesIn[1] === st.selected && matesIn[2] === st.docks && matesIn[3] === st.sessions) return matesMemo.set;
-  matesIn = [st.focusId, st.selected, st.docks, st.sessions];
+  if (matesIn && matesIn[0] === st.focusId && matesIn[1] === st.selected && matesIn[2] === st.docks && matesIn[3] === st.sessions && matesIn[4] === st.links) return matesMemo.set;
+  matesIn = [st.focusId, st.selected, st.docks, st.sessions, st.links]; // P167: 연결(선). 판을 움직이거나 노드를 끄는 프레임에는 바뀌지 않는다(노드 자리 st.nodes는 열쇠에 넣지 않는다)
   const seeds = [st.focusId, ...st.selected].filter(Boolean);
   if (!seeds.length) { if (matesMemo.key) matesMemo = { key: '', set: new Set() }; return matesMemo.set; }
   const parentOf = (id) => { const s = st.sessions.get(id); return s ? s.parentSessionId || (s.branch && s.branch.parentSessionId) || null : null; };
-  const set = matesOf({ seeds, docks: [...st.docks.values()], parentOf, ids: [...st.sessions.keys()] });
+  const set = matesOf({ seeds, docks: [...st.docks.values()], parentOf, ids: [...st.sessions.keys()], links: st.links.values(), onBoard: (id) => st.sessions.has(id) }); // 판에 노드가 없는 세션은 짝이어도 터미널을 붙일 자리가 없다
   const key = [...set].sort().join(',');
   if (key !== matesMemo.key) matesMemo = { key, set };
   return matesMemo.set;

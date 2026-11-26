@@ -23,6 +23,7 @@ export function deliveryText(d) {
   if (d.status === 'queued') return t('delivery.withReason', { base, reason: WAIT_REASON_LABEL[d.reason] || d.reason });
   if (d.status === 'cancelled' && d.reason === 'user') return base;
   if (/^draft_(moved|restored|partial|stashed|held)$/.test(d.reason)) return t('delivery.withReason', { base, reason: t(`draftAside.${d.reason.slice(6)}`) }); // P128
+  if (d.reason === 'late') return t('delivery.withReason', { base, reason: t('deliveryLate.reason') }); // P258: 미확인 뒤 늦게 제출됨
   if (d.reason === 'input_box_other') return t('delivery.withReason', { base, reason: t('deliveryBox.otherText') }); // P126
   return t('delivery.withReason', { base, reason: d.reason });
 }

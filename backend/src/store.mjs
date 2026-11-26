@@ -9,6 +9,7 @@ import { BRANCH_COLUMNS, BRANCH_SCHEMA, installBranch } from './store-branch.mjs
 import { WORKTREE_SCHEMA, WORKTREE_COLUMNS, installWorktrees } from './store-worktrees.mjs'; // P27: 워크트리 영역
 import { IMPORTS_SCHEMA, installImports } from './store-imports.mjs'; // P34: 데스크톱 앱 가져오기 장부
 import { installMerge } from './store-merge.mjs'; // P37: 워크스페이스 키 옮기기(폴더가 저장소가 되면 합치기)
+import { UNITS_SCHEMA, installUnits } from './store-units.mjs'; // P180: 일 단위와 시도
 import { normalize, fromLine, leaves, isLeaf } from './dock-tree.mjs';
 import { upgradeRuntime } from './state.mjs'; // P129: 옛 runtime 이름 // P17: 덩어리 분할 나무
 
@@ -56,6 +57,7 @@ const ADDED_COLUMNS = {
   sessions: { touched_at: 'INTEGER', kind: 'TEXT', origin: 'TEXT', parent_session_id: 'TEXT', workspace_key: 'TEXT', flavor: 'TEXT', extra_args: 'TEXT', label: 'TEXT', start_command: 'TEXT', harness: 'TEXT' }, // harness(P115): Claude Code 밖 하네스를 다시 띄울 값(JSON: 모델, 추가 인자, 호출자, 연결, 하네스 세션 ID) // start_command(호출자의 실행 명령, 예: mywrap claude)는 P97 // label(판의 이름, 사람이 정한 표시 이름)은 P66 // extra_args(호출자의 claude 추가 인자, JSON 배열)는 P33 // kind·origin·parent는 P4, workspace_key는 P5, flavor(띄운 방법: 런처의 아이콘)는 P25
   workspaces: { x: 'REAL', y: 'REAL' }, // P6a: 영역의 자리(빈 워크스페이스, 영역 옮기기)
   nodes: { size: 'TEXT', aspect: 'TEXT' }, // P6a: 크기 단계(large, normal, small). P73: aspect(고른 종횡비 16:9·4:3, 없으면 자유 비율)
+  deliveries: { from_session: 'TEXT' }, // P281: 보낸 세션(에이전트가 atrium prompt·일 맡기기로 넣은 글). 옛 행은 비어 있다
   docks: { tree: 'TEXT', aspect: 'TEXT' }, // P17: 분할 나무(dock-tree.mjs). 없으면 옛 한 줄 덩어리(dir, members)이고 뜰 때 나무로 바꾼다(canvas-ops migrateDocks). P73: aspect(덩어리 바깥의 종횡비)
 };
 
@@ -108,6 +110,7 @@ export class Store {
     this.db.exec(WORKTREE_SCHEMA);
     this.db.exec(IMPORTS_SCHEMA);
     this.db.exec(BRANCH_SCHEMA); // P156: 일 관계
+    this.db.exec(UNITS_SCHEMA); // P180: 일 단위와 시도
     for (const [table, cols] of [...Object.entries(ADDED_COLUMNS), ...Object.entries(RECALL_COLUMNS), ...Object.entries(BRANCH_COLUMNS), ...Object.entries(WORKTREE_COLUMNS)]) {
       const have = new Set(this.db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
       for (const [col, type] of Object.entries(cols)) if (!have.has(col)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
@@ -145,6 +148,8 @@ export class Store {
   renameSession(sessionId, name) { this.st('UPDATE sessions SET name = ? WHERE session_id = ?').run(name, sessionId); }
   saveRuntime(sessionId, runtime) { this.st('UPDATE sessions SET runtime = ? WHERE session_id = ?').run(JSON.stringify(runtime), sessionId); }
   getSession(sessionId) { return sessionRow(this.st('SELECT * FROM sessions WHERE session_id = ?').get(sessionId)); }
+  // macOS 판: 일 하위 세션 행(닫힌 것 포함)의 부모·runtime(나무 토큰 합계, backend.refreshTreeUsage)
+  childRowsSince(since) { return this.st('SELECT session_id, parent_session_id, closed_at, runtime FROM sessions WHERE parent_session_id IS NOT NULL AND created_at >= ?').all(since).map((r) => ({ sessionId: r.session_id, parentSessionId: r.parent_session_id, closedAt: r.closed_at ?? null, runtime: r.runtime ?? null })); }
   openSessions() { return this.st('SELECT * FROM sessions WHERE closed_at IS NULL ORDER BY created_at').all().map(sessionRow); }
   anySessionRow() { return !!this.st('SELECT 1 AS x FROM sessions LIMIT 1').get(); } // P117: 세션을 띄운 적 있는 판인가(새 판의 터미널 백엔드 정하기)
   // P18(이름 옮기기): 데이터 폴더를 옮긴 뒤 세션 행의 글(settings_path, resume_argv, runtime)을 fix(글) → 글로 고친다. 닫힌 세션도. 고친 행 수
@@ -173,13 +178,15 @@ export class Store {
   }
 
   insertDelivery(d) {
-    this.st('INSERT INTO deliveries (delivery_id, session_id, text, status, reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(d.deliveryId, d.sessionId, d.text, d.status, d.reason ?? null, d.createdAt, d.createdAt);
+    this.st('INSERT INTO deliveries (delivery_id, session_id, text, status, reason, created_at, updated_at, from_session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(d.deliveryId, d.sessionId, d.text, d.status, d.reason ?? null, d.createdAt, d.createdAt, d.fromSession ?? null);
   }
   updateDelivery(id, f) {
     this.st('UPDATE deliveries SET status = ?, reason = ?, updated_at = ?, sent_at = COALESCE(?, sent_at), confirmed_at = COALESCE(?, confirmed_at), attempts = attempts + ? WHERE delivery_id = ?')
       .run(f.status, f.reason ?? null, Date.now(), f.sentAt ?? null, f.confirmedAt ?? null, f.attempt ? 1 : 0, id);
   }
   updateDeliveryText(id, text) { this.st('UPDATE deliveries SET text = ?, updated_at = ? WHERE delivery_id = ?').run(text, Date.now(), id); } // P158: 대기 중 수정
+  // P281: 보낸 세션(from)이 받는 세션에 마지막으로 넣은 글의 시각 | null(unit-stops 되풀이 줄이기)
+  lastDeliveryFrom(sessionId, fromSession) { const r = this.st('SELECT MAX(created_at) AS t FROM deliveries WHERE session_id = ? AND from_session = ?').get(sessionId, fromSession); return r && r.t != null ? Number(r.t) : null; }
   getDelivery(id) { return deliveryRow(this.st('SELECT * FROM deliveries WHERE delivery_id = ?').get(id)); }
   activeDeliveries() { return this.st("SELECT * FROM deliveries WHERE status IN ('queued', 'sending', 'sent') ORDER BY created_at").all().map(deliveryRow); }
   deliveries({ sessionId, limit = 50 } = {}) {
@@ -277,3 +284,4 @@ installBranch(Store); // P8
 installWorktrees(Store); // P27
 installImports(Store); // P34
 installMerge(Store); // P37
+installUnits(Store); // P180

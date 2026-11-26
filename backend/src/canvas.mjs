@@ -214,6 +214,8 @@ export function separateRegions(regions, { gap = REGION_GAP / 2, maxRounds = 500
 export const GROUP_PAD = 56; // 묶음 테두리와 구성 영역 사이(영역 사이 틈 REGION_GAP/2 = 120 안에 들어간다)
 export const GROUP_HEAD = 64; // 묶음 이름표 자리(구성 영역 위)
 export const groupFrameOf = (inner) => ({ x: inner.x - GROUP_PAD, y: inner.y - GROUP_PAD - GROUP_HEAD, w: inner.w + 2 * GROUP_PAD, h: inner.h + 2 * GROUP_PAD + GROUP_HEAD });
+// P98·P278: 묶음 맞춤 사각형. 영역 여럿이면 그 묶음 테두리·이름표까지(groupFrameOf), 하나면 그 영역만, 없으면 null
+export function fitRectOf(rects) { const rs = (rects || []).filter(Boolean); const r = bbox(rs); return r ? (rs.length > 1 ? groupFrameOf(r) : r) : null; }
 // groups: [{ id, name, auto?, members }], regions: Map 키 → 맨 위 영역(리포·폴더 영역. 워크트리 상자는 빼고 준다)
 // → [{ id, name, auto, keys, rect, ok }]. 구성 영역이 min개 이상인 묶음만. ok: 테두리가 구성 아닌 영역과 겹치지 않는다(겹치면 그리지 않고 한 덩어리로 보지도 않는다. 정리를 누르면 모인다)
 export function groupFrames(groups, regions, { min = 2 } = {}) {

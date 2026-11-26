@@ -22,6 +22,7 @@
 //   P35: 워크트리 영역은 리포 영역 안의 노란 상자다(화살표 없음). 리포 영역은 본 저장소 쪽 것과 상자를 함께 감싼다(nestedRegions).
 //   노드·대화 노드는 저장한 area로 영역이 정해진다. 리포 영역을 끌면 상자도 함께, 상자 이름표를 끌면 그 상자만(worktree.move) 움직인다.
 //   상자가 본 저장소 쪽 것이나 다른 상자와 겹치거나, 커진 리포 영역이 다른 영역과 겹치면 놓을 때 되돌린다(regionConflicts). 메모·칸반은 본 저장소 영역에만 속한다
+import { clientMac } from './lib/keys.js'; // macOS 판: Cmd+누르기로 더 고르기
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlow, Background, BackgroundVariant, useReactFlow, applyNodeChanges } from '@xyflow/react';
 import { shiftAreasLocal } from './store.js'; // P27
@@ -54,7 +55,7 @@ import { t as tr, errText, useT } from './lib/i18n.js'; // P16: 이 파일은 t�
 import { repoEdges, facingSides } from '../../../backend/src/links.mjs';
 import { boundsOf } from '../../../backend/src/workspaces.mjs';
 import { chromeInset, fitInset } from './lib/chrome-inset.js'; // P52(#5)
-import { bbox, REGION_GAP, groupFrames, groupFrameOf } from '../../../backend/src/canvas.mjs'; // P91: groupFrames(묶음 테두리). P98: groupFrameOf
+import { bbox, REGION_GAP, groupFrames, groupFrameOf, fitRectOf } from '../../../backend/src/canvas.mjs'; // P91: groupFrames(묶음 테두리). P98: groupFrameOf. P278: fitRectOf
 import { layout as layoutTree, junctions, dropZone, edgeSnap } from '../../../backend/src/dock-tree.mjs'; // P17, P23
 import { wsOfArea, areaAnchorList, areaResolverOf, isBoxKey, nestedRegions, regionConflicts, dockedAreas, visibleAnchors } from '../../../backend/src/worktree-areas.mjs'; // P27. P35: 상자는 리포 영역 안. P68: 워크트리끼리 붙인 덩어리
 import { memoEditView } from './lib/memo-edit.js'; // P50(#6)
@@ -65,6 +66,8 @@ import { openFull, fullId, onFull } from './full-view.js'; // P76
 import { termBudgetNow, boardPlan, step } from './crash-watch.js'; // P84: 휴대폰 웹은 터미널을 적게. P86: 보드 단계(levelPlan)와 단계 기록
 import { tierOf } from './lib/overview.js'; // P85: 워크트리 상자 강조
 
+// 노드 여럿 고르기 키: Mac은 Cmd+누르기(Ctrl+누르기는 macOS에서 오른쪽 누르기다), 그 밖은 Ctrl+누르기
+const MULTI_KEY = clientMac() ? 'Meta' : 'Control';
 const nodeTypes = { session: withBoundary(SessionNode, 'session'), region: withBoundary(RegionNode, 'region'), wtarea: withBoundary(WorktreeAreaNode, 'wtarea'), wsgroup: withBoundary(GroupFrameNode, 'wsgroup'),memo: withBoundary(MemoNode, 'memo'), kanban: withBoundary(KanbanNode, 'kanban'), convo: withBoundary(ConvoNode, 'convo'), wtbox: WorktreeBox, divider: DividerNode, junction: JunctionNode, ghost: GhostNode, dockgrip: DockGrip, dockedge: DockEdge, docklinks: DockLinks };
 const edgeTypes = { link: LinkEdge, repo: RepoEdge, spawnc: SpawnEdge };
 const HOLD_MS = 1500; // 화면 밖으로 나간 노드의 제어기를 놓기 전 기다리는 시간(끌 때 붙였다 뗐다 하지 않게)
@@ -611,7 +614,7 @@ export function Canvas() {
     // 이슈 #1-16: 상한보다 많이 보여도 고른 노드와 초점 노드는 터미널을 먼저 받는다
     // P121: 고른 워크스페이스(viewWs)의 노드, 초점·고른 노드, 아주 가까이 확대한 노드만 터미널을 받는다(lib/faces.js termAllowed)
     const screen = { width: el.clientWidth, height: el.clientHeight };
-    const focus = st.focusId, selected = new Set(st.selected), wsLimit = { key: st.viewWs || null }, mates = matesNow(st); // P124: 초점·고른 노드와 같은 덩어리, 부모·자식
+    const focus = st.focusId, selected = new Set(st.selected), wsLimit = { key: st.viewWs || null }, mates = matesNow(st); // P124: 초점·고른 노드와 같은 덩어리, 부모·자식. P167: 선으로 바로 이어진 세션
     const want = pickAttached(list, vp, screen, { max: MAX_CONTROLLERS, prev: new Set(st.attached), focus, selected, wsLimit, mates });
     // P24: 가까이 얼굴로 보이는 노드 모두(잠든 노드, 제어기 상한 밖 포함)는 그 리포를 보고 있는 것이다(저절로 잠재우지 않는다)
     const all = [...st.nodes].filter(([id]) => st.sessions.has(id)).map(([id, r]) => ({ id, x: r.x, y: r.y, w: r.w, h: r.h }));
@@ -647,7 +650,7 @@ export function Canvas() {
   const selectedIds = useStore((st) => st.selected);
   const viewWs = useStore((st) => st.viewWs); // P121
   const docksNow = useStore((st) => st.docks); // P124: 덩어리가 바뀌면 짝도 바뀐다
-  useEffect(() => { schedule(50); }, [storeNodes, sessions, focusId, selectedIds, viewWs, docksNow, schedule]);
+  useEffect(() => { schedule(50); }, [storeNodes, sessions, focusId, selectedIds, viewWs, docksNow, links, schedule]); // P167: 연결이 바뀌면 짝도 바뀐다
   useEffect(() => {
     const t = setInterval(() => recompute(), HOLD_MS + 100);
     const resize = () => schedule(); window.addEventListener('resize', resize);
@@ -735,7 +738,7 @@ export function Canvas() {
     // P27: 리포로 가면 워크트리 영역까지 들어오게
     const repoRect = (key) => bbox([...allRegions()].filter(([k]) => wsOfArea(k) === key).map(([, r]) => r));
     st.fitWorkspace = (key) => { const r = repoRect(key); if (r) st.navigateToRect(r); };
-    st.fitWorkspaces = (keys) => { const r = bbox(keys.map(repoRect).filter(Boolean)); if (r) st.navigateToRect(keys.length > 1 ? groupFrameOf(r) : r); }; // P98: 위 바의 묶음 칩(구성 영역 모두와 묶음 테두리·이름표)
+    st.fitWorkspaces = (keys) => { const r = fitRectOf(keys.map(repoRect)); if (r) st.navigateToRect(r); }; // P98: 위 바의 묶음 칩, P278: 사이드바 폴더 머리(구성 영역 모두와 묶음 테두리·이름표)
     st.regionOf = (key) => repoRect(key) || null;
     // P6c: 점(판 좌표)이 든 워크스페이스 영역(새 메모·칸반의 소속), 메모·칸반 노드로 가기(검색). 간 노드는 2초 동안 빛난다
     st.regionAt = (p) => wsAt({ x: p.x, y: p.y, w: 0, h: 0 }, mainOnly(allRegions())); // P27: 메모·칸반은 본 저장소 영역에만
@@ -971,7 +974,7 @@ export function Canvas() {
         onNodesChange={onNodesChange} onNodeDragStart={onNodeDragStart} onNodeDragStop={onNodeDragStop} onNodeClick={onNodeClick} onSelectionChange={onSelectionChange}
         onMove={onMove} onMoveEnd={onMoveEnd}
         defaultViewport={defaultViewport} minZoom={0.05} maxZoom={2}
-        deleteKeyCode={null} selectionKeyCode="Shift" multiSelectionKeyCode="Control"
+        deleteKeyCode={null} selectionKeyCode="Shift" multiSelectionKeyCode={MULTI_KEY}
         zoomOnDoubleClick={false} nodesConnectable elevateNodesOnSelect edgesFocusable={false} edgesReconnectable={false}
         proOptions={{ hideAttribution: true }}
       >

@@ -28,7 +28,7 @@ import { deriveState, isModelError } from './state.mjs';
 import { EFFORTS, DEFAULTS } from './settings.mjs';
 import { clip, promptTask } from './text.mjs';
 import { BACKEND_ROOT, terminalSessionEnv } from './config.mjs';
-import { predictTrust, repoHasCommit, buildStartArgs } from './launch.mjs';
+import { predictTrust, repoHasCommit, buildStartArgs, fillBoardHooks } from './launch.mjs';
 import { harnessOf, splitArgs, joinArgs, startOpt } from './launchers.mjs'; // P41. P96: splitArgs. P97: 실행 명령
 import { isModelName } from './model-name.mjs'; // P96
 import { buildCatalog, resolveModel, gatewaysOf, fetchGatewayModels, candidateLines, describeEntry, launcherRef } from './models.mjs'; // P41
@@ -37,6 +37,7 @@ import { workspaceNames } from './workspaces.mjs';
 import { NoticeBatcher, NOTICE_BATCH_MS, closeWhy, detachedParentLine, detachedChildLine, childClosedLine } from './link-notice.mjs'; // P81
 import { AgentVerbs, verbLines } from './agent-verbs.mjs'; // P116: atrium prompt | wait | read
 import { installRelations, relationHeader, RELATION_WORD } from './branch-relations.mjs'; // P156: 일 관계
+import { WorkUnits, checkAgentText } from './work-units.mjs'; // P180: 일 단위와 시도
 import { PEER_ROLE, workDescendantsOf, lineageKept } from './relations.mjs';
 
 export const DEFAULT_ROLE = '워커';
@@ -62,9 +63,9 @@ function apiError(code, message, extra = {}) { return Object.assign(new Error(me
 // 범위는 같은 판의 모든 세션이다(atrium prompt는 판의 어느 에이전트에게나 간다. 같은 사용자 계정이라 격리는 아니다)
 export const ATRIUM_ALLOW = [
   ...['atrium', 'mtask'].flatMap((c) => [`Bash(${c} child:*)`, `Bash(${c} child *)`, `Bash(${c} children:*)`, `Bash(${c} children)`, `Bash(${c} child-kill:*)`, `Bash(${c} child-kill *)`, `Bash(${c} wake:*)`, `Bash(${c} wake *)`, `Bash(${c} child-wait:*)`, `Bash(${c} child-wait *)`, `Bash(${c} models)`, `Bash(${c} models:*)`, `Bash(${c} models *)`, `Bash(${c} me)`, `Bash(${c} me:*)`, `Bash(${c} me *)`, `Bash(${c} help)`, `Bash(${c} help:*)`, `Bash(${c} help *)`, // P21: wake, P36: child-wait, P41: models, P81: me, P115: help
-    `Bash(${c} prompt:*)`, `Bash(${c} prompt *)`, `Bash(${c} wait:*)`, `Bash(${c} wait *)`, `Bash(${c} read:*)`, `Bash(${c} read *)`, `Bash(${c} relate:*)`, `Bash(${c} relate *)`]), // P116. P156: relate
+    `Bash(${c} prompt:*)`, `Bash(${c} prompt *)`, `Bash(${c} wait:*)`, `Bash(${c} wait *)`, `Bash(${c} read:*)`, `Bash(${c} read *)`, `Bash(${c} relate:*)`, `Bash(${c} relate *)`, `Bash(${c} done:*)`, `Bash(${c} done *)`, `Bash(${c} item)`, `Bash(${c} item:*)`, `Bash(${c} item *)`, `Bash(${c} items)`, `Bash(${c} items:*)`, `Bash(${c} items *)`]), // P116. P156: relate. P180: done·item·items
   ...['atrium', 'mtask'].flatMap((c) => [`PowerShell(${c} child *)`, `PowerShell(${c} children)`, `PowerShell(${c} children *)`, `PowerShell(${c} child-kill *)`, `PowerShell(${c} wake *)`, `PowerShell(${c} child-wait *)`, `PowerShell(${c} models)`, `PowerShell(${c} models *)`, `PowerShell(${c} me)`, `PowerShell(${c} me *)`, `PowerShell(${c} help)`, `PowerShell(${c} help *)`,
-    `PowerShell(${c} prompt *)`, `PowerShell(${c} wait *)`, `PowerShell(${c} read *)`, `PowerShell(${c} relate *)`]), // P116. P156: relate
+    `PowerShell(${c} prompt *)`, `PowerShell(${c} wait *)`, `PowerShell(${c} read *)`, `PowerShell(${c} relate *)`, `PowerShell(${c} done *)`, `PowerShell(${c} item)`, `PowerShell(${c} item *)`, `PowerShell(${c} items)`, `PowerShell(${c} items *)`]), // P116. P156: relate. P180: done·item·items
 ];
 // P129: 옛 터미널 명령 규칙(P4~P115의 일 시키기·답 읽기, P4의 자동 승인). 도는 세션의 설정 파일에서 뺀다(refreshSettings)
 const OLD_TERMINAL_RULE = /^(Bash|PowerShell)\(herdr[ :]/;
@@ -219,8 +220,8 @@ export function childNotice({ role, agentName, name = agentName, kind = 'claude'
   const v = verbLines(name);
   return [
     `[Atrium 보드] 하위 세션: \`@${name}\`(종류 ${kind}, ${depth}단계)가 너의 "${role}"이다.`,
-    `일 시키기: ${v.prompt}`,
-    `끝나기 기다리기: ${v.wait} · 화면 읽기: ${v.read}`,
+    `일 맡기기: atrium prompt ${name} "<할 일>"(맡기고 턴을 끝내면 보드가 done 보고를 가져다준다) · 화면 읽기: ${v.read}`,
+    `지금 답이 꼭 필요할 때만: ${v.prompt} · ${v.wait}`,
     `끄기(사람이 끄라고 할 때만): atrium child-kill ${name}`,
   ].join('\n');
 }
@@ -237,7 +238,7 @@ export function peerNotice({ role = PEER_ROLE, agentName, name = agentName, kind
   return [
     `[Atrium 보드] 동료: \`@${name}\`(종류 ${kind})를 너의 "${role}"(동료)로 띄웠다. 하위 워커가 아니다.`,
     `필요한 것을 주고받기: atrium prompt ${name} "<할 일>" · 화면 읽기: atrium read ${name}`,
-    `@${name}는 끝나면 결과를 너에게 공유한다(--now로 들어온다). atrium wait·--wait로 기다리지 않는다(같은 결과가 두 번 온다). child-kill 연쇄에서 빠진다. 관계 바꾸기: atrium relate ${name} sub|peer|none|auto`,
+    `@${name}는 끝나면 결과를 너에게 공유한다(보드가 네 차례에 넣는다). 기다리지 말고 턴을 끝낸다. child-kill 연쇄에서 빠진다. 관계 바꾸기: atrium relate ${name} sub|peer|none|auto`,
   ].join('\n');
 }
 
@@ -262,8 +263,8 @@ const SKILL_BODY = `# Atrium 보드에서 일하기: 워커로 나눠 맡기기
 ## 관계 고르기
 
 띄울 때 관계를 고른다(누가 띄웠는지는 어느 쪽이든 남는다).
-- 하위 워커(기본): 워커·하위·맡겨·나눠·병렬, 또는 네 일의 한 조각. 끝나면 너에게 보고하고 child-kill로 함께 꺼진다.
-- 동료(\`--peer\`): 협력·동료·같이·파트너, 또는 같은 수준의 다른 일. \`atrium prompt\`로 주고받고 끝나면 결과를 서로 공유한다(\`--wait\`로 붙잡지 않는다). child-kill에서 빠진다.
+- 하위 워커(기본): 워커·하위·맡겨·나눠·병렬, 또는 네 일의 한 조각. 끝나면 \`atrium done\`으로 너에게 보고하고 child-kill로 함께 꺼진다.
+- 동료(\`--peer\`): 협력·동료·같이·파트너, 또는 같은 수준의 다른 일. \`atrium prompt\`로 주고받고 끝나면 결과를 서로 공유한다(기다리지 않고 턴을 끝낸다). child-kill에서 빠진다.
 - 말이 없으면 첫 지시와 역할로 판단한다. 바꾸기: \`atrium relate <이름> sub|peer|none|auto\`.
 
 ## 순서
@@ -276,10 +277,11 @@ const SKILL_BODY = `# Atrium 보드에서 일하기: 워커로 나눠 맡기기
    - 다른 폴더는 \`--cwd C:/Workspace/x\`(슬래시로). 역할 이름 \`--role 리뷰어\`(기본 워커).
    - 모델·추론: 빼면 보드 기본(Claude opus, Codex sol, high). 사용자가 말하지 않으면 모델을 바꾸지 않는다. 범위가 분명한 구현은 \`--effort medium\`, 파일 만들기·찾기·요약 같은 작은 일은 \`--effort low\`.
    - 사용자가 모델을 말로 하면("glm flash", "opus", "gpt-6.1-sol") \`atrium models\`로 목록을 보고 가장 맞는 줄의 명령으로 띄운다. \`--model "glm flash"\`처럼 들은 말을 줘도 보드가 푼다. 정확한 ID를 사용자에게 묻지 않고, 보드가 후보 여럿을 돌려줄 때만 묻는다. 보드의 워커 대신 너의 내부 하위 에이전트로 우회하지 않는다.
-2. 지시 쓰는 법(\`--prompt\`나 \`atrium prompt\`의 글): 목표, 할 것, 손대지 말 것, 완료 기준, 끝났음을 알리는 법("끝나면 바꾼 파일과 결과를 다섯 줄로 답한다", 워크트리면 "자기 브랜치에 커밋하고 커밋 해시를 답한다"). 워커는 너의 대화를 모른다. 필요한 파일 경로와 사실을 글에 넣는다.
-3. 시키기와 기다리기: \`atrium prompt <이름> "<지시>" --wait\`가 글을 넣고 그 턴의 마지막 답을 돌려준다(한 번에 100초, 아직이면 \`atrium wait <이름>\`을 다시 친다). \`--prompt\`로 시켰으면 \`atrium wait <이름>\`.
-   - 결과는 한 길로 받는다: \`--wait\`·\`atrium wait\`로 당겨 오거나(워커에게 따로 보고시키지 않는다), 긴 일은 지시에 "끝나면 \`atrium prompt <너의 이름> --now "<결과>"\`로 알린다"를 넣고 기다리지 않는다(네가 일하는 중에도 들어온다). 섞으면 같은 보고가 늦게 한 번 더 온다.
+2. 지시 쓰는 법(\`--prompt\`나 \`atrium prompt\`의 글): 목표, 할 것, 손대지 말 것, 완료 기준, 보고에 담을 것(바꾼 파일과 결과 다섯 줄, 워크트리면 커밋 해시). 보고하는 길은 보드가 워커에게 알려 준다. 워커는 너의 대화를 모른다. 필요한 파일 경로와 사실을 글에 넣는다.
+3. 맡기고 턴을 끝낸다: \`--prompt\`나 \`atrium prompt <이름> "<지시>"\`로 맡기고 턴을 끝낸다. 워커가 \`atrium done\`으로 닫으면 보드가 그 보고를 넣어 주고, 보고 없이 멈추면(쉼, 오류, 사람의 답, 닫힘) 한 번 알린다. 폴링하지 않는다.
+   - 지금 답이 꼭 필요할 때만 \`atrium prompt <이름> "<지시>" --wait\`(한 번에 100초, 아직이면 \`atrium wait <이름>\`).
    - 여럿에게는 한 응답에 셸 호출을 여러 개 낸다. 일하는 중이거나 잠든 워커에게도 그냥 보낸다.
+   - 하위로 받은 일은 끝나면 \`atrium done ok|failed "<보고>"\`로 닫고 쉰다(네 하위를 기다리는 동안은 done 없이 쉰다).
 4. 응답: 화면은 \`atrium read <이름>\`, 목록·상태·마지막 응답은 \`atrium children\`(\`--all\`이면 그 아래까지).
 5. 모아 보고, 합치기: 워커마다 답을 확인하고(완료 기준을 채웠는지, 시험이 통과했는지) 정리해 사용자에게 보고한다. 워크트리 브랜치는 네가 합친다(\`git merge worktree-<이름>\`). 충돌이나 빠진 것은 그 워커에게 다시 시킨다.
 
@@ -292,15 +294,18 @@ const SKILL_BODY = `# Atrium 보드에서 일하기: 워커로 나눠 맡기기
 - 토큰은 대부분 긴 대화를 매번 다시 읽는 데 든다. 새 워커 시작(약 3만, 거의 캐시)은 싸다.
 - 국소 작업(파일 몇 개, 결과 하나)마다 새 워커를 띄우고 결과를 받으면 닫는다. 바로 이은 고침만 그 워커에게 다시 맡긴다.
 - 리드인 너의 문맥은 작게: 큰 파일 읽기·검색·로그는 워커에게 시키고 다섯 줄 요약만 받는다.
-- 일하는 워커에게 같은 일·진행 확인을 보내지 않는다(턴이 하나 더 든다). 진행은 \`atrium read\`, 결과는 \`atrium wait\`. 결과 전에 끄지 않는다.
-- 사용 한도에 걸리면 보드가 계정을 바꿔 잇는다(\`atrium wait\`로 기다린다). 한국어 글은 write-ko 스킬로 쓰게 한다.
+- 일하는 워커에게 같은 일·진행 확인을 보내지 않는다(턴이 하나 더 든다). 맡긴 뒤에는 기다리지 말고 턴을 끝낸다: \`atrium wait\`를 되풀이하면 그때마다 너의 긴 문맥을 다시 읽는다. 진행은 \`atrium read\`, 결과는 보드가 넣어 준다. 결과 전에 끄지 않는다.
+- 사용 한도에 걸리면 보드가 계정을 바꿔 잇는다(보고는 그대로 온다). 한국어 글은 write-ko 스킬로 쓰게 한다.
 
 ## 반복·검토·조사 (2026-11 실측: 같은 워커를 다섯 차수 이어 쓰고 리드가 파일을 직접 읽어 1억 8천만 토큰)
 
-- 차수(비판·고치기·검증)는 새 워커가 기본이고, 앞 차수의 결과는 파일 경로로 넘긴다. 다만 새 워커는 코드·명세를 처음부터 다시 읽어 호출이 는다(새 워커 16개로 호출 971번, 같은 일을 이어 쓴 워커들로는 508번). 그 워커의 문맥이 15만 토큰 아래이고 다음 일이 앞 일을 그대로 잇는다면(예: 고친 곳만 다시 보는 비판, 반려된 것만 고치기) \`atrium prompt\`로 이어서 시킨다. 끝난 역할의 워커는 닫는다.
+- 차수(비판·고치기·검증)는 새 워커가 기본이고, 앞 차수의 결과는 파일 경로로 넘긴다. 다만 새 워커는 코드·명세를 처음부터 다시 읽어 호출이 는다(새 워커 16개로 호출 971번, 같은 일을 이어 쓴 워커들로는 508번). 그 워커의 문맥이 8만 토큰 아래이고 다음 일이 앞 일을 그대로 잇는다면(예: 고친 곳만 다시 보는 비판, 반려 두세 개만 고치기) \`atrium prompt\`로 이어서 시킨다. 끝난 역할의 워커는 닫는다.
+- 만드는 워커(빌더)는 처음 만들기까지만 맡긴다. 반려를 고치는 일은 새 고침 워커에게 \`--effort medium\`으로 맡기고, 반려 파일 경로와 고칠 파일만 준다(2026-11 실측: 빌더 하나가 만들기와 고침 세 차수를 이어 하며 문맥 15만으로 전체 토큰의 47%를 썼다).
 - 결과물은 파일로, 보고는 경로와 다섯 줄로 받는다. 비판문·로그·스크린샷은 리드가 직접 열지 않는다(필요하면 요약 워커).
-- 일 크기에 맞춘다: 단순한 일은 직접 또는 워커 1, 비교·조각 일은 2~4. 긴 일은 \`--now\` 보고로 받고 \`atrium wait\`를 되풀이하지 않는다.
-- 검토는 기준표(통과·반려와 이유)로, 차수 상한을 정하고, 통과하면 남은 차수를 쓰지 않는다. 검토자에게 사소한 것은 막지 말라고 한다.
+- 일 크기에 맞춘다: 단순한 일은 직접 또는 워커 1, 비교·조각 일은 2~4.
+- 검토는 기준표(통과·반려와 이유)로 하고, 검토자마다 두 차수가 상한이다. 2차는 1차에서 반려한 것만 다시 본다. 통과하면 남은 차수를 쓰지 않는다. 검토자에게 사소한 것은 막지 말라고 한다.
+- 검토자는 1차에 기계로 잴 수 있는 것(값 대조, 넘침, 빈 그래프)을 검증 스크립트로 남긴다. 마지막 고침은 그 스크립트를 다시 돌려 확인하고, 심각한 반려가 남았을 때만 3차 검토를 한다. 4차는 하지 않고 남은 것은 사용자에게 보고한다.
+- 화면 검토 기준표에 넣는다: 첫 화면(결론·핵심 숫자)은 고칠 때 덧붙이지 말고 줄인다. 결론은 넓은 폭에서 세 줄 안, 좁은 폭(390)에서도 핵심 숫자가 첫 화면에 보여야 한다. 기준·단서 설명은 회색 보조 줄이나 ⓘ로 내린다. 지금도 맞는 기존 정보(칸·숫자)는 지우지 않는다(2026-11 실측: 반려마다 결론에 단서를 붙여 5~7줄이 됐고, 맞는 KPI 칸을 지운 적도 있다).
 - 요구가 조금 바뀌면 하던 워커에게 덧붙임만 \`--now\`로 보낸다(한 것은 버리지 않는다). 방향이 바뀌면 명세 파일을 고치고 새 워커를 그 파일로 띄운다.
 - 워커 지시에 넣는다: 진행 메모(\`.atrium/progress/<이름>.md\`)와 결과를 자주 파일에 쓴다. 끊기면 메모부터 잇는다.
 - 만들기 전 조사: 이 일에 맞는 공개 사례·스킬·라이브러리(GitHub, 잘 만든 서비스)를 찾아 고르고 이유를 한 줄 남긴다. 흔한 기본 모양을 그대로 쓰지 않는다.
@@ -320,7 +325,7 @@ const SKILL_BODY = `# Atrium 보드에서 일하기: 워커로 나눠 맡기기
 - 명령은 위 모양 그대로 한 줄씩 친다. \`$변수\`, \`$(…)\`, 파이프, \`&&\`, \`;\`를 섞지 않는다(협업 요청을 정확히 추적할 수 있게 한다).
 - 다른 에이전트에게는 \`atrium prompt\`로만 보낸다(보드가 선과 기록을 남긴다).
 - 끝난 일회성 워커는 결과를 받은 뒤 \`atrium child-kill <이름>\`으로 닫는다(그 아래도 함께, 자기 하위만. 동료·독립·사람이 남기라고 한 워커는 남긴다).
-- 워커가 권한이나 질문으로 멈추면(\`atrium wait\`가 waiting) 대신 답하지 않는다. 사용자에게 "보드에서 @이름에 답해 주세요"라고 알린다.
+- 워커가 권한이나 질문으로 멈추면(보드의 멈춤 알림, \`atrium wait\`의 waiting) 대신 답하지 않는다. 사용자에게 "보드에서 @이름에 답해 주세요"라고 알린다.
 - 오래 쉰 워커는 혼자 잠든다. 미리 깨우려면 \`atrium wake <이름>\`.
 - 워커가 모델 오류로 답하지 못하면(\`atrium children\`의 오류 줄) 사용자에게 알리고 \`atrium models\`의 다른 줄로 다시 띄운다.
 `;
@@ -375,8 +380,13 @@ export class Branch {
       send: (sid, text, lines) => { const d = b.queue.enqueue(sid, text); b.store.addEvent(sid, 'link_notice', { lines, deliveryId: d.deliveryId }); return d; },
       onDrop: (sid, lines) => { if (b.sessions.has(sid)) b.store.addEvent(sid, 'link_notice_dropped', { lines }); },
     });
-    b.bus.on('closed', (s, reason) => { this.closed.set(s.sessionId, { parentSessionId: s.parentSessionId || null, name: s.name }); this.onClosed(s, reason); });
-    b.bus.on('session', (s, sum) => this.onSession(s, sum)); // P36: 신뢰 관문
+    this.units = new WorkUnits(b, this, { noticeBatchMs }); // P180: 일 단위와 시도(bus 처리보다 먼저 만든다). P181: 멈춤 알림도 같은 묶음 시간
+    b.bus.on('closed', (s, reason) => {
+      this.closed.set(s.sessionId, { parentSessionId: s.parentSessionId || null, name: s.name });
+      const told = this.units.onClosed(s, { reason, byParent: this.byParentKill.has(s.sessionId) }); // P181: 열린 일이 있으면 그 상위에게 멈춤(closed) 알림
+      this.onClosed(s, reason, told);
+    });
+    b.bus.on('session', (s, sum) => { this.onSession(s, sum); try { this.units.onSession(s, sum); } catch (e) { b.log('units session error', e.stack); } }); // P36: 신뢰 관문. P180: 시도의 턴 끝
     this.verbs = new AgentVerbs(b, this, verbOpts); // P116: atrium prompt | wait | read
     this.handlers = {
       'branch.tree': () => this.tree(),
@@ -386,10 +396,11 @@ export class Branch {
   asleep(s) { return !!(s.rt && s.rt.sleep) || !!(this.b.sleeper && this.b.sleeper.isAsleep && this.b.sleeper.isAsleep(s)); }
   // P81: 하위 세션이 부모의 child-kill이 아닌 까닭(사람이 닫음, 스스로 끝남, 패널 사라짐)으로 닫혔으면 부모에게
   // P159: 받는 쪽은 일 부모(사람이 다른 세션 아래로 옮겼으면 그 세션). 일 부모가 없으면(동료·독립으로 둔 세션) 옛처럼 계보 부모(띄운 짝)에게
-  onClosed(s, reason) {
+  // P181: told = 일 멈춤 알림(closed)을 이미 건 상위. 같은 상위에게 닫힘 알림을 두 번 보내지 않는다
+  onClosed(s, reason, told = null) {
     if (this.byParentKill.delete(s.sessionId)) return;
     const pid = this.relIndex().workParentOf(s.sessionId) || s.parentSessionId;
-    if (!pid || !this.b.sessions.has(pid)) return;
+    if (!pid || !this.b.sessions.has(pid) || pid === told) return;
     this.notices.add(pid, childClosedLine(s.name, closeWhy(reason)));
   }
 
@@ -413,6 +424,7 @@ export class Branch {
   // P36: atrium 스킬과 옛 이름 delegate(같은 글)
   pluginExtra() { return { skills: { [SKILL_NAME]: boardSkill(SKILL_NAME, this.limits()), [LEGACY_SKILL_NAME]: boardSkill(LEGACY_SKILL_NAME, this.limits()) }, bin: childShims() }; }
   // P8 전에 띄운 판 세션의 설정 파일에도 env와 규칙을 더한다(이어 갈 때 다시 읽힌다). hook과 다른 규칙은 그대로
+  // P258: 빠진 판 hook만 더한다(fillBoardHooks). 있는 hook은 그대로
   // P18: 옛 이름의 env(MTASK_*)는 빼고 ATRIUM_*로 바꾼다(옛 데이터 폴더를 가리키는 값이 남지 않게)
   // P116: 판의 규칙(atrium prompt|wait|read)을 더한다. P129: 옛 터미널 명령 규칙은 뺀다
   refreshSettings() {
@@ -426,7 +438,9 @@ export class Branch {
         const kept = Object.fromEntries(Object.entries(j.env || {}).filter(([k]) => !k.startsWith('MTASK_') && k !== COMPACT_ENV && k !== COMPACT_WINDOW_ENV)); // macOS 판: 압축 기준은 지금 설정 값으로
         const before = (j.permissions && j.permissions.allow) || [];
         const allow = [...new Set([...before, ...rules])].filter((r) => !OLD_TERMINAL_RULE.test(r));
-        if (JSON.stringify(j.env || {}) === JSON.stringify({ ...kept, ...env }) && allow.length === before.length && allow.every((r, i) => r === before[i])) continue;
+        const added = fillBoardHooks(j); // P258: 그 뒤에 생긴 판 hook(P173 PreCompact·PostCompact 등)을 그 파일의 판 hook 값으로 채운다. 있는 hook은 그대로
+        if (added.length) this.b.log(`branch: hooks added for ${s.name}: ${added.join(', ')}`);
+        if (!added.length && JSON.stringify(j.env || {}) === JSON.stringify({ ...kept, ...env }) && allow.length === before.length && allow.every((r, i) => r === before[i])) continue;
         j.env = { ...kept, ...env }; j.permissions = { ...(j.permissions || {}), allow }; // 순서: 원래 규칙, 새 규칙(빠진 것 없이 같으면 쓰지 않는다)
         fs.writeFileSync(s.settingsPath, JSON.stringify(j, null, 2)); n++;
       } catch (e) { this.b.log(`branch settings refresh failed ${s.name}: ${e.message}`); }
@@ -598,6 +612,7 @@ export class Branch {
     return { s };
   }
   dispatch(op, s, body, res) {
+    try { this.units.stops.noteCommand(s.sessionId, op); } catch {} // P281: 그 턴의 마지막 판 명령(멈춤 알림 줄이기)
     if (op === 'child') return this.spawnChild(s, body, res);
     if (op === 'children') return this.listChildren(s, body);
     if (op === 'kill') return this.killChild(s, body);
@@ -609,6 +624,9 @@ export class Branch {
     if (op === 'turn') return this.verbs.wait(s, body, res); // P116: atrium wait(옛 /branch/wait는 child-wait)
     if (op === 'read') return this.verbs.read(s, body); // P116: atrium read
     if (op === 'relate') return this.relateVerb(s, body); // P156: atrium relate
+    if (op === 'done') return this.units.done(s, body); // P180: atrium done ok|failed "<글>"
+    if (op === 'item') return this.units.item(s, body); // P180: atrium item
+    if (op === 'items') return this.units.items(s, body); // P180: atrium items
     throw apiError('unknown_op', `알 수 없는 명령입니다: ${op}`);
   }
 
@@ -679,6 +697,7 @@ export class Branch {
     if (effort && !EFFORTS.includes(effort)) throw apiError('bad_request', `추론 수준은 ${EFFORTS.filter(Boolean).join(', ')} 가운데 하나: ${effort}`);
     const prompt = o.prompt == null ? null : String(o.prompt);
     if (prompt != null && !prompt.trim()) throw apiError('bad_request', '첫 지시가 비었다');
+    if (prompt != null) checkAgentText(prompt, '첫 요청'); // P180: 판 알림 머리로 시작할 수 없다
     const ws = await workspaceOf(cwd);
     if (b.sessions.get(parent.sessionId) !== parent || b.killing?.has(parent.sessionId)) throw apiError('not_on_board', '부모 세션이 닫혔다');
     // 비동기 폴더 조회 뒤 이름·상한 확인과 예약을 한 번에 한다.
@@ -735,11 +754,13 @@ export class Branch {
     if (prompt) {
       // 첫 지시는 ready 뒤 B1 규칙으로 보낸다
       // P156: 첫 요청 앞에 관계 한 줄(하위는 지시의 보고 방법을, 동료는 서로 공유를). 헤드는 따로 이끄는 세션이라 붙이지 않는다
-      const header = head ? null : relationHeader({ relation, parent: parent.name });
-      const d = b.queue.enqueue(child.sessionId, header ? `${header}\n\n${prompt}` : prompt);
-      b.linkEvent(l, 'prompt', prompt, { via: 'board', deliveryId: d.deliveryId, ...(header ? { header, tag: 'assign' } : {}), ...(peer ? { tag: 'share' } : {}) });
+      // P180: 하위로 띄우면 첫 요청은 일 단위다(머리: 관계 + 일 + 약속). 동료·헤드는 옛 그대로
+      const u = !head && !peer ? this.units.create(parent, child, prompt, 'child') : null;
+      const header = head ? null : u ? u.header : relationHeader({ relation, parent: parent.name });
+      const d = u ? u.d : b.queue.enqueue(child.sessionId, header ? `${header}\n\n${prompt}` : prompt, { fromSession: parent.sessionId });
+      b.linkEvent(l, 'prompt', prompt, { via: 'board', deliveryId: d.deliveryId, ...(header ? { header, tag: 'assign' } : {}), ...(peer ? { tag: 'share' } : {}), ...(u ? { unitId: u.unit.id } : {}) });
       child.openPromptFrom = { linkId: l.linkId, at: Date.now(), text: prompt };
-      first = { deliveryId: d.deliveryId, status: d.status };
+      first = { deliveryId: d.deliveryId, status: d.status, ...(u ? { unit: u.unit.id } : {}) };
       this.firstOf.set(d.deliveryId, child.sessionId);
       this.verbs.noteSent(parent, child, d.deliveryId); // P116: 부모의 atrium wait <이름>이 이 첫 요청의 턴을 기다린다
     }
@@ -989,10 +1010,22 @@ export class Branch {
     if (!ref) throw apiError('bad_request', "작업을 재개할 세션 이름을 지정하세요: atrium wake <이름>");
     const t = [...b.sessions.values()].find((x) => x.name === ref || x.agentName === ref || x.sessionId === ref);
     if (!t) throw apiError('not_found', `보드에서 세션을 찾을 수 없습니다: ${ref}`);
+    if (o.prompt != null && String(o.prompt).trim()) checkAgentText(String(o.prompt), '지시'); // P180
     const was = !!(t.rt.sleep || (b.sleeper && b.sleeper.wakes.has(t.sessionId)));
     const r = was ? await b.sleeper.wakeFor(t, `atrium:${caller.name}`) : null; // P24: 그 리포의 잠든 세션을 모두 깨우고 이 세션이 준비될 때까지. P111: 혼자 잠든 세션은 그 세션만
     let first = null;
-    if (o.prompt != null && String(o.prompt).trim()) { const d = b.queue.enqueue(t.sessionId, String(o.prompt)); first = { deliveryId: d.deliveryId, status: d.status }; this.firstOf.set(d.deliveryId, t.sessionId); this.verbs.noteSent(caller, t, d.deliveryId); }
+    if (o.prompt != null && String(o.prompt).trim()) {
+      const text = String(o.prompt);
+      // P180: 깨우며 맡긴 일. 일 하위면 일 단위(이어지는 지시면 그 시도에 붙는 글), 아니면 옛 그대로
+      const plan = this.units.plan(caller, t);
+      const u = plan.kind === 'unit' ? this.units.create(caller, t, text, 'wake') : null;
+      if (u && u.held) first = { deliveryId: null, status: 'queued', reason: 'unit_wait', unit: u.unit.id };
+      else {
+        const d = u ? u.d : b.queue.enqueue(t.sessionId, text, { fromSession: caller.sessionId });
+        if (plan.kind === 'followup') this.units.noteFollowup(plan.tryRow, caller, d.deliveryId);
+        first = { deliveryId: d.deliveryId, status: d.status, ...(u ? { unit: u.unit.id } : {}) }; this.firstOf.set(d.deliveryId, t.sessionId); this.verbs.noteSent(caller, t, d.deliveryId);
+      }
+    }
     b.store.addEvent(caller.sessionId, 'branch_wake', { target: t.name, woke: was, ms: r ? r.ms : null });
     const v = this.childView(t);
     return { ...v, woke: was, ms: r ? r.ms : null, firstPrompt: first, next: verbLines(t.name) }; // P116
@@ -1049,6 +1082,25 @@ export class Branch {
     b.store.addEvent(parent.sessionId, 'branch_child_error', { child: child.name, sessionId: child.sessionId, type: e.type, message: clip(e.message, 300), via: 'transcript' });
     b.log(`child turn failed ${child.name}: ${e.type}`);
     return n;
+  }
+  // P258: 미확인으로 끝난 전달이 늦게 들어갔다(DeliveryQueue late_confirm). 첫 요청이었으면 부모에게 보낸 "들어가지 않았다" 알림(firstPromptEnd)을
+  //   바로잡는다(다시 보내면 같은 일이 두 번 들어간다). atrium prompt의 보낸 쪽에는 미확인을 따로 알리지 않았으므로(senderLost는 failed·cancelled만) 다시 알리지 않는다
+  onLateConfirm(r) {
+    const b = this.b;
+    for (const [sid, lost] of this.lost) {
+      if (lost.deliveryId !== r.deliveryId) continue;
+      this.lost.delete(sid);
+      b.store.addEvent(sid, 'first_prompt_late', { deliveryId: r.deliveryId, afterMs: r.afterMs ?? null });
+      const child = b.sessions.get(sid);
+      const parent = child && child.parentSessionId ? b.sessions.get(child.parentSessionId) : null;
+      if (!child || !parent) return null;
+      const text = `@${child.name}에게 보낸 첫 요청은 늦게 들어갔다(앞 알림의 "들어가지 않았다"는 틀렸다). 다시 보내지 않는다.`;
+      const n = b.queue.enqueue(parent.sessionId, text);
+      const l = b.ensureLink(parent.sessionId, child.sessionId, {});
+      b.linkEvent(l, 'notice', text, { deliveryId: n.deliveryId, why: 'first prompt late' }, { quiet: true });
+      return n;
+    }
+    return null;
   }
   readCmd(x) { return `atrium read ${x.name} --lines 40`; } // P116
   // atrium children: 자기의 하위 세션(all이면 그 아래 모두, 나무 순서)

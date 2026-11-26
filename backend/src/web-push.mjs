@@ -295,11 +295,12 @@ export class Pusher {
 
   // 세션 상태가 바뀌었다(backend broadcastSession). 응답 필요·오류·끝남은 곧바로 구독한 기기마다 묶음에 넣고,
   // 일이 끝남(done)은 작업 사이클이 끝날 때 넣는다(P92, tickCycles). 돌려주는 값은 이 바뀜의 종류(시험과 진단)
-  onState(sum, from) {
+  // P173: turnless = 턴 없이 끝난 일(압축). 그 일이 연 사이클은 닫고 끝남을 보내지 않는다
+  onState(sum, from, { turnless = false } = {}) {
     const kind = pushKindOf(sum, from);
     let tree = null;
-    if (from != null && sum && sum.kind !== 'shell') { tree = this.treeNow(sum); this.trackCycle(sum, tree); }
-    if (!kind || kind === 'done') return kind;
+    if (from != null && sum && sum.kind !== 'shell') { tree = this.treeNow(sum); this.trackCycle(sum, tree, { turnless: turnless && from === 'working' }); }
+    if (!kind || kind === 'done') return turnless && kind === 'done' ? null : kind;
     this.dispatch({ sessionId: sum.sessionId, name: sum.name, kind, workspaceKey: sum.workspaceKey }, (tree || this.treeNow(sum)).isSub(sum.sessionId));
     return kind;
   }
@@ -341,19 +342,31 @@ export class Pusher {
 
   // ---------- P92: 작업 사이클 ----------
   // 세션 X의 상태가 바뀌면 X와 그 조상마다: X가 일하기 시작하면 사이클을 연다(dirty), 쉬면 열린 사이클의 시계를 다시 건다(settleMs 뒤 판단)
-  trackCycle(sum, tree) {
+  // P173: openedBy·openedAt = 사이클을 연 세션과 때(열린 사이클에 다른 일이 더해지면 openedBy는 null). 턴 없는 일(압축)이 혼자 연 사이클은 그 일이 끝나면 닫는다(끝남을 보내지 않는다).
+  // 다른 일이 있던 사이클(이미 열렸거나 다른 하위 세션이 일함)은 그대로 둔다: 압축 전에 끝난 진짜 턴의 끝남은 간다
+  trackCycle(sum, tree, { turnless = false } = {}) {
     const t = this.now(); const x = sum.sessionId; const busy = sum.state === 'working'; // 새로 뜨는 세션(starting → ready)은 일한 것이 아니다
     for (const a of tree.chain(x)) {
       let c = this.cycles.get(a);
-      if (!c) { if (!busy) continue; c = { dirty: false, subs: new Set(), dueAt: null, quietSince: null, lastWhy: null }; this.cycles.set(a, c); }
+      if (!c) { if (!busy) continue; c = { dirty: false, subs: new Set(), dueAt: null, quietSince: null, lastWhy: null, openedBy: null, openedAt: null }; this.cycles.set(a, c); }
       if (busy) {
         if (a === x && c.dueAt != null) this.decide({ sessionId: a, kind: 'done', deviceId: null, why: 'busy-again' }); // 정한 시간 안에 다시 일함
+        if (!c.dirty) { c.openedBy = x; c.openedAt = t; } else c.openedBy = null; // 이미 열린 사이클에 더한 일은 그 일이 연 것이 아니다
         c.dirty = true; c.dueAt = null; c.lastWhy = null;
         if (a !== x) c.subs.add(x);
+      } else if (c.dirty && turnless && c.openedBy === x && [...c.subs].every((y) => y === x)) {
+        c.dirty = false; c.subs = new Set(); c.dueAt = null; c.lastWhy = null; c.openedBy = null; c.openedAt = null;
+        this.decide({ sessionId: a, kind: 'done', deviceId: null, why: 'turnless' });
       } else if (c.dirty) { c.dueAt = t + this.settleMs; c.quietSince = t; c.lastWhy = null; }
     }
     if (this.cycles.size > 500) for (const [k, c] of this.cycles) if (!c.dirty) this.cycles.delete(k);
     this.armCycleTimer();
+  }
+  // P173: 턴 없는 일로 보고 닫은 구간에 턴 hook(Stop 등)이 늦게 왔다. 그 일을 턴으로 다시 센다(일함 → 쉼)
+  lateTurn(sum) {
+    if (!sum || sum.kind === 'shell' || sum.state === 'working') return;
+    this.trackCycle({ ...sum, state: 'working' }, this.treeNow({ ...sum, state: 'working' }));
+    this.trackCycle(sum, this.treeNow(sum));
   }
   armCycleTimer() {
     if (!this.timers || this.cycleTimer || ![...this.cycles.values()].some((c) => c.dueAt != null)) return;

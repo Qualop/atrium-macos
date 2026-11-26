@@ -192,7 +192,7 @@ export class Migrator {
       } else {
         this.resetForLaunch(s);
         if (plan === 'claude') {
-          const { args } = wakeArgs(b.launchOf(s), convoOf(s, b.projectsOf ? b.projectsOf(s) : b.cfg.claudeProjects));
+          const { args } = wakeArgs(b.launchOf(s), convoOf(s, b.projectsOf ? b.projectsOf(s) : b.cfg.claudeProjects), b.modelNowFor ? b.modelNowFor(s) : s.rt.modelNow);
           await b.adapter.startAgent({ name: s.agentName, paneId: s.paneId, args, ...startOpt(s) });
         } else if (plan === 'harness') await b.startHarness(s, { resume: true, why: 'move' });
         else if (plan === 'adopted_claude') await b.recall.resumeHookless(s, 'move');
@@ -268,7 +268,7 @@ export class Migrator {
     if (!stopped) return; // 에이전트를 끄기 전에 실패했다(그대로 돈다)
     this.resetForLaunch(s);
     await b.adapter.waitShellReady(s.paneId, 8000);
-    if (plan === 'claude') { const { args } = wakeArgs(b.launchOf(s), convoOf(s, b.projectsOf ? b.projectsOf(s) : b.cfg.claudeProjects)); await b.adapter.startAgent({ name: s.agentName, paneId: s.paneId, args, ...startOpt(s) }); }
+    if (plan === 'claude') { const { args } = wakeArgs(b.launchOf(s), convoOf(s, b.projectsOf ? b.projectsOf(s) : b.cfg.claudeProjects), b.modelNowFor ? b.modelNowFor(s) : s.rt.modelNow); await b.adapter.startAgent({ name: s.agentName, paneId: s.paneId, args, ...startOpt(s) }); }
     else if (plan === 'harness') await b.startHarness(s, { resume: true, why: 'move_back' });
     else if (plan === 'adopted_claude') await b.recall.resumeHookless(s, 'move_back');
     steps.push('resumed in the old pane');

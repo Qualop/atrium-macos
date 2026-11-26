@@ -24,9 +24,12 @@ export function noticeText(lines) {
 
 // add(sessionId, line): 그 세션의 묶음에 더한다. 첫 줄에서 batchMs 뒤 한 번 보낸다.
 // canSend(sessionId) → false면 버린다(닫힘, 닫는 중, 잠듦). send(sessionId, text, lines)
+// P181: format(lines) → 보낼 글(기본 noticeText). keep(sessionId, line) → 보낼 때 아직 알릴 것인가(false면 그 줄을 뺀다. 다 빠지면 보내지 않는다).
+//   줄은 글자이거나 { key, … }(같은 key는 한 번)
+const keyOf = (l) => (l && typeof l === 'object' ? l.key : l);
 export class NoticeBatcher {
-  constructor({ batchMs = NOTICE_BATCH_MS, canSend, send, onDrop = () => {} }) {
-    this.batchMs = batchMs; this.canSend = canSend; this.send = send; this.onDrop = onDrop;
+  constructor({ batchMs = NOTICE_BATCH_MS, canSend, send, onDrop = () => {}, format = noticeText, keep = null }) {
+    this.batchMs = batchMs; this.canSend = canSend; this.send = send; this.onDrop = onDrop; this.format = format; this.keep = keep;
     this.pending = new Map(); // 세션 ID → { lines, timer }
   }
   add(sessionId, line) {
@@ -37,7 +40,7 @@ export class NoticeBatcher {
       if (p.timer.unref) p.timer.unref();
       this.pending.set(sessionId, p);
     }
-    if (!p.lines.includes(line)) p.lines.push(line);
+    if (!p.lines.some((l) => keyOf(l) === keyOf(line))) p.lines.push(line);
     return true;
   }
   flush(sessionId) {
@@ -45,8 +48,12 @@ export class NoticeBatcher {
     if (!p) return null;
     clearTimeout(p.timer); this.pending.delete(sessionId);
     if (!this.canSend(sessionId)) { this.onDrop(sessionId, p.lines); return null; }
-    return this.send(sessionId, noticeText(p.lines), p.lines);
+    const lines = this.keep ? p.lines.filter((l) => this.keep(sessionId, l)) : p.lines;
+    if (!lines.length) return null;
+    return this.send(sessionId, this.format(lines), lines);
   }
+  // 묶음에서 줄을 뺀다(보내기 전에 까닭이 사라졌을 때)
+  drop(sessionId, pred) { const p = this.pending.get(sessionId); if (p) p.lines = p.lines.filter((l) => !pred(l)); }
   flushAll() { for (const id of [...this.pending.keys()]) this.flush(id); }
   stop() { for (const p of this.pending.values()) clearTimeout(p.timer); this.pending.clear(); }
 }

@@ -215,11 +215,11 @@ test('P143 prompt --now --wait: 함께 쓸 수 없다(판과 CLI 둘 다). CLI �
   } finally { srv.close(); stop(); }
 });
 
-test('P143 안내 글: 판 시스템 글·하네스 안내문·스킬·CLI 사용법이 결과를 한 길로 받으라고 하고 --now를 말한다. 판 시스템 글은 크게 늘지 않는다', () => {
+// P181: 주된 가르침은 "맡기고 턴을 끝낸다(판이 done 보고를 가져다준다)"로 바뀌었다. --wait·--now는 그대로 쓸 수 있고 CLI 사용법이 말한다(p181.test.mjs)
+test('P143 안내 글: --now는 계약과 CLI 사용법에 그대로, 안내 글은 맡기고 턴을 끝내라고 한다(P181). 판 시스템 글은 크게 늘지 않는다', () => {
   for (const [k, t] of Object.entries({ board: BOARD_SYSTEM_PROMPT, harness: HARNESS_PROMPT, skill: boardSkill(), delegate: boardSkill('delegate') })) {
-    assert.match(t, /한 길로/, k); assert.match(t, /--now/, k);
+    assert.match(t, /턴을 끝낸다/, k); assert.match(t, /--wait/, k);
   }
-  assert.match(boardSkill(), /섞으면 같은 보고가 늦게 한 번 더 온다/);
   assert.match(shortHelp(), /--now/);
   assert.ok(VERBS.find((v) => v.name === 'prompt').args.includes('[--wait | --now]'));
   const long = fs.readFileSync(path.join(HERE, '..', 'bin', 'atrium-child.mjs'), 'utf8').match(/const HELP = `([\s\S]*?)`;/)[1];

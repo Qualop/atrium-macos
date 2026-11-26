@@ -27,7 +27,7 @@ const HELP = `atrium [--dev] [--json] <명령>
   ws open <폴더> | ws close <이름|키> [--yes] [--after archive|delete] | ws select <이름|키>   빈 프로젝트 만들기, 보드에서 지우기(세션이 있으면 --after로 모두 보관·삭제), 지금 프로젝트 고르기
   get <이름>                                세션 상세 (질문, 마지막 응답, 최근 터미널 화면, Git, 요청 전달 상태)
   watch [--seconds n]                     상태 변화·hook·요청 전달 이벤트 실시간 확인
-  send @이름 [@이름...] <글> [--wait] [--ws 프로젝트]   글 보내기. @all은 캔버스 전체의 에이전트 세션(--ws면 그 프로젝트만). --wait면 확인까지 기다림
+  send @이름 [@이름...] <글> [--wait] [--now] [--from 이름] [--ws 프로젝트]   글 보내기. @all은 캔버스 전체의 에이전트 세션(--ws면 그 프로젝트만). --wait면 확인까지 기다리고 못 들어가면 종료 코드 1. --now면 일하는 중인 Claude Code의 대기 메시지로 바로 넣음. --from(판 세션 안에서는 저절로)이면 끝내 못 들어갔을 때 그 세션에 알림
   cancel <전달 ID>                          전송 대기 중인 요청 취소
   deliveries [이름]                         요청 전달 기록
   inbox                                   응답 필요(waiting, trust_wait), 작업 완료, 문제 목록
@@ -87,7 +87,7 @@ const flags = {}; const pos = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === '--dev') continue;
-  if (a.startsWith('--')) { const k = a.slice(2); const nx = argv[i + 1]; if (nx !== undefined && (!nx.startsWith('--') || k === 'args') && !['json', 'wait', 'yes', 'raw', 'text', 'apply', 'undo', 'old', 'all', 'clear', 'check', 'no-shortcut', 'fork', ...FEATURE_BOOL_FLAGS].includes(k)) { flags[k] = nx; i++; } else flags[k] = true; }
+  if (a.startsWith('--')) { const k = a.slice(2); const nx = argv[i + 1]; if (nx !== undefined && (!nx.startsWith('--') || k === 'args') && !['json', 'wait', 'now', 'yes', 'raw', 'text', 'apply', 'undo', 'old', 'all', 'clear', 'check', 'no-shortcut', 'fork', ...FEATURE_BOOL_FLAGS].includes(k)) { flags[k] = nx; i++; } else flags[k] = true; }
   else pos.push(a);
 }
 const JSONOUT = !!flags.json;
@@ -155,14 +155,23 @@ function fmtSession(s) {
 const startBackend = () => startBackendFor(cfg);
 const stopBackend = () => stopBackendFor(cfg);
 
+// 2026-11-23: 기다리는 이유별 안내(atrium send). 일하는 중이면 턴이 끝날 때까지 기다린다(기한에 넣지 않는다)
+const SEND_HINT = {
+  working: '받는 쪽이 일하는 중이라 턴이 끝나면 보낸다(기다림 기한에 넣지 않는다). 지금 턴에 바로 넣으려면 --now',
+  waiting: '받는 쪽이 사람의 답을 기다린다. 15분 안에 답이 없으면 못 들어간다(atrium inbox)',
+  trust_wait: '받는 쪽이 폴더 신뢰 확인을 기다린다(atrium inbox)',
+  starting: '받는 쪽이 아직 뜨는 중이다',
+};
+// final: 끝난 전달({ deliveryId, name, status, reason })
 function waitDeliveries(c, ids, timeoutMs = 120000) {
   const left = new Set(ids);
+  const final = [];
   return new Promise((res) => {
-    const timer = setTimeout(() => res({ timeout: [...left] }), timeoutMs);
+    const timer = setTimeout(() => res({ timeout: [...left], final }), timeoutMs);
     c.on((ev, d) => {
       if (ev !== 'delivery' || !left.has(d.deliveryId)) return;
       console.log(`${ts()} 전달 ${d.name} ${d.deliveryId} ${d.status}${d.reason ? `(${d.reason})` : ''}`);
-      if (['confirmed', 'unconfirmed', 'failed', 'cancelled'].includes(d.status)) { left.delete(d.deliveryId); if (!left.size) { clearTimeout(timer); res({ done: true }); } }
+      if (['confirmed', 'unconfirmed', 'failed', 'cancelled'].includes(d.status)) { left.delete(d.deliveryId); final.push({ deliveryId: d.deliveryId, name: d.name, status: d.status, reason: d.reason || null }); if (!left.size) { clearTimeout(timer); res({ done: true, final }); } }
     });
   });
 }
@@ -263,12 +272,24 @@ async function main() {
       case 'send': {
         const targets = []; const words = [];
         for (const w of rest) (words.length === 0 && w.startsWith('@') ? targets : words).push(w);
-        const r = await c.call('session.send', { target: targets, text: words.join(' '), workspace: flags.ws });
-        if (!flags.wait) return out(r);
+        // 2026-11-23: --now(atrium prompt --now와 같은 길), --from(보낸 세션. 판 세션 안에서 부르면 ATRIUM_SESSION_ID). 끝내 못 들어가면 판이 그 세션에 알린다
+        const from = flags.from && flags.from !== true ? String(flags.from) : process.env.ATRIUM_SESSION_ID || undefined;
+        const r = await c.call('session.send', { target: targets, text: words.join(' '), workspace: flags.ws, ...(flags.now ? { now: true } : {}), ...(from ? { from } : {}) });
+        if (!flags.wait) {
+          if (JSONOUT) return out(r);
+          for (const d of r.deliveries) { const hint = flags.now && d.reason === 'working' ? null : SEND_HINT[d.reason]; console.log(`전달 ${d.name} ${d.deliveryId} ${d.status}${d.reason ? `(${d.reason})` : ''}${hint ? ` · ${hint}` : ''}`); }
+          console.log(`결과 확인: atrium deliveries <이름> · 확인까지 기다리기: --wait`);
+          return;
+        }
         await c.call('events.subscribe');
         for (const d of r.deliveries) console.log(`${ts()} 전달 ${d.name} ${d.deliveryId} ${d.status}`);
-        const w = await waitDeliveries(c, r.deliveries.map((d) => d.deliveryId), Number(flags.timeout || 120) * 1000);
-        if (w.timeout) console.log(`시간 초과: ${w.timeout.join(' ')}`);
+        const ids = r.deliveries.map((d) => d.deliveryId);
+        const w = await waitDeliveries(c, ids, Number(flags.timeout || 120) * 1000);
+        if (w.timeout) console.log(`시간 초과: ${w.timeout.join(' ')} (아직 대기열에 있다. 판이 계속 보낸다. 결과 확인: atrium deliveries <이름>)`);
+        // 못 들어간 글(failed·cancelled)과 확인 못 한 글(unconfirmed)은 종료 코드로도 알린다(스크립트·에이전트가 놓치지 않게)
+        const bad = (w.final || []).filter((d) => d.status !== 'confirmed');
+        if (bad.length) { for (const d of bad) console.log(`못 들어감: ${d.name} ${d.deliveryId} ${d.status}${d.reason ? `(${d.reason})` : ''}`); process.exitCode = 1; }
+        else if (w.timeout) process.exitCode = 3;
         return;
       }
       case 'cancel': return out(await c.call('delivery.cancel', { deliveryId: rest[0] }));

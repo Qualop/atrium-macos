@@ -6,7 +6,7 @@ import { splitArgs } from './gemini-args.mjs';
 import { resolvePath, canonicalPath, windowsPath } from './platform.mjs';
 
 // http hook으로 받을 이벤트. SessionStart는 http hook을 부르지 않으므로 넣지 않는다(E2 2.5).
-export const HOOK_EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied', 'Notification', 'Stop', 'StopFailure', 'SubagentStop', 'SessionEnd'];
+export const HOOK_EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied', 'Notification', 'Stop', 'StopFailure', 'SubagentStop', 'SessionEnd', 'PreCompact', 'PostCompact']; // P173: 압축 시작·끝(턴이 아니다)
 
 export const slash = resolvePath;
 
@@ -25,7 +25,41 @@ export function writeSessionSettings({ file, hookUrl, token, sessionId, timeoutS
   return slash(file);
 }
 
-// 처음 띄울 때와 이어 갈 때가 같은 설정을 쓰도록 공통 인자를 한곳에서 만든다
+// P258: 옛 세션 설정 파일(HOOK_EVENTS가 늘기 전에 쓴 것, 예: P173 전에 띄운 세션에는 PreCompact·PostCompact가 없다)에 빠진 판 hook을 채운다.
+//   순수 함수(j를 그대로 고친다) → 더한 이벤트 목록. 판 hook = type http + X-MT-Session 머리글(writeSessionSettings가 쓰는 꼴).
+//   빠진 이벤트에는 그 파일에 이미 있는 판 hook의 값(url, headers, 가장 많이 쓰인 timeout)을 넣는다. 그 파일의 토큰을 그대로 써서 도는 세션과 맞는다.
+//   있는 이벤트(그 값과 rig 역할의 시간 제한 amp)와 판 hook이 아닌 것(사용자가 넣은 것)은 그대로 둔다. 판 hook을 하나도 못 찾으면 손대지 않는다
+export function fillBoardHooks(j) {
+  if (!j || typeof j !== 'object' || !j.hooks || typeof j.hooks !== 'object' || Array.isArray(j.hooks)) return [];
+  const isBoard = (h) => !!h && h.type === 'http' && !!h.url && !!h.headers && !!h.headers['X-MT-Session'];
+  const groups = (ev) => (Array.isArray(j.hooks[ev]) ? j.hooks[ev] : []);
+  const boardIn = (ev) => groups(ev).some((m) => m && Array.isArray(m.hooks) && m.hooks.some(isBoard));
+  const found = [];
+  for (const ev of Object.keys(j.hooks)) for (const m of groups(ev)) for (const h of (m && Array.isArray(m.hooks) ? m.hooks : [])) if (isBoard(h)) found.push(h);
+  if (!found.length) return [];
+  const count = new Map();
+  for (const h of found) count.set(h.timeout, (count.get(h.timeout) || 0) + 1);
+  const timeout = [...count].reduce((a, c) => (c[1] > a[1] ? c : a))[0]; // 같은 수면 먼저 본 값
+  const base = found[0];
+  const added = [];
+  for (const ev of HOOK_EVENTS) {
+    if (boardIn(ev)) continue;
+    const hook = { type: 'http', url: base.url, ...(timeout != null ? { timeout } : {}), headers: { ...base.headers } };
+    j.hooks[ev] = [...groups(ev), { hooks: [hook] }];
+    added.push(ev);
+  }
+  return added;
+}
+// P258: 세션 설정 파일 하나에 빠진 판 hook을 채운다(바뀐 것이 있을 때만 쓴다) → 더한 이벤트 목록. 파일이 없거나 읽지 못하면 []
+export function fillSessionHooks(file) {
+  if (!file || !fs.existsSync(file)) return [];
+  const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const added = fillBoardHooks(j);
+  if (added.length) fs.writeFileSync(file, JSON.stringify(j, null, 2));
+  return added;
+}
+
+// 처음 띄울 때와 이어 갈 때가 공통 인자를 한곳에서 만든다
 // P4: 판 플러그인(스킬과 atrium 명령)을 쥐여 준다. Claude Code는 ~/.agents/skills를 읽지 않으므로 실행마다 --plugin-dir로 넘긴다(사용자 설정은 고치지 않는다).
 //     짧은 안내(--append-system-prompt-file)는 판의 연결 알림을 알아듣게 한다.
 // P33: extraArgs는 호출자의 추가 인자(판이 정하는 인자는 호출자 검사가 막는다). 끝에 붙인다
@@ -51,12 +85,12 @@ export const LEGACY_PLUGIN_NAME = 'multitask-herdr'; // P18 전의 플러그인 
 // P116: 일 시키기·기다리기·읽기는 판의 atrium 명령이다(터미널 백엔드와 상관없다). 터미널 명령을 직접 쓰라고 하지 않는다
 export const BOARD_SYSTEM_PROMPT = [
   '너는 Atrium 보드가 띄운 세션 안에서 돈다. 보드와는 셸의 `atrium` 명령으로 말한다(사용법 `atrium help`).',
-  '다른 에이전트에게 일을 시키거나 답을 받아 오라는 말을 들으면 `atrium prompt <이름> "<할 일>" --wait`로 시키고 그 답을 받는다. 이미 시킨 일은 `atrium wait <이름>`으로 끝나기를 기다리고, 화면은 `atrium read <이름>`으로 본다. 이름은 보드의 세션 이름이다. 결과는 한 길로 받는다: `--wait`·`atrium wait`로 당겨 오거나, 워커에게 끝나면 `atrium prompt <너> --now "…"`로 알리게 하고 기다리지 않는다(섞으면 같은 보고가 늦게 한 번 더 온다).', // P143
+  '다른 에이전트에게 일을 맡길 때는 `atrium prompt <이름> "<할 일>"`(새 워커는 `atrium child <이름> --prompt "<할 일>"`)로 맡기고 턴을 끝낸다. 하위가 `atrium done`으로 닫으면 보드가 그 보고를 가져다주고, 보고 없이 멈추면 한 번 알린다. 기다리며 폴링하지 않는다. 화면은 `atrium read <이름>`, 이름은 보드의 세션 이름이다. 지금 답이 꼭 필요할 때만 `--wait`(맡긴 뒤면 `atrium wait <이름>`).', // P143, P181: 맡기고 턴을 끝낸다(판이 done 보고를 가져다준다)
   '다른 에이전트에게는 `atrium prompt`로만 보낸다. 보드가 받는 쪽 차례에 맞춰 넣고 그 연결을 판에 남긴다. 터미널 명령으로 직접 보내지 않는다.',
   '"[Atrium 보드]"으로 시작하는 글은 보드가 알려 주는 연결(어느 에이전트가 너의 무슨 역할인지)이다. 이 보드의 예전 이름으로 시작하는 지난 알림도 같다.',
   '일이 서로 기다리지 않는 조각 여럿으로 나뉘거나 사용자가 워커·하위 세션·병렬·워크트리를 말하면 atrium 스킬(atrium:atrium, 옛 이름 delegate)대로 `atrium child`로 워커를 만들어 맡긴다. 설정의 워커 수·깊이·전체 상한을 지킨다. 워커의 모델을 말로 들으면 `atrium models`에서 골라 띄운다. 모델·추론은 빼면 보드 기본(opus·sol, high)이고 작은 일은 --effort low, 작은 조각은 직접 한다. 예전 이름 mtask도 같은 명령이다.', // P8(K2), P36, P41. macOS 판: 하위 세션 기본값과 토큰
   '보드는 오래 쉬는 리포의 세션을 모두 잠재우고, 리포가 바빠도 오래 쉰 세션은 혼자 잠재운다(sleeping). 잠든 세션에 `atrium prompt`하면 보드가 깨운 뒤 넣는다. 미리 깨우려면 `atrium wake <이름>`으로 그 세션을(리포째 잠들었으면 그 리포를) 깨운다.', // P21·P24(D4), P111, P116
-  '세션을 띄울 때 관계를 고른다: 협력·동료·같이·파트너면 `atrium child <이름> --peer`(동료: 필요한 것을 주고받고 끝나면 결과를 공유), 워커·하위·맡겨·나눠면 기본(하위 워커: 끝나면 띄운 쪽에 보고), 그 밖에는 첫 지시와 역할로 판단한다. 첫 요청 앞의 "[Atrium 보드] 관계:" 줄이 너의 관계와 보고 방식이다. 하위면 지시에 적힌 방법으로 보고하고, 동료면 결과를 상대에게 공유하며 사람에게 직접 답해도 된다. 나중에 바꾸기: `atrium relate <이름> sub|peer|none|auto`.', // P156
+  '세션을 띄울 때 관계를 고른다: 협력·동료·같이·파트너면 `atrium child <이름> --peer`(동료: 필요한 것을 주고받고 끝나면 결과를 공유), 워커·하위·맡겨·나눠면 기본(하위 워커: 끝나면 띄운 쪽에 보고), 그 밖에는 첫 지시와 역할로 판단한다. 첫 요청 앞의 "[Atrium 보드] 관계:" 줄이 너의 관계와 보고 방식이다. 맡은 일은 끝나면 `atrium done ok|failed "<보고>"`로 닫고 쉬고, 동료면 결과를 상대에게 공유하며 사람에게 직접 답해도 된다. 나중에 바꾸기: `atrium relate <이름> sub|peer|none|auto`.', // P156
   '상위·동료·하위·독립과 역할 연결은 `atrium me`가 보드의 지금 기록이다. 누구의 무엇인지, 누구에게 맡길지 헷갈리면 먼저 치고, 예전 알림과 다르면 이것을 믿는다. 매 턴 치지는 않는다.', // P81
   // macOS 판(2026-11-19): 이 줄들은 하네스 안내문(harness.mjs HARNESS_PROMPT)에만 있어 Claude Code 세션에는 가지 않았다(약관 동의·입력 제한 우회가 그래서 막히지 않았다)
   '앱 조작은 cua MCP(별도 커서), 웹은 ego-browser 스킬로 한다. 사이트의 이용약관·동의·쿠키 창은 누르지 않고 멈춰 사람에게 묻고, 사이트가 정한 입력 제한(형식·범위)을 브라우저에서 고쳐 피하지 않는다.',

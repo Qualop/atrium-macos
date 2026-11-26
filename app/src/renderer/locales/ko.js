@@ -878,7 +878,7 @@ const upstream = {
     emptyFiltered: ' 다른 필터를 선택하세요.',
   },
   markdown: {
-    copyLink: '클릭하면 링크 주소를 복사합니다.',
+    openLink: '클릭하면 링크를 엽니다.',
   },
   sidebar: {
     loadFail: '사이드바를 불러오지 못했습니다: {error}',
@@ -1359,6 +1359,7 @@ const upstream = {
     menu: '더 보기',
     wsTip: '클릭하면 그 영역으로 이동합니다(보드 또는 세션 맵). 화살표를 누르면 접거나 펼칩니다. 드래그해서 다른 그룹으로 이동할 수 있습니다.',
     attnMore: '확인이 필요한 세션 {n}개 더 보기',
+    pinMore: '실행 중인 세션 {n}개 더 보기',
     kindTitle: '종류별 필터',
     kindAll: '모든 종류',
     clear: '지우기',
@@ -2259,6 +2260,7 @@ const upstream = {
     unseen: '작업을 마쳤고 아직 확인하지 않았습니다.',
     here: '지금 연 세션입니다.',
     pinned: '접힌 프로젝트 안에서 확인이 필요한 세션입니다.',
+    pinnedRun: '접힌 프로젝트 안에서 실행 중인 세션입니다.',
   },
   // P104: 휴대폰 키 패드(세션 창에 키를 그대로 보낸다. 어느 에이전트에서나 같다)
   phoneKeys: {
@@ -2665,6 +2667,30 @@ const upstream = {
     failed: '붙여 넣지 못했습니다: {error}',
     image: '그림 경로를 붙여 넣었습니다.',
   },
+  // macOS 판: 노드 머리의 쓴 토큰(가중)과 나무 합계
+  usage: {
+    ownTitle: '이 세션이 쓴 토큰',
+    treeTitle: '작업 나무 합계(세션 {n}개, 닫힌 워커 포함)',
+    parts: '캐시 읽기 {cr} · 캐시 쓰기 {cw} · 입력 {in} · 출력 {out} (응답 {msgs}번)',
+    weighted: '가중 {w} (읽기 0.1 · 쓰기 1.25 · 입력 1 · 출력 5, 입력 토큰 값으로 환산한 상대 비용)',
+    span: '첫 응답부터 마지막 응답까지 {span}',
+    own: '그 가운데 이 세션 {w}',
+  },
+  // macOS 판: 일하는 동안 잠들지 않기(설정 › 절전)
+  keepAwake: {
+    name: '일하는 동안 잠자기 막기',
+    hint: '세션이 일하는 동안 Mac이 잠들지 않게 합니다. 화면은 꺼질 수 있고, 모두 쉬면 2분 뒤 풀립니다. 덮개를 닫으면 막지 못합니다.',
+  },
+  // macOS 판: Finder·브라우저에서 끌어 놓기, 명령 바 캡처 단추
+  desktopDrop: {
+    done: '파일 {n}개의 경로를 넣었습니다.',
+    queued: '파일 {n}개의 경로를 터미널이 붙으면 넣습니다.',
+    chips: '파일 {n}개를 붙였습니다.',
+    failed: '파일 {n}개를 받지 못했습니다.',
+    capture: '화면 영역을 찍어 붙이기',
+    captureFailed: '찍지 못했습니다: {error}',
+    folder: '폴더',
+  },
   // P161: 설정 "연결" 칸의 빈 상태(무엇을 하는 칸인지, 어떻게 더하는지)
   connEmpty: {
     title: '아직 연결이 없습니다',
@@ -2695,6 +2721,10 @@ const upstream = {
     dropped: '연결이 끊겨 음성 입력을 끝냈습니다.',
     failed: '음성 입력을 하지 못했습니다.',
   },
+  // P258: 미확인으로 끝난 뒤 늦게 제출된 전달(압축 뒤 등)
+  deliveryLate: {
+    reason: '늦게 제출됨',
+  },
 };
 
 // Preserve the macOS fork's existing copy, while adding every new upstream key.
@@ -2717,4 +2747,9 @@ const dictionary = mergeCopy(upstream, { ...core, ...sessions, ...workspace, ...
 delete dictionary.node.briefTitle;
 for (const key of ['briefTitle', 'touched', 'stateNow', 'pendingQuestion', 'lastPrompt', 'lastAnswer', 'interruptedBy', 'briefNote']) delete dictionary.extras[key];
 dictionary.backend.launchers = { err: { notFound: dictionary.launchers.err.notFound } };
+// P283: 터미널·마크다운 보기의 링크
+dictionary.urlLink = {
+  hint: 'Ctrl+클릭하면 링크를 엽니다.',
+  notOpened: '링크를 열지 않았습니다. http·https 링크만 엽니다({scheme}).',
+};
 export default dictionary;

@@ -53,6 +53,9 @@ export function newRuntime({ trustPredicted = false, now = Date.now(), kind = 'c
     transcriptPath: null,
     claudeSessionId: null,
     sleep: null, // P21(D4): 잠듦 { at, by, memMB, convId, … }. 있으면 claude와 패널이 없고 상태는 sleeping
+    workSince: null, // P173: 터미널이 working이 된 때(이번 일 구간의 시작)
+    lastWork: null, // P173: 끝난 일 구간 { since, endedAt, turnless, compact } — turnless면 턴이 아니다(압축 등)
+    compact: null, // P173: 대화 압축 { trigger: manual|auto|…, at, endedAt } (PreCompact·PostCompact hook)
   };
 }
 
@@ -112,11 +115,22 @@ export function applyHook(rt, body, now = Date.now()) {
       rt.lastError = { type: body.error || body.error_type || 'unknown', message: body.message || body.error_message || body.error_details || null, at: now };
       rt.turn.endedAt = now;
       break;
+    case 'PreCompact': // P173: 대화 압축이 시작됨(사람의 /compact, 자동, 쉬는 동안의 압축). 턴이 아니다
+      rt.compact = { trigger: body.trigger || null, at: now, endedAt: null };
+      break;
+    case 'PostCompact':
+      rt.compact = { ...(rt.compact || { trigger: body.trigger || null, at: now }), endedAt: now };
+      break;
     case 'SessionEnd':
       rt.sessionEnd = { reason: body.reason || null, at: now };
       rt.bg = null;
       break;
     default: // SubagentStop 등은 상태를 바꾸지 않는다(E2 2.4)
+  }
+  // P173: 턴 hook(지시, 턴 끝)이 일 구간이 끝난 직후에 왔다(늦게 온 hook). 그 구간은 턴이었다
+  if ((ev === 'UserPromptSubmit' || ev === 'Stop' || ev === 'StopFailure') && rt.lastWork && rt.lastWork.turnless && now - rt.lastWork.endedAt <= LATE_TURN_HOOK_MS) {
+    rt.lastWork = { ...rt.lastWork, turnless: false, late: true };
+    if (ev !== 'UserPromptSubmit' && !rt.turn.endedAt) rt.turn.endedAt = now;
   }
   // P92: Stop·SubagentStop의 background_tasks = 지금 도는 뒤 일(뒤 셸, 뒤 하위 에이전트). 없으면(옛 Claude Code) 전 값을 둔다
   if (ev === 'Stop' || ev === 'SubagentStop') { const tasks = bgTasksOf(body); if (tasks) rt.bg = { tasks, at: now }; }
@@ -132,6 +146,19 @@ function askFrom(kind, tool, input, toolUseId, since) {
 }
 function resolveAsk(rt, how, now) { rt.lastAskResolved = { ...rt.pendingAsk, input: undefined, resolvedBy: how, resolvedAt: now }; rt.pendingAsk = null; }
 
+// P173: 턴 없는 일. Claude Code는 사람이 친 /compact와 쉬는 동안의 압축("Compacted while idle")에도 터미널을 working → done으로 바꾼다.
+// 그 사이에 지시(UserPromptSubmit)도 턴 끝(Stop·StopFailure)도 오지 않는다(오는 것은 SubagentStop, PreCompact·PostCompact뿐).
+// hook이 붙은 Claude Code의 일 구간이 그렇게 끝나면 턴이 아니다: 작업 완료·안 본 답·웹 푸시·연결 알림을 만들지 않는다.
+// Stop·UserPromptSubmit hook은 Claude Code가 응답을 기다리는 hook이라 터미널 상태보다 먼저 온다. 지시가 터미널 working보다 조금 먼저 올 수 있어 TURN_HOOK_SLACK_MS만큼 앞을 본다
+export const TURN_HOOK_SLACK_MS = 3000;
+export const LATE_TURN_HOOK_MS = 2000;
+export function turnlessWork(rt) {
+  if (rt.hooked === false || (rt.kind && rt.kind !== 'claude') || rt.workSince == null || !rt.hooksSinceLaunch) return false; // hook이 하나도 오지 않은 세션은 판정하지 않는다
+  const from = rt.workSince - TURN_HOOK_SLACK_MS;
+  const err = rt.lastError && rt.lastError.at;
+  return !((rt.turn.startedAt || 0) >= from || (rt.lastAnswerAt || 0) >= from || (err || 0) >= from);
+}
+
 export function applyTermStatus(rt, status, now = Date.now(), extra = {}) {
   const prev = rt.term.status;
   rt.term.status = status;
@@ -146,7 +173,17 @@ export function applyTermStatus(rt, status, now = Date.now(), extra = {}) {
   // hook이 없는 세션의 턴은 터미널 상태로 센다(검토 대기 표시에 쓴다)
   if (rt.hooked === false && status === 'working' && prev !== 'working') rt.turn = { startedAt: now, endedAt: null };
   if (rt.phase === 'starting' && (status === 'idle' || status === 'done' || status === 'blocked' || status === 'working')) rt.phase = 'running';
-  if ((prev === 'working' || (rt.hooked === false && prev === 'blocked')) && (status === 'idle' || status === 'done') && !rt.turn.endedAt && rt.turn.startedAt) rt.turn.endedAt = now;
+  // P173: 일 구간의 시작과 끝. 턴 없는 구간(압축)은 턴 끝(turn.endedAt)을 바꾸지 않는다
+  let turnless = false;
+  // 막힘(blocked: 승인 질문)은 구간을 끊지 않는다(같은 턴이 이어진다). 놓임(unknown 등)은 구간을 버린다
+  if (status === 'working' && prev !== 'working') { if (prev !== 'blocked' || rt.workSince == null) rt.workSince = now; }
+  else if (rt.workSince != null && (status === 'idle' || status === 'done')) {
+    turnless = turnlessWork(rt);
+    const c = rt.compact && rt.compact.at >= (rt.workSince ?? now) - TURN_HOOK_SLACK_MS ? rt.compact.trigger || 'compact' : null;
+    rt.lastWork = { since: rt.workSince, endedAt: now, turnless, ...(c ? { compact: c } : {}) };
+    rt.workSince = null;
+  } else if (status !== 'working' && status !== 'blocked') rt.workSince = null;
+  if (!turnless && (prev === 'working' || (rt.hooked === false && prev === 'blocked')) && (status === 'idle' || status === 'done') && !rt.turn.endedAt && rt.turn.startedAt) rt.turn.endedAt = now;
   return prev;
 }
 
@@ -238,6 +275,9 @@ export function deriveState(rt) {
     if (rt.geminiTurnActive) return { state: 'working' };
   }
   if (rt.hooked === false) {
+    // 2026-11-23: Codex의 폴더 신뢰 화면(판이 화면에서 읽음, backend checkCodexTrust). 터미널은 이 화면의 Codex를 알아보지 못하거나(상태 없음) blocked로 본다.
+    //   Codex가 돌기 시작하면(working·idle·done) 화면 표시가 남아 있어도 따르지 않는다
+    if (rt.kind === 'codex' && rt.trustScreen && s !== 'working' && s !== 'idle' && s !== 'done') return { state: 'trust_wait', confirmedByScreen: true };
     if (s === 'blocked') {
       if (rt.kind === 'claude' && rt.trustScreen) return { state: 'trust_wait', confirmedByScreen: true };
       if (boardClosing(rt)) return closingState(rt);
@@ -259,7 +299,7 @@ export function deriveState(rt) {
     return { state: 'waiting', ask: { kind: 'unknown_dialog' }, estimate: 'term blocked, no ask hook' };
   }
   if (rt.pendingAsk && (s === 'working' || s === 'idle' || s === 'done')) return { state: 'waiting', ask: rt.pendingAsk, estimate: `hook waiting, term ${s}` };
-  if (s === 'working') return { state: 'working' };
+  if (s === 'working') return rt.compact && !rt.compact.endedAt && rt.workSince != null && rt.compact.at >= rt.workSince - TURN_HOOK_SLACK_MS ? { state: 'working', estimate: 'compacting' } : { state: 'working' }; // P173: 압축 중
   if (s === 'idle' || s === 'done') return rt.lastError ? { state: 'error', error: rt.lastError } : { state: 'ready' };
   return { state: 'starting' };
 }

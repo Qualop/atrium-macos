@@ -15,6 +15,7 @@ import { shortFolder } from './lib/folder-display.js';
 // P103: 나무 모양으로 다듬었다. 단계마다 16px 들여쓰기와 옅은 세로 안내선, 작은 펼침 화살표(SVG), 이름은 대문자로 바꾸지 않는다.
 //   뜻을 알기 어렵던 표시를 뺐다: 폴더 □·저장소 ⎇ 기호(가리키면 풀이), 이름 뒤 보라 점(상태 점을 보라로), 셸 $(종류 글), 닫힘·대화 꼬리표(절 이름이 말한다).
 //   수는 자리로 뜻을 나눈다: 이름 옆 옅은 수 = 안에 든 것, 오른쪽 = 상태(응답 필요·오류 배지, 접힌 곳의 작업 중 ●n). 지금 연 세션(focusId)은 강조색.
+import { appMod } from './lib/keys.js'; // macOS 판: Cmd가 앱 키
 import './sidebar.css';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { api } from './api.js';
@@ -23,7 +24,7 @@ import { useStore, getState, selectWorkspace, selectGroup, toast, goWhenOpen, op
 import { ago, askLine, STATE_LABEL } from './lib/labels.js';
 import { useT, t, errText, tMsg, tOr } from './lib/i18n.js';
 import { archiveRows, SECTION_STEP, bindingText } from './lib/sidebar.js';
-import { buildRows, offsetsOf, windowOf, scrollFor, moveCursor, parentOf, dropTarget, adjustIndex, freshGroupName, clampWidth, SIDE_W, BUCKETS, bucketOf, kindOf, TREE, headBadges } from './lib/sidebar-tree.js'; // P44. P103: TREE, headBadges
+import { buildRows, offsetsOf, windowOf, scrollFor, moveCursor, parentOf, dropTarget, adjustIndex, freshGroupName, clampWidth, SIDE_W, BUCKETS, bucketOf, kindOf, TREE, headBadges, groupKeys } from './lib/sidebar-tree.js'; // P44. P103: TREE, headBadges. P278: groupKeys
 import { shownKind, kindOf as agentKindOf } from './lib/kinds.js'; // P25: DeepSeek(flavor)를 종류처럼 보인다
 import { branchLabel } from './lib/branch.js'; // P8(K4): 하위 세션은 부모 아래에 들여 보인다
 import { Icon } from './lib/icons.jsx';
@@ -234,10 +235,8 @@ function focusWs(key) { const st = getState(); if (st.missionOpen && st.mapFocus
 function focusGroup(r) {
   const st = getState();
   if (st.missionOpen && st.mapFocus && st.mapFocus.group(r.none ? null : r.g.id)) return;
-  const have = new Set((st.workspaces || []).map((w) => w.key));
-  const inGroup = new Set((st.groups || []).flatMap((g) => g.members || []));
-  const keys = r.none ? [...have].filter((k) => !inGroup.has(k)) : (r.g.members || []).filter((k) => have.has(k));
-  if (!keys.length) return;
+  const keys = groupKeys(r, st.workspaces, st.groups); // P278: 줄의 g에는 members가 없어 늘 빈 목록이던 것을 고쳤다
+  if (!keys.length) return; // 판에 구성 워크스페이스가 없는 빈 폴더: 아무것도 하지 않는다(줄 아래 "빈 폴더"가 말한다)
   selectGroup(keys, keys.includes(st.currentWs) ? st.currentWs : keys[0]);
 }
 
@@ -248,7 +247,7 @@ function sessionTitle(s, now, { here = false, pinned = false } = {}) {
     `@${s.name} · ${kindText(shownKind(s))} · ${STATE_LABEL[s.state] || s.state}${s.lastActivityAt ? ` · ${ago(s.lastActivityAt, now)}` : ''}`,
     here && t('sb3.here'),
     s.unseen && bucketOf(s) === 'idle' && t('sb3.unseen'),
-    pinned && t('sb3.pinned'),
+    pinned && (bucketOf(s) === 'working' ? t('sb3.pinnedRun') : t('sb3.pinned')), // P265: 접힌 묶음 아래 실행 중 세션
     renamed(s) && t('rename.address', { address: addressOf(s) }),
     ask && `${t('sb2.tipAsk')}: ${ask}`,
     s.state === 'error' && s.error && `${t('state.error')}: ${typeof s.error === 'string' ? s.error : s.error.message || ''}`,
@@ -280,12 +279,13 @@ const SessionRow = memo(function SessionRow({ r, now, cur, here, busy: rowBusy }
     </div>
   );
   return (
-    <button className={`mt-sb2-row sess b-${b}${r.attn ? ' attn' : ''}${r.pinned ? ' pinned' : ''}${cur ? ' cur' : ''}${s.unseen ? ' unseen' : ''}${here ? ' here' : ''}`} style={pad(r)} data-sb="session" data-row={r.id} data-session={s.sessionId} data-name={s.name} data-state={s.state} data-indent={r.indent || 0} data-pinned={r.pinned ? '1' : undefined} data-focused={here ? '1' : undefined}
+    <button className={`mt-sb2-row sess b-${b}${r.attn ? ' attn' : ''}${r.pinned ? ' pinned' : ''}${r.wsName ? ' inws' : ''}${cur ? ' cur' : ''}${s.unseen ? ' unseen' : ''}${here ? ' here' : ''}`} style={pad(r)} data-sb="session" data-row={r.id} data-session={s.sessionId} data-name={s.name} data-state={s.state} data-indent={r.indent || 0} data-pinned={r.pinned ? '1' : undefined} data-pinws={r.wsName || undefined} data-focused={here ? '1' : undefined}
       title={sessionTitle(s, now, { here, pinned: r.pinned })} onClick={() => { setCursor(r.id); focusSession(s.sessionId); }}
       onContextMenu={(e) => { setCursor(r.id); openMenuAt(e, 'session', s.sessionId); }}>
       <span className="mt-sb2-line">
         <span className={`mt-sb2-dot st-${s.state}`} data-state={s.state} />
         <b className="mt-sb2-name">{s.name}</b>
+        {r.wsName && <span className="mt-sb2-pinws" title={r.wsName}>{r.wsName}</span>}{/* P265: 접힌 그룹에 워크스페이스가 여럿이면 어느 워크스페이스의 세션인지 */}
         {s.branch && s.branch.role && <span className="mt-sb2-role">{shownRole(s.branch.role)}</span>}
         {k !== 'claude' && <span className="mt-sb2-kind">{kindText(k)}</span>}
         {r.attn && <span className={`mt-sb2-tag ${b}`}>{b === 'need' ? t('sb2.st_need') : t('sb2.st_error')}</span>}
@@ -375,7 +375,7 @@ function SecRow({ r }) {
 function MoreRow({ r, cur }) {
   const t = useT();
   const go = () => { setCursor(r.id); if (r.pinMore) { const k = r.key.slice(4); toggleFold(k, true); } else showMore(r.key); };
-  return <button className={`mt-sb2-row morerow${cur ? ' cur' : ''}`} style={pad(r, NAME)} data-action="more" data-row={r.id} onClick={go}>{r.pinMore ? t('sb2.attnMore', { n: r.n }) : t('sidebar.more', { n: r.n })}</button>;
+  return <button className={`mt-sb2-row morerow${cur ? ' cur' : ''}`} style={pad(r, NAME)} data-action="more" data-row={r.id} onClick={go}>{r.pinMore ? t(r.running ? 'sb2.pinMore' : 'sb2.attnMore', { n: r.n }) : t('sidebar.more', { n: r.n })}</button>;
 }
 function EmptyRow({ r }) {
   const t = useT();
@@ -770,7 +770,7 @@ export function Sidebar() {
   useEffect(() => {
     const onKey = (e) => {
       if (e.isComposing || e.keyCode === 229) return;
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === 'E' || e.key === 'e' || e.code === 'KeyE')) { e.preventDefault(); e.stopPropagation(); toggleSidebar(); }
+      if (appMod(e) && e.shiftKey && !e.altKey && (e.key === 'E' || e.key === 'e' || e.code === 'KeyE')) { e.preventDefault(); e.stopPropagation(); toggleSidebar(); }
     };
     window.addEventListener('keydown', onKey, true); // 터미널에 초점이 있어도 받는다(Ctrl+F와 같이)
     return () => window.removeEventListener('keydown', onKey, true);

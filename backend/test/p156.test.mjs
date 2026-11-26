@@ -141,7 +141,7 @@ test('P156 atrium child --peer: 계보는 남고 관계는 동료(출처 agent),
   const { b, lead } = await fakeBoard();
   const sub = await b.branch.spawnChild(lead, { name: 'w1', prompt: 'do it', wait: false });
   assert.equal(sub.relation, 'sub'); assert.match(sub.relationText, /^하위 워커/);
-  assert.match(b.queued[0].text, /^\[Atrium 보드\] 관계: 너는 @lead의 하위 워커다\. 보고는 아래 지시에 적힌 방법을 따른다/);
+  assert.match(b.queued[0].text, /^\[Atrium 보드\] 관계: 너는 @lead의 하위 워커다\. 아래 일은 @lead가 맡긴 일 u[0-9a-f]+이다/); // P180: 하위의 첫 요청은 일 단위 머리
   assert.ok(b.queued[0].text.endsWith('\n\ndo it'));
   const peer = await b.branch.spawnChild(lead, { name: 'p1', peer: true, prompt: 'crawl the site', wait: false });
   assert.equal(peer.relation, 'peer'); assert.equal(peer.role, '동료'); assert.match(peer.relationText, /^동료/);
@@ -150,7 +150,7 @@ test('P156 atrium child --peer: 계보는 남고 관계는 동료(출처 agent),
   assert.equal(p1.parentSessionId, lead.sessionId, '계보는 남는다');
   assert.deepEqual(b.store.relationRows().map((r) => [r.a, r.b, r.relation, r.source]), [[lead.sessionId, p1.sessionId, 'peer', 'agent']]);
   const q = b.queued.find((x) => x.sid === p1.sessionId).text;
-  assert.match(q, /^\[Atrium 보드\] 관계: 너는 @lead의 동료다\(하위 워커가 아니다\)\. .*atrium prompt lead --now/);
+  assert.match(q, /^\[Atrium 보드\] 관계: 너는 @lead의 동료다\(하위 워커가 아니다\)\. .*atrium prompt lead "<결과>"/);
   assert.ok(q.endsWith('\n\ncrawl the site'));
   // 연결 기록: 지시는 원래 글, 꼬리표
   const l = b.store.linkByPair(lead.sessionId, p1.sessionId);
@@ -345,7 +345,7 @@ test('P156 계약과 안내: 계약 3, relate 동사·child --peer·me/children/
   assert.match(relationLine('a', 'b', { relation: 'sub', up: 'a' }, 'user'), /^@b는 이제 너의 하위 워커다\(사람이 판에서 정함\)/);
   assert.match(relationLine('a', 'b', { relation: 'sub', up: 'b' }, 'lead'), /^너는 이제 @b의 하위 워커다\(@lead가 정함\)/);
   assert.match(relationLine('a', 'b', null, 'user'), /자동으로 되돌렸다/);
-  assert.match(relationHeader({ relation: 'peer', parent: 'lead' }), /atrium prompt lead --now/);
+  assert.match(relationHeader({ relation: 'peer', parent: 'lead' }), /atrium prompt lead "<결과>"/); // P181: --now 대신 보드가 차례에 넣는다
 });
 
 test('P156 atrium prompt 꼬리표: 위 → 하위 assign, 하위 → 위 report, 동료끼리 share, 독립은 없음(연결 기록 data.tag와 응답 tag)', async () => {

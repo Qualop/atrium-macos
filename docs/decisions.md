@@ -779,3 +779,13 @@ Gemini CLI hook·모델 조회·정확한 대화 복구를 추가했다. 개인 
 - 그래서 묶는 것은 동시에 깨어 있는 수다: 깨어 있는 하위 워커 상한 maxAwakeWorkers(기본 6, 넘으면 쉬는 워커부터 잠재움), 워커 혼자 잠들기 5분(3분으로 줄였다가, 성능을 그대로 두라는 사용자 요청으로 되돌림: 잠든 워커를 깨우면 몇 초 걸린다). 일·질문·초안·전달·보는 중인 워커는 잠재우지 않는다.
 - 백엔드: 살아 있는 힙은 15MB인데 설치본에서 쉬는 틈 정리가 돌지 않아 힙 121MB·RSS 188MB였다(GC 한 번에 84MB). 힙 전체가 64MB를 넘으면 정리하도록 넓히고 backend.memory API로 볼 수 있게 했다.
 - 백엔드 정리는 V8 last-resort GC로 한다(보통 gc()는 힙 75 → 69MB, last-resort는 65 → 21MB). 한 번 6ms, 1분에 많아야 한 번이라 속도 영향이 없다. 설치본에서 백엔드 RSS 185MB → 약 90MB.
+
+## 2026-11-23: 일하는 중인 세션에 보낸 글, Codex 신뢰 화면
+
+- 바뀐 문장(B1 규칙 2): "waiting이면 … waiting이 풀리면 다시 보낸다(최대 15분)." 15분은 사람의 답을 기다리는 몫인데 코드는 working에도 걸었다.
+- 경위: 실제 판의 6시간 무인 실행(DesignSkill)에서 긴 턴(전체 검사)을 하는 리드에게 `atrium send`로 보낸 두 글이 15분 뒤 `failed timeout (working)`으로 조용히 사라졌다. `atrium input`으로 터미널에 직접 쳐서야 들어갔다.
+- 지금: working인 시간은 기다린 시간에 넣지 않고 턴이 끝나면(ready) 보낸다. 다른 이유(waiting·starting·trust_wait 등)로 기다린 시간만 합쳐 15분을 넘기면 실패다. 센 시간은 메모리에만 둔다.
+- `atrium send --now`를 더했다(`atrium prompt --now`, P143과 같은 길). 기한 근처에서 저절로 바로 넣기로 바꾸지 않았다. 보낸 쪽이 고르지 않은 글을 남의 턴 중간에 끼우게 된다.
+- 실패 알림: 못 들어간 글(`failed`)은 판 기록 `delivery_failed`에 남는다. 보낸 세션을 알면(--wait 없는 `atrium prompt`, `atrium send --from`, 판 세션 안에서는 ATRIUM_SESSION_ID) `[Atrium 보드]` 알림을 보낸다. 취소, 확인 못 함, 판 알림 자신은 알리지 않는다. 판 밖의 `atrium send`는 CLI가 기다리는 이유를 바로 보이고 `--wait`는 못 들어가면 종료 코드 1이다.
+- Codex 신뢰: 0.169의 신뢰 화면("Trust this folder? Codex can read …", "› 1. Trust and continue")에서는 터미널이 Codex를 알아보지 못해 starting으로 남았다. 판이 시작 중인 Codex의 화면을 읽어 신뢰 화면이면 trust_wait로 둔다. 옛 문장도 읽는다.
+- F5 "판은 수락하지 않는다"는 그대로다. 사람이나 지휘 세션이 `atrium answer <이름> <번호>`로 답하면 판이 화면을 다시 읽어 신뢰 화면이 그대로일 때만 키를 넣는다. 다른 hook 없는 세션은 전처럼 `answer_in_terminal`이다.

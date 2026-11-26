@@ -9,6 +9,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
 import { loadConfig, BACKEND_ROOT, APP_NAME, APP_ID, envVar, legacyAppUserData } from '../../../backend/src/config.mjs';
 import { startBackend, stopBackend, backendInfo, health } from '../../../backend/src/client.mjs';
 import { restartBlockSync } from '../../../backend/src/update-lease.mjs';
@@ -20,7 +21,7 @@ import { noticeWay } from '../renderer/lib/remote.js'; // P58: 원격 붙음 알
 import { windowTitle } from '../renderer/lib/update-notice.js'; // P71: 창 제목에 버전
 import { shouldPurgeOnClose, purgeAndDestroy } from './gpu-purge.mjs';
 import { permissionAllowed } from './media-permission.mjs'; // P165: 음성 입력 마이크 권한
-import { uriListPaths, splitFolders } from '../renderer/lib/desktop-paste.js'; // P162: 붙여 넣은 파일 목록
+import { uriListPaths, splitFolders, isImagePath } from '../renderer/lib/desktop-paste.js'; // P162: 붙여 넣은 파일 목록
 import { uploadDirOf, uploadPath, cleanupUploads, UPLOAD_MAX_BYTES } from '../../../backend/src/uploads.mjs'; // P162: 붙여 넣은 그림 자리와 정리(P48 웹 업로드와 같은 곳·규칙) // P113: 창을 닫고 트레이에 남을 때 GPU 프로세스 메모리 돌려주기
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -99,35 +100,98 @@ ipcMain.handle('mt:pickFolder', async () => {
   return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
 });
 
-// P162: 데스크톱 창의 붙여 넣기. 창은 클립보드에 글이 없고 파일이 있을 때만 부른다(lib/desktop-paste.js wantsDesktopPaste).
-// - 탐색기에서 복사한 파일 → { kind: 'files', paths, folders }. 폴더는 넣지 않고 수만 센다
+// P162: 데스크톱 창의 붙여 넣기. 창은 클립보드에 파일이 있을 때 부른다(lib/desktop-paste.js wantsDesktopPaste).
+// - 탐색기·Finder에서 복사한 파일 → { kind: 'files', paths, folders }. 폴더는 넣지 않고 수만 센다
 // - 캡처한 그림 → 데이터 폴더 uploads/에 PNG로 두고 { kind: 'image', path, thumb }(thumb: 미리보기용 작은 data URL)
-// - 둘 다 아니면 null
+// - 둘 다 아니면 null(macOS에서는 부른 쪽이 클립보드 글을 그대로 넣는다)
+const THUMB_MAX = 240;
+function thumbOf(img) {
+  try {
+    if (!img || img.isEmpty()) return null;
+    const { width, height } = img.getSize();
+    const k = Math.min(1, THUMB_MAX / Math.max(width, height, 1));
+    return (k < 1 ? img.resize({ width: Math.max(1, Math.round(width * k)), height: Math.max(1, Math.round(height * k)) }) : img).toDataURL();
+  } catch { return null; }
+}
+// 그림 바이트를 uploads/에 두고 { path, thumb }
+function saveUpload(buf, name, type) {
+  const dir = uploadDirOf(cfg.dataDir);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = uploadPath(dir, name, type);
+  fs.writeFileSync(file, buf);
+  try { cleanupUploads(dir, { keep: file }); } catch {}
+  let thumb = null;
+  if (/^image\//.test(type || '') || isImagePath(file)) { try { thumb = thumbOf(nativeImage.createFromBuffer(buf)); } catch {} }
+  return { path: file, thumb };
+}
+const run = (cmd, args, timeout = 3000) => new Promise((res) => execFile(cmd, args, { timeout, maxBuffer: 4 * 1024 * 1024 }, (err, out) => res(err ? null : String(out))));
+// macOS: Finder가 복사한 파일들의 경로. 클립보드 API가 file 주소를 내주지 않거나 첫 파일만 줄 때가 있어 NSPasteboard에서 직접 읽는다(여러 파일)
+const FINDER_FILES_JXA = 'ObjC.import("AppKit");const a=$.NSPasteboard.generalPasteboard.readObjectsForClassesOptions($([$.NSURL]),$({"NSPasteboardURLReadingFileURLsOnlyKey":true}));const o=[];if(a&&!a.isNil())for(let i=0;i<a.count;i++)o.push(ObjC.unwrap(a.objectAtIndex(i).path));JSON.stringify(o)';
+async function macClipFiles() {
+  const out = await run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', FINDER_FILES_JXA]);
+  try { const a = JSON.parse(String(out || '[]').trim() || '[]'); return Array.isArray(a) ? a.filter((x) => typeof x === 'string' && x).map((x) => x.normalize('NFC')) : []; } catch { return []; }
+}
 ipcMain.handle('mt:clipPaste', async () => {
+  const isDir = (p) => fs.statSync(p).isDirectory();
+  if (process.platform === 'darwin') {
+    const mac = await macClipFiles();
+    if (mac.length) return { kind: 'files', ...splitFolders(mac, isDir) };
+  }
   let items;
   try { items = await clipboard.read(); } catch (e) { log('clipPaste read failed', e.message); return null; }
   for (const it of items) {
     if (!it.types.includes('text/uri-list')) continue;
-    const all = uriListPaths(await (await it.getType('text/uri-list')).text());
+    const all = uriListPaths(await (await it.getType('text/uri-list')).text(), { platform: process.platform });
     if (!all.length) continue;
-    return { kind: 'files', ...splitFolders(all, (p) => fs.statSync(p).isDirectory()) };
+    return { kind: 'files', ...splitFolders(all, isDir) };
   }
   for (const it of items) {
     if (!it.types.includes('image/png')) continue;
     const buf = Buffer.from(await (await it.getType('image/png')).arrayBuffer());
     if (!buf.length) continue;
     if (buf.length > UPLOAD_MAX_BYTES) return { kind: 'error', code: 'too_big' };
-    const dir = uploadDirOf(cfg.dataDir);
-    fs.mkdirSync(dir, { recursive: true });
-    const file = uploadPath(dir, 'pasted.png', 'image/png');
-    fs.writeFileSync(file, buf);
-    try { cleanupUploads(dir, { keep: file }); } catch {}
-    let thumb = null;
-    try { const img = nativeImage.createFromBuffer(buf); const { width, height } = img.getSize(); const k = Math.min(1, 240 / Math.max(width, height, 1)); thumb = (k < 1 ? img.resize({ width: Math.max(1, Math.round(width * k)), height: Math.max(1, Math.round(height * k)) }) : img).toDataURL(); } catch {}
-    log(`clipPaste image ${path.basename(file)} ${buf.length}B`);
-    return { kind: 'image', path: file, thumb };
+    const r = saveUpload(buf, 'pasted.png', 'image/png');
+    log(`clipPaste image ${path.basename(r.path)} ${buf.length}B`);
+    return { kind: 'image', ...r };
   }
   return null;
+});
+// 끌어 놓았는데 경로가 없는 파일(브라우저에서 끈 그림 등): 내용을 uploads/에 둔다 → { path, thumb } 또는 { error }
+ipcMain.handle('mt:saveUpload', async (_e, { name, type, data } = {}) => {
+  const buf = Buffer.from(data || []);
+  if (!buf.length) return { error: 'empty' };
+  if (buf.length > UPLOAD_MAX_BYTES) return { error: 'too_big' };
+  const r = saveUpload(buf, name || 'dropped', type || '');
+  log(`saveUpload ${path.basename(r.path)} ${buf.length}B`);
+  return r;
+});
+// 끌어 놓은 경로들의 칩 정보: [{ path, name, dir, image, thumb }]. 그림은 작은 미리보기(큰 그림은 OS 썸네일)
+ipcMain.handle('mt:fileInfo', async (_e, paths = []) => {
+  const out = [];
+  for (const p of (Array.isArray(paths) ? paths : []).slice(0, 50)) {
+    let dir = false;
+    try { dir = fs.statSync(p).isDirectory(); } catch {}
+    const image = !dir && isImagePath(p);
+    let thumb = null;
+    if (image) {
+      try { thumb = thumbOf(await nativeImage.createThumbnailFromPath(p, { width: THUMB_MAX, height: THUMB_MAX })); } catch {}
+      if (!thumb) { try { thumb = thumbOf(nativeImage.createFromPath(p)); } catch {} }
+    }
+    out.push({ path: p, name: path.basename(p), dir, image, thumb });
+  }
+  return out;
+});
+// macOS: 화면 영역을 골라 찍어 uploads/에 둔다(screencapture -i, Esc면 null). 다른 앱 창까지 찍으려면 Atrium에 화면 기록 권한이 있어야 한다
+ipcMain.handle('mt:capture', async () => {
+  if (process.platform !== 'darwin') return { error: 'unsupported' };
+  const dir = uploadDirOf(cfg.dataDir);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = uploadPath(dir, 'capture.png', 'image/png');
+  await run('/usr/sbin/screencapture', ['-i', '-x', file], 10 * 60_000);
+  if (!fs.existsSync(file)) return null;
+  try { cleanupUploads(dir, { keep: file }); } catch {}
+  log(`capture ${path.basename(file)}`);
+  return { path: file, thumb: thumbOf(nativeImage.createFromPath(file)) };
 });
 
 // A1 OS 알림(P3). 띄울지는 창(renderer)이 정한다(같은 대기에 한 번, 창에 초점이 있고 그 노드가 보이면 띄우지 않음).
@@ -182,6 +246,8 @@ function createWindow() {
   if (quiet) w.once('ready-to-show', () => { if (!w.isDestroyed()) w.showInactive(); });
   win.on('page-title-updated', (e) => e.preventDefault()); // P9: HTML <title>이 개발용 표시("(dev)")를 덮어쓰지 않게
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
+  // 판 페이지를 벗어나지 않는다: 창에 파일을 끌어 놓았는데 받는 곳이 없으면 Chromium이 그 파일로 옮겨 가 판이 사라졌다
+  win.webContents.on('will-navigate', (e, url) => { e.preventDefault(); log(`navigation blocked ${String(url).slice(0, 120)}`); if (/^https?:/.test(url)) shell.openExternal(url); });
   win.webContents.on('render-process-gone', (_e, d) => log('render-process-gone', JSON.stringify(d)));
   // E5 2.5 조사(P3): 창이 다시 읽히거나 프로세스를 잃었는지 남긴다
   win.webContents.on('did-start-navigation', (d) => { if (d.isMainFrame) log(`navigation start ${d.isSameDocument ? 'same-doc ' : ''}${String(d.url).replace(/^file:.*\/dist\//, 'dist/')}`); });

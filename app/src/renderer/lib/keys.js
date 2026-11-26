@@ -7,6 +7,21 @@ const SPECIAL = {
   Home: '\x1b[H', End: '\x1b[F', Delete: '\x1b[3~', PageUp: '\x1b[5~', PageDown: '\x1b[6~',
 };
 
+// macOS 판: 이 창(키보드)이 Mac인가. 데스크톱 창은 preload가 준 platform, 웹 화면은 브라우저가 알려 준 OS. 창 밖(단위 시험)은 아니다
+export function clientMac() {
+  try {
+    const w = globalThis.window;
+    if (!w) return false;
+    if (w.mt && w.mt.platform) return w.mt.platform === 'darwin';
+    const n = w.navigator;
+    return !!n && /Mac/.test((n.userAgentData && n.userAgentData.platform) || n.platform || '');
+  } catch { return false; }
+}
+// 앱 단축키의 조합 키: Mac은 Cmd(Ctrl은 터미널 프로그램 몫: ^K 줄 끝 지우기, ^F 앞으로, ^C 끊기, ^V 그대로 넣기), 그 밖은 Ctrl(Cmd도 받는다)
+export const appMod = (e, mac = clientMac()) => (mac ? !!e.metaKey && !e.ctrlKey : !!(e.ctrlKey || e.metaKey));
+// 지우기 키: Mac 노트북 키보드에는 앞 지우기(Delete)가 없고 delete 키가 Backspace다
+export const isDeleteKey = (e, mac = clientMac()) => e.key === 'Delete' || (mac && e.key === 'Backspace');
+
 // e: { key, ctrlKey, altKey, metaKey, isComposing } → 보낼 글자열, 또는 null(모으지 않는다)
 export function keyToData(e) {
   if (!e || e.isComposing || e.keyCode === 229 || e.key === 'Process' || e.key === 'Dead' || e.metaKey) return null;
@@ -26,8 +41,8 @@ export function keyToData(e) {
 
 // P22: Delete 키로 닫을 세션. 고른 노드 중 판에 있는 세션 노드만(메모·칸반은 selected에 없다). 대화상자가 열려 있거나 조합 키면 닫지 않는다.
 // 입력 칸·터미널·메모 편집 중인지는 부르는 쪽(main.jsx editable)이 먼저 본다 → null | { one: id } | { many: [id…] }
-export function closeKeyTargets(e, { selected = [], sessions = new Map(), dialog = null } = {}) {
-  if (!e || e.key !== 'Delete' || e.isComposing || e.keyCode === 229 || e.key === 'Process' || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || dialog) return null;
+export function closeKeyTargets(e, { selected = [], sessions = new Map(), dialog = null } = {}, mac = clientMac()) {
+  if (!e || !isDeleteKey(e, mac) || e.isComposing || e.keyCode === 229 || e.key === 'Process' || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || dialog) return null;
   const ids = selected.filter((id) => sessions.has(id));
   if (!ids.length) return null;
   return ids.length === 1 ? { one: ids[0] } : { many: ids };
@@ -35,11 +50,11 @@ export function closeKeyTargets(e, { selected = [], sessions = new Map(), dialog
 
 // P28: 닫기 확인(보관·삭제·취소)이 떠 있을 때의 키. Delete를 한 번 더 누르면 "삭제"를 고른다(초점과 표시만, Enter로 확정), Esc는 취소다.
 // 조합 키, 한글 조합 중, 입력 칸·터미널 안에서 친 키는 보지 않는다 → 'arm' | 'cancel' | null
-export function confirmKey(e) {
+export function confirmKey(e, mac = clientMac()) {
   if (!e || e.isComposing || e.keyCode === 229 || e.key === 'Process' || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return null;
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable || (t.closest && t.closest('.xterm')))) return null;
-  if (e.key === 'Delete') return 'arm';
+  if (isDeleteKey(e, mac)) return 'arm';
   if (e.key === 'Escape') return 'cancel';
   return null;
 }
@@ -49,8 +64,9 @@ export function confirmKey(e) {
 // 퍼지는 단계의 처리기에는 오지 않았다(그 뒤 친 글이 그 터미널에 들어갔다). 그래서 터미널 안에서도 판이 먼저 받는다.
 // 잃는 것: 터미널 프로그램에 ^K(셸 줄 끝까지 지우기 등)를 이 키로 보낼 수 없다. Ctrl+F처럼 판의 단축키가 앞선다.
 // Ctrl+K는 예전처럼 Shift를 함께 눌러도 받고, Ctrl+F는 Shift 없이만 받는다. Alt를 함께 누르면 받지 않는다 → 'command' | 'search' | null
-export function boardShortcut(e) {
-  if (!e || e.type && e.type !== 'keydown' || !(e.ctrlKey || e.metaKey) || e.altKey) return null;
+// macOS: Cmd+K·Cmd+F만 받는다. Ctrl+K·Ctrl+F는 터미널 프로그램에 간다(zsh·Claude Code·vim의 줄 편집 키)
+export function boardShortcut(e, mac = clientMac()) {
+  if (!e || e.type && e.type !== 'keydown' || !appMod(e, mac) || e.altKey) return null;
   const k = String(e.key || '').toLowerCase();
   if (k === 'k') return 'command';
   if (k === 'f' && !e.shiftKey) return 'search';

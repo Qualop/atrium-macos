@@ -35,8 +35,10 @@ import { sharpPlan, compensate, phaseShift, paintedAt, samePlan, cssCanvas, fitD
 import { useT, errText } from './lib/i18n.js';
 import { fitScale, inputByLabel } from './lib/multiclient.js'; // P47: 창 여럿이 같은 패널을 볼 때
 import { isWeb, uploadFiles } from './web.js'; // P48: 웹 화면의 파일 붙여넣기·끌어 놓기
-import { pathsText, filesOf, hasFiles } from './lib/upload.js';
-import { wantsDesktopPaste, pastePathsText } from './lib/desktop-paste.js'; // P162: 데스크톱 창의 파일·그림 붙여 넣기
+import { termPathsText, filesOf, hasFiles } from './lib/upload.js';
+import { wantsDesktopPaste } from './lib/desktop-paste.js'; // P162: 데스크톱 창의 파일·그림 붙여 넣기
+import { desktopDrop, hasDropFiles, resolveDrop, registerTerminalSender, takePending } from './lib/desktop-drop.js'; // macOS 판: Finder에서 끌어 놓기
+import { attachTermLinks } from './term-links.js'; // P283: OSC 8·글 속 주소 링크(Mac은 Cmd+누르기, 손가락 탭)
 import { termBudgetNow, step } from './crash-watch.js'; // P84: 손가락 웹 화면은 WebGL 없이, 웹은 캔버스 픽셀 상한을 낮게. P86: 단계 기록
 import { capDims } from './lib/crumbs.js'; // P86: 웹 화면의 칸·줄 상한
 import { fillPlan, runFill } from './lib/term-fill.js'; // P127: 셸 기록을 여러 프레임에 나눠 쓴다(최근 화면 먼저)
@@ -51,6 +53,8 @@ function readNumber(key, dflt) {
   const n = Number(v);
   return Number.isFinite(n) && v !== null && v !== '' ? n : dflt;
 }
+// 경로가 놓인 PC의 OS(웹 화면이면 백엔드가 알려 준 값)
+const pcPlatform = () => api.info?.platform || window.mt?.platform;
 const termPlan = termBudgetNow(Infinity, readNumber('webglBudget', DEFAULT_WEBGL_BUDGET)); // P84: { webgl, maxPx }
 export const budget = new RendererBudget(termPlan.webgl);
 export const terms = new Map(); // sessionId → Terminal (시험과 E6에서 읽는다)
@@ -142,6 +146,7 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
     const onFocusIn = () => { if (st.pid != null && current()) api.call('terminal.focus', { session: sessionId, controllerPid: st.pid, attachmentId: st.attachmentId }).catch(() => {}); };
     if (term.textarea) term.textarea.addEventListener('focus', onFocusIn);
     fixMouseScale(term, sessionId);
+    const offLinks = attachTermLinks(term, host, { log: (name, d) => perfLog(name, { sessionId, ...d }) }); // P283
 
     let renderer = webgl === false ? 'dom' : budget.acquire(sessionId);
     st.renderer = renderer;
@@ -325,18 +330,19 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
     const uploadInto = (files) => {
       flash(t('upload.uploading', { n: files.length }));
       const generation = st.generation, attachmentId = st.attachmentId;
-      uploadFiles(files).then((paths) => { if (!current(generation, attachmentId)) return; send(wrapPaste(pathsText(paths))); flash(t('upload.done', { n: paths.length })); perfLog('term_upload', { sessionId, n: paths.length }); },
+      uploadFiles(files).then((paths) => { if (!current(generation, attachmentId)) return; send(wrapPaste(termPathsText(paths, pcPlatform()))); flash(t('upload.done', { n: paths.length })); perfLog('term_upload', { sessionId, n: paths.length }); },
         (err) => { flash(t('upload.failed', { error: err.message })); window.mt.log(`upload failed ${sessionId}: ${err.message}`); });
     };
     // P162: 데스크톱 창은 탐색기에서 복사한 파일의 경로를, 캡처한 그림은 판 데이터 폴더에 둔 PNG의 경로를 넣는다(main.mjs mt:clipPaste).
     // 터미널에는 칩 대신 경로 그대로 보낸다. Claude Code·Codex는 붙여 넣은 그림 경로를 그림으로 붙인다
-    const pasteDesktop = () => window.mt.clipPaste().then((r) => {
-      if (!r) return;
+    const pasteText = (text) => send(wrapPaste(text, { shell: (getState().sessions.get(sessionId) || {}).kind === 'shell', platform: api.info?.platform || window.mt.platform }));
+    const pasteDesktop = (fallback = '') => window.mt.clipPaste().then((r) => {
+      if (!r) { if (fallback) pasteText(fallback); return; } // macOS: 파일·그림이 아니면 클립보드 글 그대로
       if (r.kind === 'error') { flash(t('desktopPaste.tooBig')); return; }
       if (r.kind === 'files' && r.folders && !r.paths.length) { flash(t('desktopPaste.foldersOnly')); return; }
       const paths = r.kind === 'image' ? [r.path] : r.paths;
       if (!paths || !paths.length) return;
-      send(wrapPaste(pastePathsText(paths)));
+      send(wrapPaste(termPathsText(paths, pcPlatform())));
       if (r.kind === 'image') flash(t('desktopPaste.image'));
       else if (r.folders) flash(t('desktopPaste.foldersSkipped', { n: r.folders }));
       perfLog('term_desktop_paste', { sessionId, kind: r.kind, n: paths.length });
@@ -345,17 +351,42 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
       e.preventDefault(); e.stopPropagation();
       const files = isWeb ? filesOf(e.clipboardData) : [];
       if (clearsSelection('paste', { hasSelection: sel.has() })) sel.clear('paste');
-      if (wantsDesktopPaste(e.clipboardData, { desktop: !isWeb && typeof window.mt.clipPaste === 'function' })) return pasteDesktop();
-      if (files.length) return uploadInto(files);
       const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+      if (wantsDesktopPaste(e.clipboardData, { desktop: !isWeb && typeof window.mt.clipPaste === 'function' })) return pasteDesktop(text);
+      if (files.length) return uploadInto(files);
       // P51(#3): 셸 노드는 줄바꿈을 Shift+Enter로 보내 여러 줄이 입력줄에 쌓이게 한다(지금 종류로 본다. 셸 안에서 띄운 에이전트로 바뀔 수 있다)
-      send(wrapPaste(text, { shell: (getState().sessions.get(sessionId) || {}).kind === 'shell', platform: api.info?.platform || window.mt.platform }));
+      pasteText(text);
     };
     host.addEventListener('paste', onPaste, true);
-    const onDragOver = (e) => { if (isWeb && hasFiles(e.dataTransfer)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } };
-    const onDrop = (e) => { const files = isWeb ? filesOf(e.dataTransfer) : []; if (!files.length) return; e.preventDefault(); e.stopPropagation(); uploadInto(files); };
+    // 끌어 놓기: 웹 화면은 올려서(P48), 데스크톱 창(macOS 판)은 Finder 경로 그대로(경로 없는 그림은 main이 uploads/에 둔 사본) 입력에 붙인다
+    const desk = !isWeb && desktopDrop();
+    const dropMark = (on) => { const n = host.closest('.mt-node') || host; n.classList.toggle('mt-drop-on', on); };
+    const onDragOver = (e) => {
+      if (!(isWeb || desk) || !hasFiles(e.dataTransfer)) return;
+      e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy';
+      if (desk) dropMark(true);
+    };
+    const onDragLeave = (e) => { if (desk && !host.contains(e.relatedTarget)) dropMark(false); };
+    const onDrop = (e) => {
+      if (desk && hasDropFiles(e.dataTransfer)) {
+        e.preventDefault(); e.stopPropagation(); dropMark(false);
+        const generation = st.generation, attachmentId = st.attachmentId;
+        resolveDrop(e.dataTransfer).then(({ items, errors }) => {
+          if (!current(generation, attachmentId)) return;
+          if (items.length) { send(wrapPaste(termPathsText(items.map((x) => x.path), pcPlatform()))); flash(t('desktopDrop.done', { n: items.length })); }
+          if (errors.length) flash(t('desktopDrop.failed', { n: errors.length }));
+          perfLog('term_desktop_drop', { sessionId, n: items.length, failed: errors.length });
+        }, (err) => flash(t('desktopPaste.failed', { error: err.message })));
+        term.focus();
+        return;
+      }
+      const files = isWeb ? filesOf(e.dataTransfer) : []; if (!files.length) return; e.preventDefault(); e.stopPropagation(); uploadInto(files);
+    };
     host.addEventListener('dragover', onDragOver, true);
+    host.addEventListener('dragleave', onDragLeave, true);
     host.addEventListener('drop', onDrop, true);
+    // 노드에 끌어 놓은 경로(SessionNode): 붙어 있으면 바로, 아니면 붙을 때(attach 끝) 넣는다
+    const offSender = registerTerminalSender(sessionId, (text) => { if (!st.pid || api.status !== 'open' || term.options.disableStdin) return false; send(wrapPaste(text)); term.focus(); return true; });
 
     // P42: 셸은 그림자 터미널(터미널 서버 화면과 같은 scrollback 0 화면)에 먼저 써서 새 출력으로 화면이 몇 줄 밀렸는지 보고,
     // 프레임을 쓰기 전에 그만큼 xterm 영역을 올려 밀려난 줄을 scrollback으로 보낸다. 첫 프레임 앞에는 터미널 기록(지난 출력)을 넣는다
@@ -539,6 +570,7 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
           const canFocus = !state.dialog && !state.searchOpen && (!state.focusId || state.focusId === sessionId) && (active === document.body || active === term.textarea);
           if (restoreFocus.current) { restoreFocus.current = false; if (canFocus) term.focus(); }
           if (canFocus && pendingFor(sessionId)) { const buf = takePendingInput(sessionId); if (buf) { perfLog('pending_input', { sessionId, chars: buf.length }); send(buf); } term.focus(); }
+          { const dropped = takePending(sessionId); if (dropped) { send(wrapPaste(dropped)); perfLog('pending_drop', { sessionId, chars: dropped.length }); } } // 노드에 끌어 놓은 경로
         })
         .catch((e) => { if (current(generation, attachmentId)) setStatus({ kind: 'error', reason: e.message }); });
     };
@@ -556,11 +588,14 @@ export function TerminalView({ sessionId, width, height, onActivate, onInput, fo
       clearTimeout(st.typingTimer);
       host.removeEventListener('paste', onPaste, true);
       host.removeEventListener('dragover', onDragOver, true);
+      host.removeEventListener('dragleave', onDragLeave, true);
       host.removeEventListener('drop', onDrop, true);
+      offSender();
       host.removeEventListener('wheel', onShellWheel, { capture: true });
       for (const h of modeHooks) h.dispose();
       if (st.touch) { st.touch.dispose(); st.touch = null; }
       sel.dispose();
+      offLinks(); // P283
       clearTimeout(st.syncTimer);
       if (shadow) shadow.dispose();
       if (st.pid != null && !st.disconnected && st.generation === api.generation) api.call('terminal.detach', { session: sessionId, controllerPid: st.pid, attachmentId: st.attachmentId }).catch(() => {});

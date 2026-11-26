@@ -247,7 +247,8 @@ test('K2(P36): 플러그인에 atrium 스킬과 옛 이름 delegate(같은 글),
   // macOS 판: 워커 상한 줄, 보드 도구 자동 승인 줄, 명령 추적 문구로 450바이트를 더 둔다
   // macOS 판: 하위 세션 기본 모델·추론 줄과 토큰 절(2026-11-18)로 600바이트를 더 둔다
   // macOS 판: 디자인 언어·범용 스킬·이어 쓰기 줄(2026-11-19, 디자인 실험 C 결과)로 1000바이트를 더 둔다
-  assert.ok(Buffer.byteLength(skill) <= 2 * 3107 + 80 + 230 + 690 + 450 + 600 + 200 + 2000 + 1000, `skill ${Buffer.byteLength(skill)}B`);
+  // macOS 판: 빌더·고침 워커·검토 두 차수 규칙(2026-11-21 실험 F)으로 800, 첫 화면 줄이기·4차 없음(실험 G)으로 600바이트를 더 둔다
+  assert.ok(Buffer.byteLength(skill) <= 2 * 3107 + 80 + 230 + 690 + 450 + 600 + 200 + 2000 + 1000 + 800 + 600, `skill ${Buffer.byteLength(skill)}B`);
   assert.match(skill.split('\n')[2], /사용자가 말하지 않아도/); // 설명에 스스로 쓰는 때
   assert.equal(boardSkill('delegate'), old);
   for (const c of ['atrium', 'mtask']) { // 옛 이름 mtask는 P18 전에 띄운 세션의 스킬 글이 말한다
@@ -527,7 +528,7 @@ test('K1: 하위 세션 명령은 env의 판으로 세션 토큰을 들고 간�
     const ok = await runChild(['child', 'w1', '--no-wait'], env);
     assert.equal(ok.code, 0, ok.stderr);
     assert.match(ok.stdout, /하위 세션을 생성했습니다: @w1 \(종류 claude, 역할 "워커"/); // P116: herdr 이름·패널은 보이지 않는다
-    assert.match(ok.stdout, /일 시키기: atrium prompt w1/);
+    assert.match(ok.stdout, /일 맡기기: atrium prompt w1/); // P181
     assert.doesNotMatch(ok.stdout, /herdr/);
     const ls = await runChild(['children'], env);
     assert.match(ls.stdout, /@lead\(1단계\)의 하위 세션 1개/);
@@ -548,7 +549,7 @@ test('K1: 하위 세션 명령은 env의 판으로 세션 토큰을 들고 간�
     const noenv = await runChild(['child'], {});
     assert.match(noenv.stderr, /보드에서 시작한 세션이 아닙니다/);
     const nope = await runChild(['kill', 'w1'], env);
-    assert.equal(nope.code, 2); assert.match(nope.stderr, /child, relate, children, child-kill, child-wait, wake, models만/);
+    assert.equal(nope.code, 2); assert.match(nope.stderr, /child, relate, children, child-kill, child-wait, wake, models, done, item, items만/); // P180
     const five = await runChild(['child-kill', 'lead'], env);
     assert.match(five.stderr, /not_parent/);
   } finally { srv.close(); }

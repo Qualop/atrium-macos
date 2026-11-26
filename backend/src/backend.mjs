@@ -13,19 +13,19 @@ import { VoiceRelay } from './voice.mjs'; // P165
 import { TailscaleWatch, tailscaleHosts } from './tailscale.mjs'; // P49(R3): Tailscale 상태 읽기
 import { envVar } from './config.mjs';
 import { WebServer, isLocalProcess } from './web.mjs'; // P48(R2): 웹 화면, 짝 맺기, 기기 토큰, 폴더 목록, 업로드
-import { DeliveryQueue } from './delivery.mjs';
+import { DeliveryQueue, blockReason } from './delivery.mjs';
 import { TerminalRelay } from './relay.mjs';
 import { PerfTrace } from './perf-trace.mjs'; // P146: 성능 기록
 import { Peers, peerHandlers } from './peers.mjs'; // P47: 붙은 클라이언트와 알림 받을 클라이언트
 import { viewportKey, viewportFor } from './multiclient.mjs'; // P47: 클라이언트별 화면 위치
 import { gitProbe, workspaceOf } from './git.mjs';
 import { readMessages, lastExchange, userPromptsSince, readCodexMessages } from './transcript.mjs';
-import { tailLines, isTrustDialog, parseChoices, parsePromptLine, shellPromptState, parseWorktreeExit, promptOnScreen, claudeInputBox, codexInputBox } from './screen.mjs';
+import { tailLines, isTrustDialog, isCodexTrustDialog, parseChoices, parsePromptLine, shellPromptState, parseWorktreeExit, promptOnScreen, claudeInputBox, codexInputBox } from './screen.mjs';
 import { parseTargets, toLF, clip, isBoardNotice, promptTask } from './text.mjs';
 import { planAnswer, checkSteps, sameAsk } from './answer.mjs';
 import { checkKeys, keyChain, keysBy } from './keys.mjs'; // P104: 휴대폰 키 줄
 import { reopenSession } from './user-close.mjs'; // P125
-import { writeSessionSettings, buildStartArgs, buildResumeArgv, buildResumeArgs, predictTrust, transcriptPathFor, slash, recoveryPlan, writeBoardPlugin } from './launch.mjs';
+import { writeSessionSettings, fillSessionHooks, buildStartArgs, buildResumeArgv, buildResumeArgs, predictTrust, transcriptPathFor, slash, recoveryPlan, writeBoardPlugin } from './launch.mjs';
 import { newRuntime, applyHook, applyTermStatus, applyAgentDetected, applyAgentReleased, applyExitCode, applyTermDisconnected, deriveState, flags, worktreeExitAsk, trackWaiting, markTurnInterrupted, markTurnFailed } from './state.mjs';
 import { worktreeOf, waitClaudeExit, beginBoardExit, endBoardExit } from './worktree-exit.mjs'; // P71: 워크트리 나가기 질문
 import { summarizeChanges, CHANGE_KINDS } from './changes.mjs';
@@ -80,7 +80,7 @@ function apiError(code, message) { return Object.assign(new Error(message), { co
 import { m, confirmResult, keyed } from './msg.mjs'; // P16: 화면 글 열쇠
 import { closePlan, checkAfter } from './ws-close.mjs'; // P44: 워크스페이스 지우기 판단
 import { groupHandlers, readGroups, dropWorkspaces, GROUPS_META, syncWsGroups, wsLabels } from './ws-groups.mjs'; // P44: 가상 그룹. P91: 폴더 위계 묶음(저절로)
-import { refreshModel, findCodexRollout, findPiSession, shownModel, sameModel } from './model-now.mjs'; // P137: 하네스가 지금 쓰는 모델
+import { refreshModel, findCodexRollout, findPiSession, shownModel, sameModel, resumeModel } from './model-now.mjs'; // P137: 하네스가 지금 쓰는 모델
 import { codexHomeOf } from './codex-models.mjs';
 import { shownName, findSession, takenNames, nameOwner, renameSession } from './session-label.mjs'; // P66: 판의 이름(표시 이름)과 에이전트 주소
 function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
@@ -98,6 +98,8 @@ import { attachFailover } from './account-failover.mjs';
 import { stopTree, waitIdle } from './session-stop.mjs';
 import { ModelSwitch } from './model-switch.mjs'; // macOS 판: 노드 머리의 모델·추론 바꾸기 // macOS 판: 중지 단추(하위 세션까지)
 import { MemTrim } from './mem-trim.mjs'; // macOS 판: 큰 일 뒤 쉬는 틈에 GC로 메모리를 돌려준다 // macOS 판: 사용 한도에 걸리면 다음 계정으로 같은 대화를 잇는다
+import { refreshUsage, usageOf, sumUsage } from './usage-meter.mjs'; // macOS 판: 세션·나무가 쓴 토큰
+import { KeepAwake } from './keep-awake.mjs'; // macOS 판: 일하는 동안 Mac이 잠들지 않게(caffeinate)
 import { spawnPlanOf } from './spawn-plan.mjs';
 export { spawnPlanOf } from './spawn-plan.mjs';
 import { applyAgentAutoApprove, providerPermissionArgs } from './auto-approval.mjs';
@@ -277,6 +279,8 @@ export class Backend {
     this.queue.on('refused', (r) => this.log(`delivery refused ${this.nameOf(r.sessionId)} ${r.deliveryId} ${r.code} → ${r.reason}, retry in ${r.waitMs}ms (#${r.n})`));
     this.queue.on('stuck', (r) => { this.store.addEvent(r.sessionId, 'delivery_stuck', r); this.log(`delivery stuck ${this.nameOf(r.sessionId)} ${r.deliveryId} ${r.code} (${r.attempts} tries)`); const s = this.sessions.get(r.sessionId); if (s) this.broadcastSession(s, { cause: 'delivery stuck' }); });
     this.queue.on('not_submitted', (r) => { this.store.addEvent(r.sessionId, 'delivery_not_submitted', r); this.log(`delivery not submitted ${this.nameOf(r.sessionId)} ${r.deliveryId}: input box has other text ${JSON.stringify(r.peek || '')}`); }); // P126
+    // P258: 미확인으로 끝난 전달이 늦게 제출됐다(압축 뒤 Claude Code가 쥐고 있던 글을 제출 등). 전달은 confirmed로 바뀌었다(delivery 이벤트)
+    this.queue.on('late_confirm', (r) => { this.store.addEvent(r.sessionId, 'delivery_late_confirmed', r); this.log(`delivery late confirm ${this.nameOf(r.sessionId)} ${r.deliveryId} (${Math.round(r.afterMs / 1000)}s after unconfirmed)`); if (this.branch && this.branch.onLateConfirm) this.branch.onLateConfirm(r); });
     this.queue.on('late', (r) => { this.store.addEvent(r.sessionId, 'delivery_late', r); this.log(`delivery late ${this.nameOf(r.sessionId)} ${r.deliveryId}: went in after cancel`); });
     this.queue.on('delivery', (d) => {
       this.store.addEvent(d.sessionId, 'delivery', d);
@@ -284,6 +288,8 @@ export class Backend {
       const s = this.sessions.get(d.sessionId);
       if (s && d.status === 'unconfirmed') s.draft = true; // P21: 보낸 글이 제출되지 않고 입력 칸에 남았을 수 있다(잠재우지 않는다)
       if (this.branch && ['confirmed', 'unconfirmed', 'failed', 'cancelled'].includes(d.status)) this.branch.onDeliveryEnd(d); // P79: 하위 세션의 첫 요청이 들어가지 않았으면 부모에게
+      if (d.status === 'failed') this.deliveryFailed(d); // 2026-11-23: 보낸 쪽이 모르는 채 글이 사라지지 않게
+      else if (['confirmed', 'unconfirmed', 'cancelled'].includes(d.status)) this.forgetSender(d.deliveryId);
       if (s && d.status === 'confirmed' && s.rt.interruptedTurn) s.rt.interruptedTurn = null; // 새 지시가 들어갔으면 끊긴 턴 표시를 내린다
       // P6a(H3): hook이 없는 세션의 마지막 요청은 판이 보내 제출을 확인한 글로 둔다(멀리 얼굴, 검색)
       if (s && d.status === 'confirmed' && !this.hooked(s)) { const row = this.store.getDelivery(d.deliveryId); if (row && !isBoardNotice(row.text)) { s.rt.lastPrompt = row.text; s.rt.lastPromptAt = Date.now(); } } // P153 r13: 판 알림은 마지막 지시가 아니다
@@ -299,6 +305,7 @@ export class Backend {
     this.failover = attachFailover(this);
     this.modelSwitch = new ModelSwitch(this);
     this.memTrim = new MemTrim({ log: (m) => this.log(m) }).start();
+    this.keepAwake = new KeepAwake({ enabled: () => { const st = this.features && this.features.settings ? this.features.settings.get() : {}; return st.keepAwake !== false; }, log: (m) => this.log(m) }); // macOS 판: 일하는 동안 잠들지 않게
     this.features = attachFeatures(this);
     Object.assign(this.api.handlers, this.features.handlers);
     // P146: 성능 기록(진단 스위치). 켜면 창이 보낸 요약을 백엔드 로그에 남기고 10분 뒤 저절로 끈다
@@ -341,6 +348,7 @@ export class Backend {
       const wasChannel = this.updater ? this.updater.channel() : null;
       const r = await setSettings(p, c);
       if (this.perfTrace) this.perfTrace.changed(); // P146: 성능 기록을 켜고 끈 때
+      if (this.keepAwake) this.keepAwake.update(); // macOS 판: keepAwake를 끄면 바로 푼다
       if (p && ['claudeAutoCompactPct', 'claudeCompactWindowK'].some((k) => Object.hasOwn(p, k) || p.key === k)) this.branch.refreshSettings(); // macOS 판: 판 세션 설정 파일의 압축 기준(다음에 띄우거나 이어 갈 때 읽힌다)
       if (this.updater && this.updater.channel() !== wasChannel) this.updater.channelChanged(); // P70: 업데이트 채널을 바꾸면 곧바로 다시 확인한다(기다리지 않는다)
       const nowAccepting = this.web.accepting();
@@ -396,6 +404,7 @@ export class Backend {
     if (this.voice) this.voice.closeAll(); // P165
     if (this.failover) this.failover.stop();
     if (this.memTrim) this.memTrim.stop();
+    if (this.keepAwake) this.keepAwake.stop('shutdown');
     this.peers.stop();
     this.adapter.stopEvents();
     for (const s of this.sessions.values()) this.store.saveRuntime(s.sessionId, s.rt);
@@ -573,8 +582,10 @@ export class Backend {
       address: s.name, label: s.label || null, // P66: name은 보이는 이름, address는 에이전트가 쓰는 주소(에이전트 이름), label은 사람이 정한 이름(없으면 null)
       state: d.state, estimate: d.estimate || null, termStatus: rt.term.status, ask, waitingSince, error: d.error || rt.lastError || null,
       permissionMode: rt.permissionMode || s.permissionMode, ...shownModel({ model: s.model, effort: s.effort || rt.screenEffort || null }, s.rt.modelNow), // P95: 미션 맵 카드의 메타 줄. P137: 하네스가 지금 쓰는 값(모르면 띄운 값)
-      launchModel: s.model || null, launchEffort: s.effort || null, tokenSpeed: rt.tokenSpeed || null, pendingModel: this.modelSwitch ? this.modelSwitch.pending.get(s.sessionId) || null : null, // macOS 판: { tps, out, at } 마지막 응답의 출력 속도
+      launchModel: s.model || null, launchEffort: s.effort || null, tokenSpeed: rt.tokenSpeed || null, usage: rt.usage || null, treeUsage: rt.treeUsage || null, // macOS 판: 쓴 토큰(usage-meter.mjs)
+       pendingModel: this.modelSwitch ? this.modelSwitch.pending.get(s.sessionId) || null : null, // macOS 판: { tps, out, at } 마지막 응답의 출력 속도
       lastPrompt: clip(promptTask(rt.lastPrompt), 300), // P159: 관계 줄은 떼고 보인다 lastAnswer: clip(rt.lastAnswer, 300), lastAnswerAt: rt.lastAnswerAt, turn: rt.turn,
+      work: rt.lastWork || null, // P173: 끝난 일 구간 { since, endedAt, turnless, compact? }. turnless면 턴이 아니다(압축). 웹 푸시·연결 알림이 본다
       exit: rt.exit, interruptedTurn: rt.interruptedTurn, recovered: s.recovered || null, ...f, ...this.doneScope(s, f),
       deliveryStuck: this.queue && this.queue.stuckOf ? this.queue.stuckOf(s.sessionId) : null, // P106: 터미널이 오래 받지 않는 맨 앞 전달 { deliveryId, reason, code, attempts, since }
       trust: { predictedDialog: rt.trustPredicted, seenOnScreen: !!rt.trustScreen },
@@ -773,15 +784,25 @@ export class Backend {
     return file;
   }
   // 바뀌었으면 true. 보이는 값이 바뀐 것은 판 이벤트(model_changed)로 남긴다
-  refreshModelNow(s) {
+  // P227: asleep이면 패널이 없어도(잠든 세션, 다시 열 닫힌 세션) 읽는다. 바뀐 값은 판 DB(runtime)에 바로 남긴다(판이 다시 떠도 이어 갈 때 쓴다)
+  refreshModelNow(s, { asleep = false } = {}) {
     const kind = s.kind || 'claude';
-    if (!['claude', 'codex', 'pi'].includes(kind) || !s.paneId) return false;
+    if (!['claude', 'codex', 'pi'].includes(kind) || (!s.paneId && !asleep)) return false;
     let st;
-    try { const file = this.modelFileOf(s); if (!file) return false; st = refreshModel(kind, file, s._modelSt || null); } catch (e) { this.log('model read error', e.message); return false; }
+    let file = null;
+    try { file = this.modelFileOf(s); if (!file) return false; st = refreshModel(kind, file, s._modelSt || null); } catch (e) { this.log('model read error', e.message); return false; }
     if (!st) return false;
     s._modelSt = st;
     // macOS 판: 마지막 응답의 출력 속도(초당 토큰, model-now.mjs foldSpeed). 판 이벤트로는 남기지 않는다
     let sped = false;
+    // macOS 판: 이 세션이 쓴 토큰(usage-meter.mjs). 큰 기록은 여러 번에 나눠 읽는다
+    if (kind === 'claude') {
+      try {
+        s._usageSt = refreshUsage(file, s._usageSt || null);
+        const u = s._usageSt ? usageOf(s._usageSt.acc) : null;
+        if (u && (!s.rt.usage || s.rt.usage.msgs !== u.msgs || s.rt.usage.out !== u.out)) { s.rt.usage = u; sped = true; this._usageChanged = true; }
+      } catch (e) { this.log('usage read error', e.message); }
+    }
     const sp = st.speed && st.speed.tps != null ? { tps: st.speed.tps, out: st.speed.out, at: st.speed.at } : null;
     if (sp && (!s.rt.tokenSpeed || s.rt.tokenSpeed.at !== sp.at || s.rt.tokenSpeed.tps !== sp.tps)) { s.rt.tokenSpeed = sp; sped = true; }
     if (st.interruptAt && markTurnInterrupted(s.rt, st.interruptAt)) { sped = true; this.store.addEvent(s.sessionId, 'turn_stopped', { at: st.interruptAt, via: 'transcript' }); } // macOS 판: 사람이 Esc로 멈춤
@@ -794,13 +815,51 @@ export class Backend {
     const after = shownModel({ model: s.model, effort: s.effort }, s.rt.modelNow);
     // 같은 모델의 다른 이름(haiku → claude-haiku-5-5)이나 처음 알게 된 노력 수준(없음 → xhigh)은 바뀐 것으로 치지 않는다
     if (!sameModel(before.model, after.model) || (before.effort && before.effort !== after.effort)) this.store.addEvent(s.sessionId, 'model_changed', { from: before, to: after, launched: { model: s.model || null, effort: s.effort || null } });
+    if (this.sessions.has(s.sessionId)) this.store.saveRuntime(s.sessionId, s.rt);
     return true;
+  }
+  // P227: 이어 가기 직전의 지금 값. 대화 기록을 한 번 더 읽고(잠든 동안이나 판이 다시 뜬 뒤에도), 못 읽으면 판 DB에 남은 값
+  modelNowFor(s) {
+    try { this.refreshModelNow(s, { asleep: true }); } catch {}
+    return (s.rt && s.rt.modelNow) || null;
+  }
+  // P227: 같은 대화를 이어 갈 때의 실행 값(모델·노력 수준은 resumeModel). 처음 띄울 값(launchOf)은 그대로
+  resumeLaunchOf(s) {
+    const launch = this.launchOf(s);
+    const rm = resumeModel('claude', launch, this.modelNowFor(s));
+    return { ...launch, model: rm.model, effort: rm.effort };
   }
   pollModels() {
     for (const s of this.sessions.values()) {
       if (this.sleeper && this.sleeper.going.has(s.sessionId)) continue;
       if (this.refreshModelNow(s)) this.broadcastSession(s, { cause: 'model' });
       this.screenEffort(s).catch(() => {});
+    }
+    if (this._usageChanged) { this._usageChanged = false; try { this.refreshTreeUsage(); } catch (e) { this.log('tree usage error', e.message); } }
+  }
+  // macOS 판: 일 하위가 있는 맨 위 세션의 나무 합계(자기 + 닫힌 워커까지 모든 자손). 닫힌 세션의 값은 판 DB runtime.usage(한 번 읽고 기억)
+  refreshTreeUsage() {
+    const since = Date.now() - 14 * 86400000;
+    const rows = this.store.childRowsSince(since);
+    const cache = this._closedUsage || (this._closedUsage = new Map());
+    const kids = new Map();
+    for (const r of rows) { if (!kids.has(r.parentSessionId)) kids.set(r.parentSessionId, []); kids.get(r.parentSessionId).push(r); }
+    const usageFor = (r) => {
+      const live = this.sessions.get(r.sessionId);
+      if (live) return live.rt.usage || null;
+      if (cache.has(r.sessionId)) return cache.get(r.sessionId);
+      let u = null; try { u = r.runtime ? (JSON.parse(r.runtime).usage || null) : null; } catch {}
+      if (r.closedAt) cache.set(r.sessionId, u);
+      return u;
+    };
+    for (const s of this.sessions.values()) {
+      if (s.parentSessionId || !kids.has(s.sessionId)) continue;
+      const list = [s.rt.usage || null]; const seen = new Set([s.sessionId]);
+      const walk = (id) => { for (const r of kids.get(id) || []) { if (seen.has(r.sessionId)) continue; seen.add(r.sessionId); list.push(usageFor(r)); walk(r.sessionId); } };
+      walk(s.sessionId);
+      const t = sumUsage(list);
+      const prev = s.rt.treeUsage;
+      if (t && (!prev || prev.msgs !== t.msgs || prev.out !== t.out)) { s.rt.treeUsage = { ...t, sessions: seen.size }; this.broadcastSession(s, { cause: 'usage' }); }
     }
   }
   // macOS 판: Claude Code가 계정·요금제 기본으로 고른 추론 수준(예: Max의 Opus 5.5 = xhigh)은 대화 기록에 남지 않는다(/effort로 바꿀 때만).
@@ -826,11 +885,13 @@ export class Backend {
       const from = s.lastState;
       s.lastState = sum.state;
       if (from !== null || cause) {
-        this.store.addEvent(s.sessionId, 'state', { from, to: sum.state, term: sum.termStatus, cause: cause || null, ask: sum.ask, exit: sum.exit, error: sum.state === 'error' ? sum.error : undefined });
+        const turnless = from === 'working' && sum.work && sum.work.turnless && sum.work.endedAt === s.rt.term.at ? sum.work : null; // P173: 턴 없이 끝난 일(압축)
+        this.store.addEvent(s.sessionId, 'state', { from, to: sum.state, term: sum.termStatus, cause: cause || null, ask: sum.ask, exit: sum.exit, error: sum.state === 'error' ? sum.error : undefined, ...(turnless ? { turnless: true, compact: turnless.compact || null } : {}) });
         this.api.broadcast('session.state', { sessionId: s.sessionId, name: shownName(s), from, to: sum.state, cause: cause || null, summary: sum });
         this.onLinkTargetState(s, from, sum);
         if (this.modelSwitch) this.modelSwitch.onState(s, sum.state); // 일하는 중에 고른 모델·추론은 쉬면 친다
-        if (this.web) try { this.web.push.onState(sum, from); } catch (e) { this.log('push error', e.stack); } // P88: 휴대폰 웹 푸시(끝남, 응답 필요, 오류)
+        if (this.keepAwake) this.keepAwake.onState(s.sessionId, sum.state); // macOS 판: 일하는 세션이 있으면 잠들지 않게
+        if (this.web) try { this.web.push.onState(sum, from, { turnless: !!turnless }); } catch (e) { this.log('push error', e.stack); } // P88: 휴대폰 웹 푸시(끝남, 응답 필요, 오류)
       }
     }
     this.api.broadcast('session.updated', sum);
@@ -933,7 +994,10 @@ export class Backend {
     if (this.failover && (ev === 'StopFailure' || ev === 'Stop')) this.failover.onHook(s, ev, body); // macOS 판: Claude 계정 사용 한도
     // macOS 판: 한도·모델 오류가 아닌 StopFailure(서버 오류, 끊김)는 부모에게 알린다. 부모가 --now 보고를 기다리며 쉬면 모른다
     if (ev === 'StopFailure' && s.rt.lastError && !['rate_limit', 'billing_error', 'model_not_found', 'invalid_model'].includes(s.rt.lastError.type) && this.branch && this.branch.noteTurnFailed) this.branch.noteTurnFailed(s, s.rt.lastError);
+    const late = s.rt.lastWork && s.rt.lastWork.late && !s.rt.lastWork.lateSeen ? s.rt.lastWork : null; // P173: 턴 hook이 턴 없는 일로 본 구간 뒤에 늦게 왔다
+    if (late) late.lateSeen = true;
     this.broadcastSession(s, { cause: `hook:${ev}` });
+    if (late && this.web) try { this.web.push.lateTurn(this.summary(s)); } catch (e) { this.log('push error', e.stack); }
   }
 
   async completeAgyTurn(s, { rt, paneId, invocation, stop, error }) {
@@ -1073,6 +1137,7 @@ export class Backend {
       const busy = [];
       for (const s of [...this.sessions.values()]) {
         if (s.kind === 'agy' && s.paneId && !s.rt.exit && !s.rt.agyTurnActive) { await this.checkAgyComposer(s).catch(() => {}); continue; }
+        if (s.kind === 'codex' && s.paneId && !s.rt.exit) { await this.checkCodexTrust(s).catch(() => {}); continue; }
         if (s.kind !== SHELL || !s.paneId || s.rt.exit) continue;
         // 작은 노드나 나눈 패널처럼 좁으면 긴 프롬프트가 줄바꿈되어 프롬프트로 보이지 않는다. 줄바꿈을 푼 최근 줄로 읽는다(P6a, P6b가 따로 봄)
         // P136: 지금 화면만 읽는다. 기록 읽기는 셸 안의 전체 화면 프로그램(vim, 셸에서 띄운 에이전트 등)을 2초마다 휠 보고로 굴렸다(hc stitched)
@@ -1125,7 +1190,12 @@ export class Backend {
   }
 
   // 판이 다시 띄울 때의 실행 값. P4 전에 띄운 세션(이어 가기 명령에 --plugin-dir가 없음)은 그대로 둔다
-  launchOf(s) {
+  //   launch(기본 true)는 곧 띄운다는 뜻이다(이어 가기 명령만 다시 만들 때는 false)
+  launchOf(s, { launch = true } = {}) {
+    // P258: 깨우기·다시 시작·되살리기 전에 옛 설정 파일의 빠진 판 hook(P173 PreCompact·PostCompact 등)을 채운다. 새로 뜬 Claude Code가 읽는다
+    if (launch && this.hooked(s) && (s.kind || 'claude') === 'claude' && s.settingsPath) {
+      try { const added = fillSessionHooks(s.settingsPath); if (added.length) { this.log(`hooks added for ${s.name}: ${added.join(', ')}`); this.store.addEvent(s.sessionId, 'settings_hooks_added', { events: added }); } } catch (e) { this.log(`hooks fill failed ${s.name}: ${e.message}`); }
+    }
     const withPlugin = (s.resumeArgv || []).includes('--plugin-dir');
     const plan = applyAgentAutoApprove({ kind: s.kind || 'claude', sessionId: s.rt.claudeSessionId || s.sessionId, settingsPath: s.settingsPath, permissionMode: s.permissionMode, model: s.model, effort: s.effort, extraArgs: s.extraArgs || s.rt.extraArgs || [], startCommand: s.startCommand || s.rt.startCommand || '', ...(withPlugin ? this.plugin : {}), ...(withPlugin && s.rt.claudeConfigDir && typeof this.accountLaunch === 'function' ? this.accountLaunch(s.rt.claudeConfigDir) : {}) }, this.features?.settings?.get?.() || this.store?.getMeta?.('settings') || {});
     return plan;
@@ -1170,8 +1240,11 @@ export class Backend {
     const hf = this.harnessFiles || {};
     // macOS 판: 도구 자동 승인이 켜져 있으면 Codex 하네스도 다시 띄울 때 같은 승인 인자를 쓴다(이미 있으면 그대로, 두 번 붙지 않는다)
     const st = this.features?.settings?.get?.() || this.store?.getMeta?.('settings') || {};
+    // P227: 같은 대화를 이어 갈 때(Codex는 대화 ID를 알 때) 모델·노력 수준은 그 대화가 마지막으로 쓰던 값. 처음 띄울 때는 띄운 값(plan.model)
+    const hsid = resume ? this.harnessSessionIdOf(s) : null;
+    const rm = resume && (s.kind === 'pi' || (s.kind === 'codex' && hsid)) ? resumeModel(s.kind, { model: plan.model || null }, this.modelNowFor(s)) : null;
     const launcherArgs = st.agentAutoApprove === true && s.kind === 'codex' ? providerPermissionArgs('codex', plan.args || [], s.permissionMode || 'manual', { autoApprove: true }) : plan.args || [];
-    return harnessLaunch({ kind: s.kind, startWords: startWords(s.startCommand), sessionId: s.sessionId, resume, harnessSessionId: resume ? this.harnessSessionIdOf(s) : null, model: plan.model || null, launcherArgs, instructions: hf.promptFile ? { file: hf.promptFile, text: this.harnessPrompt || HARNESS_PROMPT } : null, boardEnv: br ? br.envFor(s.sessionId, { token: false }) : {}, binDir: hf.binDir || null, connection: conn, connectionModels: conn ? this.connectionModels(conn.id) : [], filesDir: path.join(this.cfg.dataDir || this.cfg.sessionsDir || '.', 'harness'), forkFrom: plan.forkFrom && !plan.launchedAt ? plan.forkFrom : null }); // P133: 갈라 열기는 처음 한 번만
+    return harnessLaunch({ kind: s.kind, startWords: startWords(s.startCommand), sessionId: s.sessionId, resume, harnessSessionId: hsid, model: rm ? rm.model : plan.model || null, ...(rm && rm.effort ? { effort: rm.effort } : {}), launcherArgs, instructions: hf.promptFile ? { file: hf.promptFile, text: this.harnessPrompt || HARNESS_PROMPT } : null, boardEnv: br ? br.envFor(s.sessionId, { token: false }) : {}, binDir: hf.binDir || null, connection: conn, connectionModels: conn ? this.connectionModels(conn.id) : [], filesDir: path.join(this.cfg.dataDir || this.cfg.sessionsDir || '.', 'harness'), forkFrom: plan.forkFrom && !plan.launchedAt ? plan.forkFrom : null }); // P133: 갈라 열기는 처음 한 번만
   }
   // 그 패널에 판의 줄로 하네스를 띄운다(hc: terminal.run의 env). 이어 가기·되살리기·다시 열기가 함께 쓴다
   async startHarness(s, { resume = false, why = 'start', name = s.agentName } = {}) {
@@ -1215,6 +1288,58 @@ export class Backend {
       else if ((s.kind || 'claude') === 'claude') this.noteWorktreeExit(s, text);
       if (!this.hooked(s)) s.rt.screenAsk = { tail: s.kind === 'gemini' ? geminiAuthIssue(text) || tailText(text, 14) : tailText(text, 14), at: Date.now() };
     } catch {}
+  }
+  // 2026-11-23: Codex가 처음 쓰는 폴더면 신뢰를 묻는다. 그 화면에서는 터미널이 Codex를 에이전트로 알아보지 못해 세션이 시작 중으로 남고
+  //   (터미널 상태 없음), 보낸 글도 starting으로 기다렸다. 시작 중이거나 신뢰 대기인 Codex 세션의 화면을 셸 보기 간격(2초)마다 읽어 신뢰 화면이면 trust_wait로 둔다.
+  //   판은 대신 답하지 않는다(BRIEF). 사람이나 지휘 세션이 atrium answer <이름> 1로 답한다(answerCodexTrust)
+  async checkCodexTrust(s) {
+    const rt = s.rt, paneId = s.paneId;
+    const st = deriveState(rt).state;
+    if (st !== 'starting' && st !== 'trust_wait') { if (rt.trustScreen) { rt.trustScreen = null; this.broadcastSession(s, { cause: 'codex:trust_gone' }); } return; }
+    const text = await this.adapter.readScreen(paneId, { source: 'visible' }).catch(() => null);
+    if (text == null || !this.currentSession(s, rt, paneId) || rt.exit) return;
+    const seen = isCodexTrustDialog(text);
+    if (seen && !rt.trustScreen) {
+      rt.trustScreen = { at: Date.now(), kind: 'codex' };
+      this.store.addEvent(s.sessionId, 'trust_dialog', { kind: 'codex', tail: tailLines(text, 8) });
+      this.log(`codex trust dialog ${s.name}`);
+      this.broadcastSession(s, { cause: 'codex:trust' });
+    } else if (!seen && rt.trustScreen) {
+      rt.trustScreen = null;
+      this.broadcastSession(s, { cause: 'codex:trust_gone' });
+    }
+  }
+  // 2026-11-23: Codex 신뢰 화면에 답한다(atrium answer <이름> <번호>). 판이 저절로 답하지 않고, 사람이나 지휘 세션이 부를 때만 키를 넣는다.
+  //   화면을 다시 읽어 신뢰 화면이 그대로일 때만 넣는다. 고른 줄(›)이 그 번호면 Enter, 아니면 번호를 눌러 고른 뒤(Codex는 번호로 바로 넘어가기도 한다) 아직 화면이 그대로면 Enter.
+  //   터미널이 이 화면의 Codex를 에이전트로 알아보지 못하므로 패널에 키를 넣는다(agent 키 보내기가 아님)
+  async answerCodexTrust(s, p) {
+    const choice = p.choice;
+    if (!Number.isInteger(choice)) throw apiError('bad_request', `Codex 폴더 신뢰 확인에는 번호로 답한다(1: 신뢰하고 계속): ${choice}`);
+    if (s.answering) throw keyed(apiError('busy', "이 세션에 이미 응답을 전송하고 있습니다."), 'answerBusy');
+    const rt = s.rt, paneId = s.paneId;
+    s.answering = true;
+    try {
+      const read = () => this.adapter.readScreen(paneId, { source: 'visible' });
+      let text = await read();
+      if (!this.currentSession(s, rt, paneId) || rt.exit) throw apiError('session_changed', '세션이 바뀌었거나 끝났습니다');
+      if (!isCodexTrustDialog(text)) { if (rt.trustScreen) { rt.trustScreen = null; this.broadcastSession(s, { cause: 'codex:trust_gone' }); } return { sent: false, reason: 'no_pending_ask' }; }
+      const choices = parseChoices(text);
+      const c = choices[choice - 1];
+      if (!c) throw apiError('bad_request', `Codex 신뢰 선택지 번호: ${choice}(가능 1~${choices.length})`);
+      const steps = [];
+      if (!c.selected) {
+        await this.adapter.paneKeys(paneId, [String(choice)]); steps.push(String(choice));
+        await sleep(this.cfg.answerStepMs ?? 250);
+        text = await read();
+        if (isCodexTrustDialog(text) && !(parseChoices(text)[choice - 1] || {}).selected) return { sent: false, reason: 'not_selected', steps };
+      }
+      if (isCodexTrustDialog(text)) { await this.adapter.paneKeys(paneId, ['enter']); steps.push('enter'); }
+      this.touch(s);
+      const rec = { by: 'board', kind: 'codex_trust', choice, label: `${choice}. ${c.label}`, steps };
+      this.store.addEvent(s.sessionId, 'answer', rec);
+      this.api.broadcast('session.answer', { sessionId: s.sessionId, name: s.name, ...rec });
+      return { sent: true, label: rec.label, steps };
+    } finally { s.answering = false; }
   }
   // P71: `claude -w` 세션이 끝날 때 묻는 워크트리 나가기 질문을 화면에서 읽어 둔다(승인 줄 "워크트리를 남길까요?")
   noteWorktreeExit(s, text) {
@@ -1475,8 +1600,7 @@ export class Backend {
       steps.push('/exit (no board settings)');
     }
     await this.adapter.waitShellReady(s.paneId, 8000);
-    const launch = this.launchOf(s);
-    const args = resume ? buildResumeArgs(launch) : buildStartArgs(launch);
+    const args = resume ? buildResumeArgs(this.resumeLaunchOf(s)) : buildStartArgs(this.launchOf(s)); // P227: 이어 갈 때는 지금 모델
     await this.adapter.startAgent({ name: s.agentName, paneId: s.paneId, args, ...startOpt(s) });
     s.rt.exit = null; s.rt.phase = 'starting'; s.rt.launchedAt = Date.now(); s.rt.hooksSinceLaunch = 0; s.rt.sessionEnd = null;
     s.rt.term.launchPending = true; s.resumingAfterRestart = null;
@@ -1520,6 +1644,7 @@ export class Backend {
     this.store.updateSession(s.sessionId, { closedAt, runtime: s.rt, closeReason: reason }); // P7: 닫힌 세션은 사이드바에 남아 다시 연다(J2)
     this.store.addEvent(s.sessionId, 'closed', { reason });
     this.sessions.delete(s.sessionId);
+    if (this.keepAwake) this.keepAwake.onClosed(s.sessionId);
     this.api.broadcast('session.removed', { sessionId: s.sessionId, name: s.name, reason });
     this.bus.emit('closed', s, reason); // P81: 까닭(부모에게 보낼 닫힘 알림)
     onSessionClosed(this, s); // P6a: 덩어리에서 뺀다
@@ -1732,14 +1857,53 @@ export class Backend {
       if (!one) throw keyed(apiError('not_found', `보드에서 세션을 찾을 수 없습니다: ${raw}`), 'targetNotFound', { ref: raw });
       picked.set(one.sessionId, one);
     }
+    // 2026-11-23: now(atrium send --now)는 atrium prompt --now(P143)와 같은 길이다. 받는 쪽이 일하는 중인 판의 Claude Code면 대기 메시지로 바로 넣는다
+    // from(atrium send --from, 판 세션 안에서는 ATRIUM_SESSION_ID): 보낸 세션. 글이 끝내 들어가지 못하면(failed) 그 세션에 알린다
+    const sender = p.from ? this.senderOf(p.from) : null;
     const deliveries = [...picked.values()].map((s) => {
-      const d = this.queue.enqueue(s.sessionId, toLF(text), { typeNow: p.whileWorking === 'type' });
+      const d = this.queue.enqueue(s.sessionId, toLF(text), p.now ? { typeNow: true, aside: true } : { typeNow: p.whileWorking === 'type' });
+      if (sender && sender.sessionId !== s.sessionId) this.noteSender(d.deliveryId, sender.sessionId, 'send');
       this.touch(s);
-      return { deliveryId: d.deliveryId, sessionId: s.sessionId, name: shownName(s), status: d.status };
+      // 기다리는 이유는 다음 pump가 정한다. 보낸 쪽(atrium send)이 바로 안내할 수 있게 지금 판단을 읽기만 해서 돌려준다
+      const why = d.reason ?? (d.status === 'queued' && typeof this.queue.view === 'function' ? blockReason(this.queue.view(s.sessionId, d), Date.now(), this.cfg || {}) : null);
+      return { deliveryId: d.deliveryId, sessionId: s.sessionId, name: shownName(s), status: d.status, reason: why && why !== 'closed' ? why : null };
     });
     // I2(P6b): 명령 바에서 보낸 글은 Thread에 남긴다. source: bar(기본), output(출력 보기에서 답장)
     const item = this.features ? this.features.thread.add({ source: p.source || 'bar', text: toLF(text), targets: targets.map((t) => '@' + String(t).replace(/^@/, '')), deliveries }) : null;
     return { deliveries, threadItemId: item ? item.itemId : null };
+  }
+
+  // 2026-11-23: 보낸 세션(이름·주소·세션 ID). 닫혔거나 셸이면 없다(알릴 곳이 없다)
+  senderOf(ref) {
+    const r = String(ref ?? '').trim().replace(/^@/, '');
+    if (!r) return null;
+    const s = this.sessions.get(r) || findSession(this.sessions.values(), r);
+    return s && s.kind !== SHELL ? s : null;
+  }
+  // 전달 ID → 보낸 세션. 끝내 들어가지 못하면(failed) deliveryFailed가 그 세션에 알린다. 메모리에만 둔다(백엔드가 다시 뜨면 알리지 않고 판 기록에만 남는다)
+  noteSender(deliveryId, senderId, via) {
+    this.senders ||= new Map();
+    this.senders.set(deliveryId, { senderId, via });
+    if (this.senders.size > 2000) this.senders.delete(this.senders.keys().next().value);
+  }
+  forgetSender(deliveryId) { if (this.senders) this.senders.delete(deliveryId); }
+  // 보낸 글이 끝내 들어가지 못했다(기다림 기한, 세션 닫힘, 터미널 오류). 판 기록(delivery_failed)에 남기고, 보낸 세션을 알면 그 세션에 알린다.
+  //   사람이 취소한 것(cancelled)과 확인 못 함(unconfirmed, 들어갔을 수 있다)은 알리지 않는다. 판 알림이 못 들어간 것은 다시 알리지 않는다(알림이 돌지 않게)
+  deliveryFailed(d) {
+    const who = this.senders && this.senders.get(d.deliveryId);
+    if (this.senders) this.senders.delete(d.deliveryId);
+    const row = this.store.getDelivery(d.deliveryId) || {};
+    const text = row.text || '';
+    const target = this.sessions.get(d.sessionId);
+    const name = target ? shownName(target) : this.nameOf(d.sessionId) || d.sessionId;
+    const sender = who ? this.sessions.get(who.senderId) : null;
+    this.store.addEvent(d.sessionId, 'delivery_failed', { deliveryId: d.deliveryId, reason: d.reason || null, chars: text.length, head: clip(text.replace(/\s+/g, ' '), 80), from: sender ? sender.name : null, via: who ? who.via : null });
+    this.log(`delivery failed ${name} ${d.deliveryId}: ${d.reason || '-'}${sender ? ` (from ${sender.name})` : ''}`);
+    if (!sender || isBoardNotice(text) || this.killing.has(sender.sessionId)) return null;
+    const notice = `[Atrium 보드] @${name}에게 보낸 글이 들어가지 않았다(${d.reason || 'failed'}, ${d.deliveryId}). 글 첫머리: "${clip(text.replace(/\s+/g, ' '), 80)}". 받는 쪽 화면 보기: atrium read ${target ? target.name : name} --lines 40 · 다시 보내기: atrium prompt ${target ? target.name : name} "<글>"(받는 쪽이 일하는 중이어도 바로 넣으려면 --now).`;
+    const n = this.queue.enqueue(sender.sessionId, notice);
+    this.store.addEvent(sender.sessionId, 'delivery_failed_notice', { deliveryId: d.deliveryId, to: name, notice: n.deliveryId });
+    return n;
   }
 
   // D2: 판이 띄운 세션만 끈다. /exit로 정상 종료하고 작업 공간을 닫는다.
@@ -1831,6 +1995,7 @@ export class Backend {
     const s = this.resolve(p.session);
     this.requireTerminal();
     if (s.rt.worktreeExit && !s.rt.pendingAsk) return this.answerWorktreeExit(s, p); // P71: 화면에서 읽은 질문이라 hook이 없어도 답한다
+    if (s.kind === 'codex' && s.rt.trustScreen && !s.rt.pendingAsk) return this.answerCodexTrust(s, p); // 2026-11-23: 화면에서 읽은 Codex 신뢰 확인
     // 승인 카드의 키 순서는 판이 띄운 Claude Code만 안다(E9). 다른 종류와 판에 올린 에이전트는 터미널에서 답한다(F5)
     if (!this.hooked(s)) throw apiError('answer_in_terminal', `${s.name}(${s.kind})의 응답 키 입력 순서를 보드에서 확인할 수 없습니다. 터미널에서 직접 응답하세요.`);
     const card = { toolUseId: p.toolUseId || null, since: p.since || null };
@@ -2135,6 +2300,7 @@ export class Backend {
     const to = sum.state;
     if (to === 'working' && !op.working) { op.working = true; this.linkEvent(l, 'target_working', null, { from }, { quiet: true }); }
     else if (to === 'waiting' || to === 'trust_wait') this.linkEvent(l, 'target_waiting', sum.ask ? clip(sum.ask.summary || sum.ask.kind, 200) : null, null, { quiet: true });
+    else if ((to === 'ready' || to === 'error') && op.working && from === 'working' && sum.work && sum.work.turnless && sum.work.endedAt === s.rt.term.at) op.working = false; // P173: 압축만 하고 끝났다. 턴 끝이 아니다
     else if ((to === 'ready' || to === 'error') && op.working) {
       // P116: hook이 없는 세션은 턴이 끝난 뒤 판이 화면에서 답을 고른다(readScreenAnswer). 그 답이 아직이면 오면 남긴다(5초까지)
       const turn = s.rt.turn || {};
@@ -2268,6 +2434,7 @@ export class Backend {
     return {
       'backend.status': async () => { const terminal = await this.terminalStatus(); return { pid: process.pid, port: this.cfg.port, profile: this.cfg.profile, dataDir: this.cfg.dataDir, startedAt: this.startedAt, previousRun: this.previousRun, terminal, herdr: typeof this.legacyHerdrStatus === 'function' ? this.legacyHerdrStatus(terminal) : terminal /* P129·P132: 옛 이름. 옛 바꾸기 도우미(v0.4 macOS update-swap.mjs)가 새 백엔드의 건강을 st.herdr로 본다 */, sessions: this.sessions.size, relay: this.relay.stats(), plugin: this.plugin, migration: this.migrationView(), web: this.web ? this.web.status() : null, version: this.updater ? this.updater.running : null }; },
       // macOS 판: 백엔드 메모리(MB)와 정리 기록(mem-trim.mjs). 진단용
+      'backend.keepAwake': () => (this.keepAwake ? this.keepAwake.status() : { active: false }), // macOS 판: 잠들기 막는 중인가
       'backend.memory': () => { const m = process.memoryUsage(); const mb = (x) => Math.round(x / 1048576); return { rss: mb(m.rss), heapTotal: mb(m.heapTotal), heapUsed: mb(m.heapUsed), external: mb(m.external), trim: this.memTrim ? this.memTrim.stats() : null, uptimeS: Math.round(process.uptime()) }; },
       'backend.shutdown': async () => { setTimeout(() => this.stop('api').then(() => process.exit(0)), 50); return { stopping: true }; },
       'terminal.status': () => this.terminalStatus(),

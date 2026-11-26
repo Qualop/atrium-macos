@@ -94,3 +94,11 @@ test('Mac 데스크톱 대화 목록과 Windows 프로필 하위 목록을 모�
     assert.equal(readDesktopSessions(dir).get('test-id').archived, false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('shellPromptState: macOS zsh·bash·❯ 프롬프트의 명령을 읽고 "100%" 출력은 프롬프트가 아니다', async () => {
+  const { shellPromptState } = await import('../src/screen.mjs');
+  assert.deepEqual(shellPromptState('me@Mac project % ls -la\nfile\nme@Mac project %'), { atPrompt: true, command: 'ls -la' });
+  assert.deepEqual(shellPromptState('me@Mac project % npm test\nbuild 100%'), { atPrompt: false, command: 'npm test' });
+  assert.deepEqual(shellPromptState('me@box:~/x$ make\nok\nme@box:~/x$'), { atPrompt: true, command: 'make' });
+  assert.deepEqual(shellPromptState('❯ git status\nclean\n❯'), { atPrompt: true, command: 'git status' });
+});

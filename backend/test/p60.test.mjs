@@ -117,9 +117,12 @@ test('패스키 종류: transports와 붙임으로', () => {
 });
 
 test('serve 켜기 명령: node와 이 백엔드의 atrium.mjs(공백이면 따옴표), 개발용 판이면 --dev, 443이 아니면 --https-port', () => {
-  assert.equal(enableCommand(443, { profile: 'prod' }, 'C:\\a\\backend'), `node ${path.join('C:\\a\\backend', 'bin', 'atrium.mjs')} remote enable --yes`);
-  assert.equal(enableCommand(10000, { profile: 'dev' }, 'C:\\a b\\backend'), `node "${path.join('C:\\a b\\backend', 'bin', 'atrium.mjs')}" --dev remote enable --yes --https-port 10000`);
-  assert.match(enableCommand(8443, {}), /^node .*atrium\.mjs"? remote enable --yes --https-port 8443$/);
+  assert.equal(enableCommand(443, { profile: 'prod' }, 'C:\\a\\backend', { platform: 'win32' }), `node ${path.join('C:\\a\\backend', 'bin', 'atrium.mjs')} remote enable --yes`);
+  assert.equal(enableCommand(10000, { profile: 'dev' }, 'C:\\a b\\backend', { platform: 'win32' }), `node "${path.join('C:\\a b\\backend', 'bin', 'atrium.mjs')}" --dev remote enable --yes --https-port 10000`);
+  assert.match(enableCommand(8443, {}, undefined, { platform: 'win32' }), /^node .*atrium\.mjs"? remote enable --yes --https-port 8443$/);
+  // macOS 판: PATH에 node가 없어도 되게 앱의 node를 절대 경로로
+  assert.equal(enableCommand(443, {}, '/A/backend', { platform: 'darwin', node: '/Applications/Atrium.app/Contents/Resources/runtime/node' }), '/Applications/Atrium.app/Contents/Resources/runtime/node /A/backend/bin/atrium.mjs remote enable --yes');
+  assert.equal(enableCommand(443, {}, '/A/backend', { platform: 'darwin', node: '/My Apps/node' }), "'/My Apps/node' /A/backend/bin/atrium.mjs remote enable --yes");
 });
 
 // HTTP로: 짝 맺기 코드 → 등록 선택 사항에 via → hints. 로그인 선택 사항도

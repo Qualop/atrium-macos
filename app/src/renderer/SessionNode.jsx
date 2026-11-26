@@ -26,6 +26,8 @@ import { ChatView } from './ChatView.jsx';
 import { NodeBoundary } from './ErrorBoundary.jsx';
 import { InterruptedBanner, ResponseNotice } from './SessionExtras.jsx';
 import { enterSession, markInteracted } from './touch.js';
+import { desktopDrop, hasDropFiles, resolveDrop, sendToTerminal } from './lib/desktop-drop.js';
+import { termPathsText } from './lib/upload.js'; // macOS 판: 노드에 끌어 놓기
 import { LoopBadge, SessionLoopList } from './Loops.jsx';
 import { BranchBadge } from './Branch.jsx'; // P8(K4): "@lead의 워커 · 2단계"
 import { dockBranchOf } from './lib/dock-branch.js'; // P68: 워크트리끼리 붙인 덩어리의 칸마다 브랜치
@@ -56,6 +58,27 @@ function useTick(on) {
 }
 
 // P11: 상태 알약(한글, 점 + 테두리). 끝난 턴을 아직 안 본 준비 상태는 "검토 대기"(연보라)로 보인다
+// macOS 판: 노드(머리줄, 먼 얼굴 등 터미널 밖)에 끌어 놓은 파일·폴더 경로를 그 세션 입력에 넣는다.
+// 터미널 위에 놓은 것은 TerminalView가 먼저 받는다. 터미널이 아직 없으면 맡겨 두고 그 노드로 들어가 붙을 때 넣는다(lib/desktop-drop.js)
+function onNodeDragOver(e) {
+  if (!desktopDrop() || !hasDropFiles(e.dataTransfer)) return;
+  e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy';
+  e.currentTarget.classList.add('mt-drop-on');
+}
+function onNodeDragLeave(e) { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove('mt-drop-on'); }
+function onNodeDrop(e, id) {
+  if (!desktopDrop() || !hasDropFiles(e.dataTransfer)) return;
+  e.preventDefault(); e.stopPropagation();
+  e.currentTarget.classList.remove('mt-drop-on');
+  resolveDrop(e.dataTransfer).then(({ items, errors }) => {
+    if (errors.length) toast(t('desktopDrop.failed', { n: errors.length }), 'error');
+    if (!items.length) return;
+    const how = sendToTerminal(id, termPathsText(items.map((x) => x.path), window.mt && window.mt.platform));
+    if (how === 'queued') { const st = getState(); if (st.navigateTo) st.navigateTo(id, { focusTerminal: true }); }
+    toast(t(how === 'queued' ? 'desktopDrop.queued' : 'desktopDrop.done', { n: items.length }));
+  }, (err) => toast(String(err && err.message || err), 'error'));
+}
+
 export function StatePill({ s }) {
   const t = useT();
   const review = s.unseen && (s.state === 'ready' || s.state === 'shell_idle');
@@ -141,6 +164,7 @@ ${t('rename.dblHint')}`} onDoubleClick={(e) => { e.stopPropagation(); setRenamin
       {s.output && s.output.long && <button className="mt-btn small nodrag mt-output-btn" data-action="output-open" title={t('node.outputTitle', { n: s.output.chars })} onClick={() => setOutputView({ sessionId: s.sessionId, turn: null })}>{t('node.output')}</button>}
       {mem != null && mem >= 1 && <span className="mt-node-meta" data-role="mem" title={t('node.memTitle')}>{mem >= 1024 ? `${(mem / 1024).toFixed(1)}GB` : `${Math.round(mem)}MB`}</span>}
       <TokenSpeed s={s} />
+      <TokenMeter s={s} />
       {/* macOS 판: Claude Code는 누르면 모델·추론 바꾸기(ModelMenu). 다른 종류는 보이기만 한다 */}
       {(s.kind || 'claude') === 'claude' && s.state !== 'sleeping' && s.state !== 'exited'
         ? <button type="button" className={`mt-node-meta mt-model-chip nodrag${s.pendingModel ? ' pending' : ''}`} data-action="model-menu" title={s.pendingModel ? t('model.pendingTitle', { v: modelLabel(s.pendingModel) }) : t('model.chipTitle')} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onModel(); }}>{modelLabel(s) || t('model.unknown')}</button>
@@ -254,6 +278,25 @@ function TokenSpeed({ s }) {
   if (!sp || !sp.tps) return null;
   const old = Date.now() - (sp.at || 0) > 600000;
   return <span className={`mt-node-meta mt-tps${old ? ' old' : ''}`} data-role="tps" title={t('model.tpsTitle', { n: sp.out, at: new Date(sp.at).toLocaleTimeString() })}>{sp.tps} t/s</span>;
+}
+// macOS 판: 쓴 토큰(백엔드 usage-meter.mjs). 일 하위가 있는 맨 위 세션은 나무 합계(Σ, 닫힌 워커까지)와 첫 응답부터 마지막 응답까지의 시간.
+// 숫자는 가중 토큰(캐시 읽기 0.1, 쓰기 1.25, 입력 1, 출력 5 — 입력 토큰 값으로 환산한 상대 비용). 마우스를 올리면 나눠 보인다
+export const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
+export const fmtSpan = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : `${m}m`; };
+function TokenMeter({ s }) {
+  const t = useT();
+  const tree = s.treeUsage, own = s.usage;
+  const u = tree || own;
+  if (!u || !u.msgs) return null;
+  const span = u.firstAt && u.lastAt ? u.lastAt - u.firstAt : 0;
+  const lines = [
+    t(tree ? 'usage.treeTitle' : 'usage.ownTitle', { n: tree ? tree.sessions : 1 }),
+    t('usage.parts', { cr: fmtTok(u.cr), cw: fmtTok(u.cw), in: fmtTok(u.in), out: fmtTok(u.out), msgs: u.msgs }),
+    t('usage.weighted', { w: fmtTok(u.weighted) }),
+    ...(span ? [t('usage.span', { span: fmtSpan(span) })] : []),
+    ...(tree && own ? [t('usage.own', { w: fmtTok(own.weighted) })] : []),
+  ];
+  return <span className={`mt-node-meta mt-usage${tree ? ' tree' : ''}`} data-role="usage" title={lines.join('\n')}>{tree ? 'Σ ' : ''}{fmtTok(u.weighted)}{tree && span ? ` · ${fmtSpan(span)}` : ''}</span>;
 }
 // macOS 판: 모델·추론 바꾸기(/model, /effort). 일하는 중이면 턴이 끝난 뒤 바뀐다
 const MODELS = ['opus', 'sonnet', 'haiku', 'fable'];
@@ -585,7 +628,7 @@ function SessionNodeInner({ id, selected }) {
   const tier = tierOf(s); // P85
 
   return (
-    <div data-tier={tier} data-dist={dist} className={`mt-node t-${tier} st-${s.state} face-${face} kind-${kindOf(shownKind(s)).id}${s.unseen ? ' unseen' : ''}${selected ? ' selected' : ''}${idle ? ' idle' : ''}${asleep ? ' asleep' : ''}${s.waking ? ' waking' : ''}${docked ? ` docked dock-${docked.dir}${dockLinked ? ' dock-linked' : ''}` : ''}${zSmall ? ' z-small' : ''}`} ref={invRef} data-session={id} data-name={s.name} data-face={face} data-brief={brief ? '1' : undefined} data-asleep={asleep ? '1' : undefined} data-dock={docked ? docked.dockId : undefined} onMouseDown={() => { markSeen(id); enterSession(id); }}>
+    <div data-tier={tier} data-dist={dist} className={`mt-node t-${tier} st-${s.state} face-${face} kind-${kindOf(shownKind(s)).id}${s.unseen ? ' unseen' : ''}${selected ? ' selected' : ''}${idle ? ' idle' : ''}${asleep ? ' asleep' : ''}${s.waking ? ' waking' : ''}${docked ? ` docked dock-${docked.dir}${dockLinked ? ' dock-linked' : ''}` : ''}${zSmall ? ' z-small' : ''}`} ref={invRef} data-session={id} data-name={s.name} data-face={face} data-brief={brief ? '1' : undefined} data-asleep={asleep ? '1' : undefined} data-dock={docked ? docked.dockId : undefined} onMouseDown={() => { markSeen(id); enterSession(id); }} onDragOver={(e) => onNodeDragOver(e, id)} onDragLeave={onNodeDragLeave} onDrop={(e) => onNodeDrop(e, id)}>
       <NodeResizer isVisible={selected && face === 'close' && !docked} minWidth={420} minHeight={260} lineClassName="mt-resize-line" handleClassName="mt-resize-handle"
         onResize={(_e, p) => setNodeLocal(id, { x: p.x, y: p.y, w: p.width, h: p.height })}
         onResizeEnd={(_e, p) => { setNodeLocal(id, { x: p.x, y: p.y, w: p.width, h: p.height }); saveNode(id, 'resize'); }} />

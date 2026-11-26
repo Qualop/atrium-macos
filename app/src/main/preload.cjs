@@ -1,6 +1,6 @@
 // 창(renderer)에 넘기는 것: 백엔드 주소와 토큰, Electron 프로세스 측정값(E5), 로그 한 줄,
 // OS 알림 띄우기와 알림을 눌렀을 때 갈 세션(A1, P3), 폴더 고르기(P5), 화면 배율(P45), 파일·그림 붙여 넣기(P162)
-const { contextBridge, ipcRenderer, webFrame } = require('electron');
+const { contextBridge, ipcRenderer, webFrame, webUtils } = require('electron');
 
 // P45: 화면 배율(창 전체 UI). 값은 창의 localStorage mt.uiScale(renderer lib/scale.js와 같은 범위 70~150%). 판을 그리기 전에 맞춘다
 const clampZoom = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 0.7 && n <= 1.5 ? n : 1; };
@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld('mt', {
   notify: (n) => ipcRenderer.invoke('mt:notify', n),
   pickFolder: () => ipcRenderer.invoke('mt:pickFolder'), // P5: 리포 열기
   clipPaste: () => ipcRenderer.invoke('mt:clipPaste'), // P162: 탐색기에서 복사한 파일 경로, 캡처한 그림 저장(main.mjs)
+  // 끌어 놓기(macOS 판): 끈 파일의 경로(Finder에서 끈 것만, 없으면 ''), 경로 없는 파일 내용 저장, 칩 정보, 화면 캡처
+  pathForFile: (f) => { try { return webUtils.getPathForFile(f) || ''; } catch { return ''; } },
+  saveUpload: async (f) => ipcRenderer.invoke('mt:saveUpload', { name: f.name, type: f.type, data: new Uint8Array(await f.arrayBuffer()) }),
+  fileInfo: (paths) => ipcRenderer.invoke('mt:fileInfo', paths),
+  capture: () => ipcRenderer.invoke('mt:capture'),
   setZoom: (f) => webFrame.setZoomFactor(clampZoom(f)), // P45: 화면 배율
   zoomFactor: () => webFrame.getZoomFactor(),
   onNavigate: (fn) => { const h = (_e, id) => fn(id); ipcRenderer.on('mt:navigate', h); return () => ipcRenderer.removeListener('mt:navigate', h); },

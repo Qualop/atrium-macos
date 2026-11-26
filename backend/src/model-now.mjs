@@ -227,9 +227,40 @@ export function shownModel(launched = {}, now = null) {
   return { model: (now && now.model) || launched.model || null, effort: (now && now.effort) || launched.effort || null };
 }
 
+// P227: 하네스가 보여 준 모델 이름 → 명령줄 --model에 넣을 수 있는 이름. 모르면 null.
+// Claude Code /model 출력은 표시 이름(`Fable 5.2`, `Opus 5.5 (1M context)`)이고 assistant 줄은 ID(claude-fable-5-2)다.
+// 빈칸 없는 이름(ID, 별명, 프록시 모델 이름 x--y[1m])은 그대로, Claude 표시 이름은 ID로, 그 밖(빈칸 든 표시 이름)은 모른다
+export function cliModelName(name) {
+  const t = String(name || '').trim();
+  if (!t) return null;
+  if (!/\s/.test(t)) return t;
+  const m = /^(opus|sonnet|haiku|fable)\s+(\d+)(?:\.(\d+))?(\s*\(1m context\))?$/i.exec(t);
+  if (m) return `claude-${m[1].toLowerCase()}-${m[2]}${m[3] ? `-${m[3]}` : ''}${m[4] ? '[1m]' : ''}`;
+  return null;
+}
+
+// P227: 판이 있던 대화를 다시 띄울 때(깨우기·되살리기·다시 열기) 넘길 모델과 노력 수준. 순수 함수.
+// launched: 띄운 값 { model, effort }(s.model·s.effort, 하네스는 harnessPlan.model), now: 지금 값(s.rt.modelNow, 대화 기록에서 읽음)
+// → { model, effort, from: { model: 'now'|'launched', effort: 'now'|'launched'|'none' } }
+// - 모델: 지금 값이 띄운 값과 같은 모델이면 띄운 값(별명·[1m]을 지킨다), 다르면 지금 값(명령줄 이름으로 바꿀 수 없으면 띄운 값)
+// - 노력 수준: 지금 값을 알면 그것. 모르는데 모델이 바뀌었으면 넘기지 않는다(옛 노력 수준을 새 모델에 억지로 붙이지 않는다.
+//   Claude Code는 /model 고르기 창의 노력 수준을 기본값으로 저장하므로 넘기지 않으면 그 값을 쓴다). 모델이 그대로면 띄운 값
+// - pi: 노력 수준(생각 수준)은 넘기지 않는다(띄울 때도 넘기지 않는다. 세션 파일이 갖고 있다). AGY·opencode는 부르지 않는다
+export function resumeModel(kind, launched = {}, now = null) {
+  const lm = (launched && launched.model) || null, le = (launched && launched.effort) || null;
+  const nm = now && now.model ? (kind === 'claude' ? cliModelName(now.model) : String(now.model).trim() || null) : null;
+  let model = lm, mFrom = 'launched';
+  if (nm && !sameModel(lm, nm)) { model = nm; mFrom = 'now'; }
+  if (kind === 'pi') return { model, effort: null, from: { model: mFrom, effort: 'none' } };
+  const ne = now && now.effort ? String(now.effort) : null;
+  if (ne) return { model, effort: ne, from: { model: mFrom, effort: 'now' } };
+  if (mFrom === 'now') return { model, effort: null, from: { model: mFrom, effort: 'none' } };
+  return { model, effort: le, from: { model: mFrom, effort: le ? 'launched' : 'none' } };
+}
+
 // 같은 모델을 다르게 쓴 이름인가(판 이벤트를 남길지): haiku ≈ claude-haiku-5-5 ≈ Haiku 5.5, Sonnet 5.5 ≈ claude-sonnet-5-5.
 // 짧은 이름(별명)이 긴 이름의 앞 낱말이면 같다고 본다
-const normModel = (m) => String(m || '').trim().toLowerCase().replace(/^claude-/, '').replace(/\[.*\]$/, '').replace(/-(\d+)-(\d+)$/, ' $1.$2').replace(/-(\d+)$/, ' $1');
+const normModel = (m) => String(m || '').trim().toLowerCase().replace(/^[a-z0-9._-]+\//, '').replace(/^claude-/, '').replace(/\[.*\]$/, '').replace(/-(\d+)-(\d+)$/, ' $1.$2').replace(/-(\d+)$/, ' $1');
 export function sameModel(a, b) {
   const x = normModel(a), y = normModel(b);
   if (!x || !y) return !x && !y;

@@ -7,6 +7,15 @@ export function tailLines(text, n = 12) {
 
 // 신뢰 대화상자(E10 2.2)
 export function isTrustDialog(text) { return /Quick safety check/i.test(text) && /trust this folder/i.test(text); }
+// 2026-11-23: Codex의 폴더 신뢰 확인 화면. 이 화면에서는 터미널이 Codex를 에이전트로 알아보지 못해 세션이 시작 중으로 남았다(DesignSkill 밤샘 실행).
+//   0.169: "Trust this folder? Codex can read, edit, and run files here, …" + "› 1. Trust and continue". 옛 판: "Do you trust the contents of this directory?",
+//   그 전: "allow Codex to work in this folder without asking for approval". 문장과 번호 선택지가 함께 보일 때만 신뢰 화면으로 본다
+export function isCodexTrustDialog(text) {
+  const t = String(text || '');
+  // 좁은 카드에서는 문장이 줄에서 꺾이므로 낱말 사이를 공백·줄바꿈 아무것으로나 본다
+  const ask = (/Trust\s+this\s+folder\?/i.test(t) && (/Codex\s+can\s+read/i.test(t) || /Trust\s+and\s+continue/i.test(t))) || /Do\s+you\s+trust\s+the\s+contents\s+of\s+this\s+directory/i.test(t) || /allow\s+Codex\s+to\s+work\s+in\s+this\s+folder/i.test(t);
+  return ask && parseChoices(t).length >= 2;
+}
 
 // P71: 워크트리 나가기 질문. `claude -w`로 띄운 세션이 끝날 때 Claude Code가 묻는다(제목 "Exiting worktree session").
 // "You have 13 commits on worktree-x. The branch will be deleted if you remove the worktree." 아래에 "1. Keep worktree", "2. Remove worktree"
@@ -40,7 +49,7 @@ export function parseChoices(text) {
   let block = [];
   let cur = [];
   for (const raw of lines) {
-    const m = raw.match(/^\s*(❯\s*)?(\d+)\.\s+(.*\S)\s*$/);
+    const m = raw.match(/^\s*([❯›]\s*)?(\d+)\.\s+(.*\S)\s*$/); // ›: Codex의 고른 줄 표시(신뢰 화면)
     if (m) cur.push({ n: Number(m[2]), label: m[3], selected: !!m[1] });
     else if (cur.length && /^\s{3,}\S/.test(raw)) cur[cur.length - 1].label += ' ' + raw.trim(); // 화면 폭에서 줄바꿈된 선택지를 이어 붙인다(P2)
     else if (cur.length && raw.trim()) { block = cur; cur = []; }
@@ -60,13 +69,20 @@ export function parsePromptLine(text) {
 // G2(P5): 일반 셸이 프롬프트에서 쉬는가, 명령을 돌리는가. Windows에서 터미널의 process_info는 셸 프로세스만 주고
 // 셸 아래에서 도는 명령은 주지 않는다(P5에서 확인). 그래서 화면 마지막 줄이 프롬프트인지 보고, 마지막 프롬프트 줄의 명령 글을 읽는다.
 // 프로세스 이름은 따로 프로세스 표(셸 PID의 자식)에서 얻는다. 이 결과는 셸의 표시에만 쓴다.
-const PROMPTS = [/^PS [^>]*>\s?(.*)$/, /^[A-Za-z]:\\[^>]*>(.*)$/]; // PowerShell, cmd
+// macOS 판: zsh 기본("me@Mac dir % cmd"), bash 기본("me@host:dir$ cmd"), starship·p10k("❯ cmd")도 읽는다(원본은 PowerShell·cmd만 읽어 Mac 셸 노드에 명령이 안 보였다)
+const PROMPTS = [
+  /^PS [^>]*>\s?(.*)$/, /^[A-Za-z]:\\[^>]*>(.*)$/, // PowerShell, cmd
+  /^[\w.-]+@[\w.-]+ [^%#$]*[%#](?: (.*))?$/, // zsh 기본
+  /^[\w.-]+@[\w.-]+:[^$#]*[$#](?: (.*))?$/, // bash 기본
+  /^❯(?: (.*))?$/, // starship·powerlevel10k 등
+];
 export function shellPromptState(text) {
   const lines = String(text || '').split('\n').map((l) => l.trimEnd()).filter((l) => l.trim());
   if (!lines.length) return { atPrompt: false, command: null };
-  const cmdOf = (l) => { for (const re of PROMPTS) { const m = l.match(re); if (m) return m[1].trim(); } return null; };
+  const cmdOf = (l) => { for (const re of PROMPTS) { const m = l.match(re); if (m) return String(m[1] || '').trim(); } return null; };
   const last = lines[lines.length - 1];
-  const atPrompt = cmdOf(last) === '' || /[$#%❯]$/.test(last); // bash, zsh 기본 프롬프트
+  // 그 밖의 프롬프트는 끝 기호로 본다. 앞이 빈칸이거나 기호만인 줄만("100%" 같은 출력 줄은 아니다)
+  const atPrompt = cmdOf(last) === '' || /(^|\s)[$#%❯]$/.test(last);
   let command = null;
   for (let i = lines.length - (atPrompt ? 2 : 1); i >= 0; i--) { const c = cmdOf(lines[i]); if (c) { command = c; break; } }
   return { atPrompt, command };

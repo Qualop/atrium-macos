@@ -30,6 +30,7 @@ import { CONVO_PARSER, listTranscriptFiles, readTranscriptSummary, readLiveSessi
 import { matchSpawns } from './spawns.mjs';
 import { CODEX_HARNESS, CODEX_PARSER, listCodexFiles, readCodexSummary, readCodexTitles, readCodexLocks, parseCodexCmdlines, codexBindingOf } from './codex-convos.mjs'; // P133: 판 밖 Codex 대화
 import { classifyConvo, testDirKind, trashPlan, trashPaths, removeEmptyProjectDirs, REFUSE_LABEL } from './missed.mjs';
+import { refreshModel, resumeModel } from './model-now.mjs'; // P227: 닫힌 세션을 다시 열 때 그 대화의 마지막 모델
 import { CONVO_CAP, placeCards, boardSpawnDup } from './convo-canvas.mjs';
 import { m, keyed } from './msg.mjs'; // P16: 화면 글 열쇠
 import { takenNames, keepLabel, findSession } from './session-label.mjs'; // P66
@@ -962,7 +963,7 @@ export class Recall {
       trust = predictTrust(cwd, b.claudeJsonOf ? b.claudeJsonOf(account) : cfg.claudeJson);
       if (b.accountEnv && b.accountEnv(account)) paneEnv = { ...(paneEnv || {}), ...b.accountEnv(account) };
       const launch = { sessionId: id, settingsPath, permissionMode, model: spec.model || null, effort: spec.effort || null, extraArgs: spec.extraArgs || [], ...b.plugin };
-      args = spec.resume ? buildResumeArgs({ ...launch, sessionId: spec.convId || id }) : buildStartArgs(launch);
+      args = spec.resume ? buildResumeArgs({ ...launch, ...(spec.resumeModel ? { model: spec.resumeModel.model, effort: spec.resumeModel.effort } : {}), sessionId: spec.convId || id }) : buildStartArgs(launch); // P227: 이어 갈 때는 그 대화의 마지막 모델
       resumeArgv = buildResumeArgv({ claudeCommand: cfg.claudeCommand, startCommand: spec.startCommand || '', ...launch, sessionId: spec.resume ? spec.convId || id : id }); // P97: 실행 명령
     } else if (!shell && !native) args = (spec.args || []).map(String);
     // P115: Claude Code 밖 하네스(Codex·opencode·pi 등). Gemini CLI·agy·옛 관리 Codex 행(native)은 전용 연동으로 다시 연다
@@ -992,6 +993,7 @@ export class Recall {
       rt.transcriptPath = this.store.getConvoById(rt.claudeSessionId)?.path || prev.transcriptPath || transcriptPathFor(b.projectsOfAccount ? b.projectsOfAccount(account) : cfg.claudeProjects, cwd, rt.claudeSessionId);
     }
     if (shell) rt.phase = 'running';
+    if (spec.modelNow) rt.modelNow = spec.modelNow; // P227: 다시 연 세션도 지금 모델을 보인다(대화 기록을 다시 읽기 전에)
     let s;
     const hw = await b.withNewPane(() => b.adapter.createWorkspace({ cwd, label: name, ...(paneEnv ? { env: paneEnv } : {}) }), (r) => {
       const now = Date.now();
@@ -1042,6 +1044,15 @@ export class Recall {
     b.log(`reopened ${name} ${kind} ${id} from=${spec.from} resume=${!!spec.resume} pane=${hw.paneId}`);
     return out;
   }
+  // P227: 닫힌 claude 행의 지금 모델. 대화 기록을 읽고(P137 refreshModel), 못 읽으면 판 DB(runtime.modelNow)
+  closedModelNow(row) {
+    const rt = row.runtime || {};
+    const conv = convOf(row) || row.sessionId;
+    const tx = rt.transcriptPath || (row.cwd ? transcriptPathFor(this.cfg.claudeProjects, row.cwd, conv) : null);
+    let st = null; try { st = tx ? refreshModel('claude', tx) : null; } catch {}
+    if (st && (st.model || st.effort)) return { model: st.model || null, effort: st.effort || null, at: Date.now() };
+    return rt.modelNow || null;
+  }
   transcriptExists(convId, cwd) {
     const idx = this.store.getConvoById(convId);
     if (idx && fs.existsSync(idx.path)) return true;
@@ -1070,7 +1081,10 @@ export class Recall {
       }
       if (!conv || (row.origin || 'board') === 'board' || conv === row.sessionId.toLowerCase()) {
         // 판이 띄운 claude(또는 대화 ID를 모르는 판에 올린 claude): 같은 행, 같은 세션 ID
-        return this.bring({ ...base, id: row.sessionId, convId: conv, reuseRow: row, from: 'closed', resume: !!conv && this.transcriptExists(conv, row.cwd) });
+        const resume = !!conv && this.transcriptExists(conv, row.cwd);
+        // P227: 띄운 값을 바꾸지 않고 다시 열면 그 대화가 마지막으로 쓰던 모델·노력 수준으로 이어 간다
+        const now = resume && p.model === undefined && p.effort === undefined ? this.closedModelNow(row) : null;
+        return this.bring({ ...base, id: row.sessionId, convId: conv, reuseRow: row, from: 'closed', resume, ...(now ? { modelNow: now, resumeModel: resumeModel('claude', { model: base.model, effort: base.effort }, now) } : {}) });
       }
       // 판에 올린 claude: 판의 hook을 붙여 그 대화 ID로 이어 가는 판 세션이 된다. 세션 ID가 대화 ID와 달라 새 행을 쓰고, 옛 행은 옮겨 갔다고 남긴다
       const existing = this.store.getSession(conv);

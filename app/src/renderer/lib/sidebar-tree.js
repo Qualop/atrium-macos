@@ -1,6 +1,6 @@
 // P44 사이드바의 순수 함수(단위 시험 app/test/p44-lib.test.mjs). 세션이 200개를 넘어도 훑고 찾기 쉽게:
 // - 그룹 → 워크스페이스 → 세션의 나무를 줄 높이가 정해진 평평한 줄 목록으로 편다(가상 스크롤이 보이는 줄만 그린다).
-// - 접힌 그룹·워크스페이스 아래에도 사람이 봐야 하는 세션(응답 필요, 오류)은 줄로 남긴다.
+// - 접힌 그룹·워크스페이스 아래에도 사람이 봐야 하는 세션(응답 필요, 오류)과 실행 중인 세션(작업 중, P265)은 줄로 남긴다.
 // - 거르기: 글(이름, 요청, 질문 등), 상태 묶음, 종류. 거르는 동안에는 접힘을 무시하고 맞는 것만 보인다.
 // - 닫힌 세션과 판 밖 대화는 워크스페이스마다 한 줄(닫힘 n · 대화 m)로 접어 두고, 펼치면 SECTION_STEP씩 보인다.
 import { matches, sidebarRows, SECTION_STEP } from './sidebar.js';
@@ -10,7 +10,11 @@ import { problemExit } from './user-close.js'; // P125
 
 // 줄 높이(px). 창의 CSS(sidebar.css .mt-sb2-*)와 같아야 한다
 export const ROW_H = { group: 32, ws: 30, session: 30, attn: 46, extra: 25, sec: 23, closed: 30, convo: 30, more: 25, empty: 27 }; // P132: 글자를 키워 2px씩(작은 줄 1px) 높였다(sidebar.css 끝)
-export const ATTN_CAP = 6; // 접힌 묶음 아래에 남기는 사람이 봐야 하는 세션 수(넘으면 "n개 더")
+export const ATTN_CAP = 6; // 접힌 묶음 아래에 남기는 세션 수(응답 필요·오류·작업 중을 합해서, 넘으면 "n개 더")
+// P265: 접힌 묶음 아래에 남기는 세션: 응답 필요·오류(isAttn)와 실행 중(작업 중 묶음: working, shell_running, starting).
+// 뒤 일만 도는 세션(P240 bgOnly)은 판 상태가 working이라 작업 중과 같이 보인다(창은 bgOnly를 받지 않는다)
+export const isRunning = (s) => bucketOf(s) === 'working';
+export const isPinnable = (s) => isAttn(s) || isRunning(s);
 // P103: 나무 단계(들여쓰기와 세로 안내선 수). 그룹 → 워크스페이스 → 세션 → 그 하위 세션(최대 MAX_INDENT단계 더),
 // 닫힌 세션·판 밖 대화 펼침 줄은 세션과 같은 단계, 그 아래 절 이름과 항목은 한 단계 더
 export const MAX_INDENT = 4;
@@ -68,6 +72,18 @@ export function groupLayout(workspaces = [], groups = []) {
   return { groups: out, ungrouped: rest };
 }
 
+// P278: 폴더(그룹) 머리줄 → 판에 있는 구성 워크스페이스 키(폴더 안 순서). 줄의 g는 groupLayout이 만든 { id, name, workspaces }라 members가 없다.
+// 그룹 없음 줄(none)은 어느 폴더에도 들지 않은 워크스페이스 전부. 판에 하나도 없으면 빈 배열(누르면 아무것도 하지 않는다)
+export function groupKeys(r, workspaces = [], groups = []) {
+  if (!r) return [];
+  const have = new Set((workspaces || []).map((w) => w.key));
+  if (r.none) { const inGroup = new Set((groups || []).flatMap((g) => g.members || [])); return [...have].filter((k) => !inGroup.has(k)); }
+  const g = r.g || {};
+  const own = Array.isArray(g.workspaces) ? g.workspaces.map((w) => w.key) : null;
+  const members = own || g.members || ((groups || []).find((x) => x.id === g.id) || {}).members || [];
+  return members.filter((k) => have.has(k));
+}
+
 // opts: { workspaces, groups, sessions(배열), data(recall.list: { workspaces: [{ key, closed, convos, archived }] }),
 //         collapsed: { [ws키 | 'g:'+그룹ID]: true }, extra: { [ws키]: true }(닫힘·대화 펼침), more: { [ws키|칸]: n },
 //         filter: 글, states: Set(묶음), kind: '' | 종류, selecting }
@@ -87,12 +103,13 @@ export function buildRows(opts) {
   const cmp = (a, b) => (isAttn(b) ? 1 : 0) - (isAttn(a) ? 1 : 0) || at(b) - at(a) || String(a.name).localeCompare(String(b.name));
   const rows = [];
   const push = (r) => { rows.push({ ...r, h: ROW_H[r.type], lv: levelOf(r) }); };
-  const sessionRow = (s, depth, indent, pinned = false) => rows.push({ id: `s:${s.sessionId}`, type: 'session', h: isAttn(s) ? ROW_H.attn : ROW_H.session, s, depth, indent, pinned, attn: isAttn(s), lv: depth + Math.min(indent || 0, MAX_INDENT) });
-  // 접힌 묶음 아래에 남기는 사람이 봐야 하는 세션
-  const pinnedRows = (list, depth, key) => {
-    const hot = list.filter(isAttn).sort(cmp);
-    hot.slice(0, ATTN_CAP).forEach((s) => sessionRow(s, depth, 0, true));
-    if (hot.length > ATTN_CAP) push({ id: `pm:${key}`, type: 'more', depth, key: `pin:${key}`, n: hot.length - ATTN_CAP, pinMore: true });
+  const sessionRow = (s, depth, indent, pinned = false, wsName = null) => rows.push({ id: `s:${s.sessionId}`, type: 'session', h: isAttn(s) ? ROW_H.attn : ROW_H.session, s, depth, indent, pinned, attn: isAttn(s), ...(wsName ? { wsName } : {}), lv: depth + Math.min(indent || 0, MAX_INDENT) });
+  // 접힌 묶음 아래에 남기는 세션: 응답 필요·오류가 먼저, 그다음 실행 중(P265). wsNames: 세션 → 워크스페이스 이름(접힌 그룹에 워크스페이스가 여럿일 때)
+  const pinnedRows = (list, depth, key, wsNames = null) => {
+    const hot = list.filter(isPinnable).sort(cmp);
+    hot.slice(0, ATTN_CAP).forEach((s) => sessionRow(s, depth, 0, true, wsNames && wsNames.get(s.workspaceKey || '')));
+    const hidden = hot.slice(ATTN_CAP);
+    if (hidden.length) push({ id: `pm:${key}`, type: 'more', depth, key: `pin:${key}`, n: hidden.length, pinMore: true, running: hidden.some((s) => !isAttn(s)) });
   };
   const wsBlock = (w, depth) => {
     const all = byWs.get(w.key) || [];
@@ -132,7 +149,7 @@ export function buildRows(opts) {
     const open = filtering || !collapsed[gk];
     const start = rows.length;
     push({ id: gk, type: 'group', depth: 0, g, c: countOf(all), open, wsN: g.workspaces.length });
-    if (!open) { pinnedRows(all, 1, gk); continue; }
+    if (!open) { pinnedRows(all, 1, gk, g.workspaces.length > 1 ? new Map(g.workspaces.map((w) => [w.key, w.label || w.name || w.key])) : null); continue; }
     let any = 0;
     for (const w of g.workspaces) any += wsBlock(w, 1);
     if (filtering && !any) rows.length = start; // 거를 때 맞는 것이 없는 그룹은 뺀다

@@ -29,7 +29,8 @@ import { useT, errText } from './lib/i18n.js';
 import { bandZone, bottomNext } from './lib/bottom.js'; // P43. P61: 들어가는·나가는 범위(bandZone)
 import { isWeb, uploadFiles } from './web.js'; // P48: 웹 화면의 파일 붙여넣기·끌어 놓기
 import { pathsText, filesOf, hasFiles, insertAt } from './lib/upload.js';
-import { imageTokens, mergeTokens, nextImageNo, expandImages, imageLabel, pastePathsText, wantsDesktopPaste } from './lib/desktop-paste.js'; // P162
+import { imageTokens, mergeTokens, nextImageNo, expandImages, imageLabel, chipLabel, pastePathsText, wantsDesktopPaste } from './lib/desktop-paste.js'; // P162
+import { desktopDrop, hasDropFiles, resolveDrop } from './lib/desktop-drop.js'; // macOS 판: 끌어 놓기·캡처 칩
 import { kbLift } from './lib/touch-board.js'; // P83
 import { useVoice, VoiceButton } from './Voice.jsx'; // P165
 import { splitLive } from './lib/voice-text.js'; // P165
@@ -169,6 +170,7 @@ export const CommandBar = forwardRef(function CommandBar(_props, ref) {
   const hist = useRef({ list: [], i: -1 });
   const [images, setImages] = useState({}); // P162: 그림 칩 번호 → { path, thumb }
   const [preview, setPreview] = useState(null); // P162: 마우스를 올린 그림 칩 { n, x, y }
+  const attachRef = useRef(null); // 끌어 놓기·캡처 칩 넣기(아래 attachItems)
   const voice = useVoice({ text, setText, taRef, inline: true }); // P165
   useImperativeHandle(ref, () => ({ focus: () => taRef.current && taRef.current.focus() }));
   useEffect(() => {
@@ -183,7 +185,10 @@ export const CommandBar = forwardRef(function CommandBar(_props, ref) {
     commandDraft.addEventListener('draft', onDraft);
     commandDraft.addEventListener('tag', onTag);
     commandDraft.addEventListener('focus', onFocusBar);
-    return () => { commandDraft.removeEventListener('draft', onDraft); commandDraft.removeEventListener('tag', onTag); commandDraft.removeEventListener('focus', onFocusBar); };
+    // 빈 판·사이드바 등에 끌어 놓은 파일(main.jsx): 명령 바 끝에 칩으로
+    const onAttach = (e) => attachRef.current && attachRef.current(e.detail || [], null);
+    commandDraft.addEventListener('attach', onAttach);
+    return () => { commandDraft.removeEventListener('draft', onDraft); commandDraft.removeEventListener('tag', onTag); commandDraft.removeEventListener('focus', onFocusBar); commandDraft.removeEventListener('attach', onAttach); };
   }, []);
   // P153: 세션 맵이 지금 글(태그된 카드 표시)을 듣는다
   useEffect(() => { commandDraft.dispatchEvent(new CustomEvent('text', { detail: text })); }, [text]);
@@ -304,7 +309,7 @@ export const CommandBar = forwardRef(function CommandBar(_props, ref) {
 
   // P162: 데스크톱 창의 붙여 넣기. 탐색기에서 복사한 파일은 경로(폴더는 뺀다), 캡처한 그림은 [Image n] 칩을 커서 자리에 넣는다
   const desktopPaste = !isWeb && typeof window !== 'undefined' && window.mt && typeof window.mt.clipPaste === 'function';
-  function pasteDesktop() {
+  function pasteDesktop(fallback = '') {
     const el = taRef.current;
     const at = el ? [el.selectionStart, el.selectionEnd] : [text.length, text.length];
     const put = (add) => setText((cur) => {
@@ -313,7 +318,7 @@ export const CommandBar = forwardRef(function CommandBar(_props, ref) {
       return r.text;
     });
     window.mt.clipPaste().then((r) => {
-      if (!r) return;
+      if (!r) { if (fallback) put(fallback); return; } // macOS: 파일·그림이 아니면 클립보드 글 그대로
       if (r.kind === 'error') { toast(t('desktopPaste.tooBig'), 'error'); return; }
       if (r.kind === 'files') {
         if (r.folders && !r.paths.length) { toast(t('desktopPaste.foldersOnly', { n: r.folders })); return; }
@@ -327,6 +332,47 @@ export const CommandBar = forwardRef(function CommandBar(_props, ref) {
         put(`${imageLabel(n)} `);
       }
     }, (e) => toast(t('desktopPaste.failed', { error: e.message }), 'error'));
+  }
+  // 끌어 놓은 파일·캡처: 그림은 [Image n], 그 밖은 [File n] 칩을 커서 자리(at이 없으면 끝)에 넣는다. 보낼 때 경로로 바뀐다(expandImages)
+  function attachItems(items, at) {
+    if (!items || !items.length) return;
+    const el = taRef.current;
+    const cur = el ? el.value : text;
+    let n = nextImageNo(cur, images);
+    const add = {}, labels = [];
+    for (const it of items) {
+      const entry = { path: it.path, thumb: it.thumb || null, kind: it.image ? 'image' : 'file', name: it.name || '', dir: !!it.dir };
+      add[n] = entry; labels.push(chipLabel(n, entry)); n++;
+    }
+    setImages((m) => ({ ...m, ...add }));
+    const pos = at || (el ? [el.selectionStart, el.selectionEnd] : [cur.length, cur.length]);
+    setText((v) => {
+      const r = insertAt(v, pos[0], pos[1], `${labels.join(' ')} `);
+      requestAnimationFrame(() => { const e2 = taRef.current; if (e2) { e2.focus(); e2.setSelectionRange(r.caret, r.caret); } });
+      return r.text;
+    });
+    toast(t('desktopDrop.chips', { n: items.length }));
+  }
+  attachRef.current = (items, at) => attachItems(items, at || [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER]);
+  const deskDrop = !isWeb && desktopDrop();
+  function dropDesktop(e) {
+    const el = taRef.current;
+    const at = el ? [el.selectionStart, el.selectionEnd] : null;
+    resolveDrop(e.dataTransfer).then(({ items, errors }) => {
+      if (errors.length) toast(t('desktopDrop.failed', { n: errors.length }), 'error');
+      attachItems(items, at);
+    }, (err) => toast(t('desktopPaste.failed', { error: err.message }), 'error'));
+  }
+  // macOS: 화면 영역을 찍어 그림 칩으로(main.mjs mt:capture, Esc면 아무것도 넣지 않는다)
+  const canCapture = !isWeb && typeof window !== 'undefined' && window.mt && window.mt.platform === 'darwin' && typeof window.mt.capture === 'function';
+  function capture() {
+    const el = taRef.current;
+    const at = el ? [el.selectionStart, el.selectionEnd] : null;
+    window.mt.capture().then((r) => {
+      if (!r) return;
+      if (r.error) { toast(t('desktopDrop.captureFailed', { error: r.error }), 'error'); return; }
+      attachItems([{ path: r.path, thumb: r.thumb, image: true, name: 'capture.png' }], at);
+    }, (err) => toast(t('desktopDrop.captureFailed', { error: err.message }), 'error'));
   }
   // P162: 그림 칩 위에 마우스가 오면 미리보기. 칩은 textarea 밑 겹에 그려지므로 겹의 칩 자리로 찾는다
   function hoverChip(e) {
@@ -450,6 +496,7 @@ export const CommandBar = forwardRef(function CommandBar(_props, ref) {
         )}
         <Mark />
         <VoiceButton voice={voice} className="mt-cmd-voice" />
+        {canCapture && <button type="button" className="mt-voice-btn mt-cmd-capture" data-role="capture" title={t('desktopDrop.capture')} aria-label={t('desktopDrop.capture')} onMouseDown={(e) => e.preventDefault()} onClick={capture}><Icon name="camera" /></button>}
         {/* P142: 글칸. 위아래 여백은 이 틀이 쥐고, 상한에 닿으면 textarea 안쪽만 스크롤된다. 여백을 눌러도 입력칸에 초점 */}
         <div className="mt-cmd-field" ref={fieldRef} data-scroll={fh.scroll ? '1' : undefined} data-voice={voice.active ? '1' : undefined} onMouseDown={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); taRef.current && taRef.current.focus(); } }}>
           <div className="mt-cmd-mirror" ref={mirRef} aria-hidden="true">
@@ -458,16 +505,19 @@ export const CommandBar = forwardRef(function CommandBar(_props, ref) {
           <textarea ref={taRef} className="mt-cmd-input" rows={1} style={fh.height ? { height: `${fh.height}px` } : undefined} value={text} placeholder={missionOpen ? t('mmTerr.barHint') : t('cmd.placeholder')} title={t('boardKeys.command')}
             onChange={(e) => { setText(e.target.value); setPick(0); }} onKeyDown={onKeyDown} onScroll={syncScroll} spellCheck={false} data-role="command"
             onPaste={(e) => {
-              if (wantsDesktopPaste(e.clipboardData, { desktop: desktopPaste })) { e.preventDefault(); pasteDesktop(); return; } // P162
+              if (wantsDesktopPaste(e.clipboardData, { desktop: desktopPaste })) { e.preventDefault(); let tx = ''; try { tx = e.clipboardData.getData('text/plain') || ''; } catch {} pasteDesktop(tx); return; } // P162
               const f = isWeb ? filesOf(e.clipboardData) : []; if (f.length) { e.preventDefault(); uploadInto(f); }
             }}
             onMouseMove={hoverChip} onMouseLeave={() => setPreview(null)}
-            onDragOver={(e) => { if (isWeb && hasFiles(e.dataTransfer)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }}
-            onDrop={(e) => { const f = isWeb ? filesOf(e.dataTransfer) : []; if (f.length) { e.preventDefault(); uploadInto(f); } }} />
+            onDragOver={(e) => { if ((isWeb || deskDrop) && hasFiles(e.dataTransfer)) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; } }}
+            onDrop={(e) => {
+              if (deskDrop && hasDropFiles(e.dataTransfer)) { e.preventDefault(); e.stopPropagation(); dropDesktop(e); return; }
+              const f = isWeb ? filesOf(e.dataTransfer) : []; if (f.length) { e.preventDefault(); uploadInto(f); }
+            }} />
           {preview && images[preview.n] && (
             <div className="mt-cmd-img-preview" data-role="img-preview" style={{ left: `${Math.round(preview.x)}px`, top: `${Math.round(preview.y)}px` }}>
-              {images[preview.n].thumb ? <img src={images[preview.n].thumb} alt={imageLabel(preview.n)} /> : null}
-              <span>{imageLabel(preview.n)}</span>
+              {images[preview.n].thumb ? <img src={images[preview.n].thumb} alt={chipLabel(preview.n, images[preview.n])} /> : null}
+              <span>{images[preview.n].kind === 'file' ? `${images[preview.n].dir ? `${t('desktopDrop.folder')} · ` : ''}${images[preview.n].path}` : chipLabel(preview.n, images[preview.n])}</span>
             </div>
           )}
         </div>

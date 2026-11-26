@@ -52,7 +52,7 @@ herdr는 PTY와 프로세스 수명을 소유한다. 백엔드는 세션 상태�
 | 상태 | 의미와 주요 신호 |
 |---|---|
 | `starting` | 실행·복구를 시작했으나 입력 준비가 확인되지 않음. 제공자별 로그인·초기 동의도 별도 완료 증거 없이는 준비로 보지 않음 |
-| `trust_wait` | 신뢰 질문 대기. Claude 설정의 예상과 실제 화면/blocked 신호를 함께 사용 |
+| `trust_wait` | 신뢰 질문 대기. Claude 설정의 예상과 실제 화면/blocked 신호를 함께 사용. Codex는 시작 중·신뢰 대기인 동안 화면을 주기적으로 읽어 신뢰 화면을 찾는다(터미널이 그 화면의 Codex를 에이전트로 알아보지 못한다, 2026-11-23) |
 | `ready` | 현재 에이전트가 입력 대기. 제공자 통합의 준비 조건과 herdr idle/done을 확인 |
 | `working` | 턴 실행 중. herdr working과 제공자 제출·실행 신호 |
 | `waiting` | 권한·선택 등 사람의 답을 기다림. 오래된 질문에 답하지 않도록 전송 직전 다시 확인 |
@@ -77,7 +77,7 @@ Claude 신뢰 예상은 `~/.claude.json`을 읽기만 한다. 커밋이 있는 g
 
 ### B. 말 걸기와 시작하기
 
-- **B1 `@이름`으로 말 걸기.** 세션별 직렬 대기열을 사용한다. ready/error이며 현재 관리 에이전트와 패널이 유효할 때만 제출한다. 승인·신뢰·시작·작업·절전·최근 사용자 입력 중에는 보류한다. UTF-8 글과 줄바꿈·괄호 붙여넣기를 보존하고 제공자별 신호로 제출을 확인한다. 전송 중 재시작이나 연결 세대 변경을 현재 턴으로 오인하지 않는다.
+- **B1 `@이름`으로 말 걸기.** 세션별 직렬 대기열을 사용한다. ready/error이며 현재 관리 에이전트와 패널이 유효할 때만 제출한다. 승인·신뢰·시작·작업·절전·최근 사용자 입력 중에는 보류한다. 보류 기한(`deliveryMaxWaitMs`)은 받는 쪽이 일하는(`working`) 시간을 빼고 센다. 끝내 못 들어간 글(`failed`)은 판 기록 `delivery_failed`에 남기고, 보낸 세션(`atrium prompt`의 부른 세션, `atrium send --from`)을 알면 그 세션에 알린다(2026-11-23). UTF-8 글과 줄바꿈·괄호 붙여넣기를 보존하고 제공자별 신호로 제출을 확인한다. 전송 중 재시작이나 연결 세대 변경을 현재 턴으로 오인하지 않는다.
 - **B2 여러 세션에.** `@이름` 여럿과 `@all`을 지원한다. 셸은 요청 전달 대상이 아니다. 서로 다른 작업을 나누는 것은 에이전트의 협업 명령으로 한다.
 - **B3 새 세션 시작.** `spawnPlanOf`가 호출자·기존 기본값·override로 제공자, 모델, 실행 명령, argv와 env를 푼다. Backend는 이름을 예약하고 제공자·게이트웨이·관리 설정·패널을 준비한다. `auto-approval.mjs`는 부모 권한을 제공자에 맞게 변환하고 보드의 `agentAutoApprove`가 켜졌으면 실행·복구 옵션을 자동 모드로 바꾼다. 공개 기본값은 false이고 전역 CLI 설정은 고치지 않는다. 첫 요청은 B1로 전달한다.
 - **B4 호출자와 모델.** `launchers.mjs`가 프리셋·즐겨찾기·이행·미리보기를 관리한다. Codex/Gemini/agy 모델은 `agent.models`의 현재 목록, Claude는 별칭, 게이트웨이는 모델 endpoint에서 가져온다. `models.mjs`는 정확한 ID·별칭·자연어 이름을 풀며 모호함과 미등록 이름을 명시한다. 기본 Gemini 프리셋은 agy 하나이고 `flavor`로 Gemini CLI를 가장하지 않는다. 기존 DeepSeek 즐겨찾기는 유지한다.
@@ -210,8 +210,8 @@ WebSocket 요청은 `{id,method,params}`다. 로컬 CLI는 `atrium call <메서�
 | `session.spawn {cwd,name?,launcher?,kind?,model?,effort?,args?,permissionMode?,allowHerdr?,prompt?}` | 관리 세션·workspace·신뢰 상태. 호출자 값과 명시적 override를 결합 |
 | `agent.kinds`, `agent.models {kind}` | 제공자 종류·설치 상태, 제공자별 실제 모델 목록과 조회 상태 |
 | `launcher.list`, `launcher.create`, `launcher.update`, `launcher.delete`, `launcher.favorite`, `launcher.order`, `launcher.preview` | 호출자·즐겨찾기·지원 필드·명령 미리보기 |
-| `session.send {target,text,workspace?,source?}`, `delivery.cancel {deliveryId}` | 대상별 전달·Thread 항목, 전달 취소 |
-| `session.answer {sessionId,toolUseId?,since?,choice?,picks?,text?}` | 현재 질문에 허용된 입력 또는 stale/터미널 안내 |
+| `session.send {target,text,workspace?,source?,now?,from?}`, `delivery.cancel {deliveryId}` | 대상별 전달(지금 기다리는 이유 포함)·Thread 항목, 전달 취소. `now`는 일하는 중인 판의 Claude Code에 대기 메시지로 바로 넣기, `from`은 못 들어가면 알릴 보낸 세션 |
+| `session.answer {sessionId,toolUseId?,since?,choice?,picks?,text?}` | 현재 질문에 허용된 입력 또는 stale/터미널 안내. Codex 신뢰 화면은 번호로 답한다(화면을 다시 읽고 고른 줄이 맞을 때 Enter) |
 | `session.rename {session,name?,clear?,by?}` | 표시 이름 변경·비움 → name·address·label |
 | `session.kill {session,confirm,after?}`, `session.wake {session,wait?,why?}` | 세션 종료/보관/삭제, 제공자별 깨우기 |
 | `session.list`, `session.get`, `session.messages`, `session.events` | 공개 요약·메시지·이벤트. private runtime 원문·env는 공개 요약에서 제외 |

@@ -33,3 +33,12 @@ test('P140 터미널이 붙기 전에 모으는 키에도 ^K는 들어가지 않
   assert.equal(keyToData(kd('k', { ctrlKey: true })), null);
   assert.equal(keyAction(kd('k', { ctrlKey: true }), false), 'pass', 'xterm 쪽 판단은 그대로(잡기 단계가 먼저 받는다)');
 });
+
+test('macOS: 판 단축키는 Cmd만, Ctrl+K·Ctrl+F는 터미널 프로그램 몫', () => {
+  const kd = (key, o = {}) => ({ type: 'keydown', key, ...o });
+  assert.equal(boardShortcut(kd('k', { metaKey: true }), true), 'command');
+  assert.equal(boardShortcut(kd('f', { metaKey: true }), true), 'search');
+  assert.equal(boardShortcut(kd('k', { ctrlKey: true }), true), null);
+  assert.equal(boardShortcut(kd('f', { ctrlKey: true }), true), null);
+  assert.equal(boardShortcut(kd('k', { ctrlKey: true }), false), 'command', 'Windows는 그대로');
+});

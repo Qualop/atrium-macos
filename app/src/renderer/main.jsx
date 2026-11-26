@@ -45,7 +45,7 @@ import { OpenRepoDialog, CloseWsDialog } from './Workspaces.jsx';
 import { DesktopImportDialog } from './DesktopImport.jsx'; // P34
 import { Sidebar } from './Sidebar.jsx'; // P7(J5): 평소에 닫힌 왼쪽 사이드바
 import { SearchBox, SelectionBar } from './Search.jsx';
-import { keyToData, closeKeyTargets, boardArrowKey, boardShortcut, stepWorkspace, spaceHoldReady, spaceHoldStep, SPACE_HOLD_MS } from './lib/keys.js';
+import { keyToData, closeKeyTargets, boardArrowKey, boardShortcut, appMod, stepWorkspace, spaceHoldReady, spaceHoldStep, SPACE_HOLD_MS } from './lib/keys.js';
 import { wsTabs, tabKeys } from './lib/ws-tabs.js'; // P98
 import { renameKeyTarget } from './lib/session-name.js'; // P66: F2로 고른 노드의 이름 바꾸기
 import { ReturnSummary, useReturnSummary } from './ReturnSummary.jsx';
@@ -58,6 +58,19 @@ import { startNotifier, notifyLog } from './notify.js';
 import * as perf from './perf.js';
 import { useT } from './lib/i18n.js';
 import { BRAND_WORDMARK } from './lib/icons.jsx'; // 처음 화면의 텍스트 로고
+import { desktopDrop, hasDropFiles, resolveDrop } from './lib/desktop-drop.js'; // macOS 판: 빈 판에 끌어 놓기
+import { commandDraft } from './Thread.jsx';
+
+// macOS 판: 노드·터미널·명령 바가 받지 않은 끌어 놓기(빈 판, 사이드바 등)는 명령 바에 칩으로 넣는다.
+// 받지 않으면 Chromium이 그 파일로 페이지를 옮겨 판이 사라지므로(main.mjs will-navigate로도 막는다) 늘 기본 동작을 막는다
+if (typeof window !== 'undefined' && desktopDrop()) {
+  window.addEventListener('dragover', (e) => { if (hasDropFiles(e.dataTransfer)) { e.preventDefault(); if (!e.defaultPrevented || e.dataTransfer.dropEffect === 'none') e.dataTransfer.dropEffect = 'copy'; } });
+  window.addEventListener('drop', (e) => {
+    if (!hasDropFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    resolveDrop(e.dataTransfer).then(({ items }) => { if (items.length) commandDraft.dispatchEvent(new CustomEvent('attach', { detail: items })); }, () => {});
+  });
+}
 
 const editable = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable || (t.closest && t.closest('.xterm')));
 
@@ -151,7 +164,7 @@ function App() {
     };
     window.addEventListener('keydown', onKeyCapture, true);
     const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); setSearchOpen(true); return; } // Ctrl+Shift+F(잡기 단계는 Shift 없는 것만 받는다)
+      if (appMod(e) && !e.altKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); setSearchOpen(true); return; } // Ctrl+Shift+F(잡기 단계는 Shift 없는 것만 받는다)
       if (editable(e.target) || e.ctrlKey || e.altKey || e.metaKey) return;
       if (getState().missionOpen && document.querySelector('[data-style="territories"]')) return; // P153: 세션 맵의 키는 MissionLineage.jsx가 받는다(친 글자는 명령줄로)
       // P22: 고른 세션 노드를 Delete로 닫는다(X와 같은 확인). 터미널·입력 칸·메모 편집 중에는 위의 editable에서 그대로 글자를 지운다

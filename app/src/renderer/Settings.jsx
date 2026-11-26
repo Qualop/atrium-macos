@@ -141,6 +141,13 @@ function AutoApprovalSetting({ settings }) {
   </>;
 }
 
+// macOS 판: 세션이 일하는 동안 Mac이 잠들지 않게(backend keep-awake.mjs, 기본 켬)
+function KeepAwakeSetting({ settings }) {
+  const t = useT();
+  const set = async (value) => { try { await api.call('settings.set', { key: 'keepAwake', value }); } catch (e) { toast(t('settings.saveFailed', { error: errText(e) }), 'error'); } };
+  return <SetRow name={t('keepAwake.name')} hint={t('keepAwake.hint')} role="keep-awake-setting"><Toggle checked={settings.keepAwake !== false} onChange={set} field="setting-keepAwake" /></SetRow>;
+}
+
 // macOS 판(사용성): 영역 이름표 단추(자동 정렬, 절전, 세션 추가 …)를 늘 보이기. 끄면 마우스를 올렸을 때와 뗀 뒤 잠시, ⌄로 고정한 영역에만
 function RegionActsSetting({ settings }) {
   const t = useT();
@@ -235,6 +242,7 @@ function SleepSetting({ settings, schema }) {
       {settings.claudeAutoCompactPct != null && <SleepMinutes settings={settings} schema={schema} k="claudeAutoCompactPct" label="agentMem.compactLabel" hint="agentMem.compactHint" set="agentMem.compactSet" off="agentMem.compactOff" />}
       {settings.claudeCompactWindowK != null && <SleepMinutes settings={settings} schema={schema} k="claudeCompactWindowK" label="agentMem.windowLabel" hint="agentMem.windowHint" set="agentMem.windowSet" off="agentMem.windowOff" />}
       {settings.maxAwakeWorkers != null && <SetNote>{t('agentMem.note')}</SetNote>}
+      {window.mt && window.mt.platform === 'darwin' && <KeepAwakeSetting settings={settings} />}
     </div>
   );
 }

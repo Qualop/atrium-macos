@@ -12,13 +12,13 @@ import { codexHomeOf } from './codex-models.mjs';
 // P116: 일 시키기·기다리기·읽기는 판의 atrium 명령이다(터미널 백엔드와 상관없다). 터미널 명령을 직접 쓰라고 하지 않는다
 export const HARNESS_PROMPT = [
   '너는 Atrium 보드가 띄운 세션 안에서 돈다.',
-  '보드와 말할 때는 셸에서 atrium 명령을 쓴다. 먼저 `atrium help`로 사용법을 본다(`atrium help --json`은 기계용 계약).',
-  '다른 에이전트에게 일을 시킬 때는 `atrium prompt <이름> <따옴표로 묶은 할 일>`(끝까지 기다려 답을 받으려면 --wait), 이미 시킨 일을 기다릴 때는 `atrium wait <이름>`, 그 화면은 `atrium read <이름>`. 이름은 보드의 세션 이름이다. 다른 에이전트에게는 이 명령으로만 보낸다. 결과는 한 길로 받는다: --wait·atrium wait로 당겨 오거나, 워커에게 끝나면 `atrium prompt <너> --now <결과>`로 알리게 하고 기다리지 않는다.', // P143
+  '보드와 말할 때는 셸에서 atrium 명령을 쓴다. 자세한 사용법이 필요할 때만 `atrium help`를 본다(기계용 계약은 `atrium help --json`).', // P169: 시작하자마자 help를 치지 않게(맥락 약 2,700토큰)
+  '일을 맡길 때는 `atrium prompt <이름> <따옴표로 묶은 할 일>`로 맡기고 턴을 끝낸다. 하위가 `atrium done`으로 닫으면 보드가 그 보고를 가져다주고 보고 없이 멈추면 알린다. 화면은 `atrium read <이름>`(이름은 보드의 세션 이름). 다른 에이전트에게는 이 명령으로만 보낸다. 맡은 일은 끝나면 `atrium done ok|failed <보고>`로 닫고 쉰다. 사람이 결과를 물어도 폴링하지 말고 보고가 오면 전한다(--wait·`atrium wait`는 꼭 필요할 때만).', // P143, P181: 맡기고 턴을 끝낸다
   '하위 세션(워커)은 `atrium child`, 부모·하위 세션·역할 연결의 지금 기록은 `atrium me`, 띄울 수 있는 모델은 `atrium models`.',
   // macOS 판: 하위 세션 규칙(사용자 결정 2026-11-18). 모델은 보드 기본(opus·sol), 추론은 high가 기본, 작은 일은 낮춘다. 토큰을 아낀다
   '일이 서로 기다리지 않는 조각 여럿으로 나뉘면 스스로 `atrium child <이름> --prompt <지시>`로 워커를 띄운다. 모델은 빼면 보드 기본(Codex는 sol, Claude는 opus)이고 추론은 high가 기본이다. 범위가 분명한 구현은 --effort medium, 파일 만들기·찾기·요약 같은 작은 일은 --effort low.',
   '앱 조작은 cua MCP(별도 커서, 사람의 커서를 뺏지 않는다), 웹은 ego-browser 스킬로 한다. 사람의 커서를 가져가는 Computer Use는 쓰지 않는다. 사이트의 이용약관·동의·쿠키 창은 누르지 않고 멈춰 사람에게 묻고, 사이트가 정한 입력 제한(형식·범위)을 브라우저에서 고쳐 피하지 않는다.',
-  '토큰은 대부분 길어진 대화를 다시 읽는 데 든다. 국소 작업마다 새 워커를 띄우고 결과를 받으면 atrium child-kill로 닫는다. 큰 파일 읽기·검색은 워커에게 시키고 요약만 받으며, 보고는 짧게 받는다.',
+  '토큰은 대부분 길어진 대화를 다시 읽는 데 든다. 국소 작업마다 새 워커를 띄우고 결과를 받으면 atrium child-kill로 닫는다. 큰 파일 읽기·검색은 워커에게 시키고 요약만 받으며, 보고는 짧게 받는다. 만든 워커에게 반려 고침을 이어 시키지 말고 새 고침 워커(--effort medium)에게 맡기며, 검토는 두 차수까지 한다.',
   '[Atrium 보드]로 시작하는 글은 보드가 알려 주는 연결(어느 에이전트가 너의 무슨 역할인지)이다.',
 ].join(' ');
 
@@ -63,7 +63,7 @@ export const ADAPTERS = {
       // 연결: 세션 단위 -c로 제공자를 정의한다(사용자 config.toml은 고치지 않는다). 키는 env_key(변수 이름)
       const conn = c ? ['-c', `model_provider=${pid}`, '-c', `model_providers.${pid}.name=${c.name}`, '-c', `model_providers.${pid}.base_url=${c.baseUrl}`, '-c', `model_providers.${pid}.wire_api=responses`, ...(c.auth && c.auth.env ? ['-c', `model_providers.${pid}.env_key=${c.auth.env}`] : [])] : [];
       // 시작할 때 업데이트 확인을 끈다(새 버전이 있으면 "Update now" 선택 창이 떠서 판의 첫 요청과 Enter가 그 창에 들어간다. 1단계 뒤 확인)
-      const args = [...(resumed ? ['resume', ctx.harnessSessionId] : fork ? ['fork', fork] : []), '-c', 'check_for_update_on_startup=false', ...conn, ...(ctx.model ? ['-m', ctx.model] : []), ...(ctx.instructions ? ['-c', `developer_instructions=${ctx.instructions.text}`] : []), ...(ctx.launcherArgs || [])];
+      const args = [...(resumed ? ['resume', ctx.harnessSessionId] : fork ? ['fork', fork] : []), '-c', 'check_for_update_on_startup=false', ...conn, ...(ctx.model ? ['-m', ctx.model] : []), ...(ctx.instructions ? ['-c', `developer_instructions=${ctx.instructions.text}`] : []), ...(ctx.launcherArgs || []), ...(resumed && ctx.effort ? ['-c', `model_reasoning_effort=${ctx.effort}`] : [])]; // P227: 이어 갈 때 지금 노력 수준(호출자 인자 뒤: 뒤의 -c가 이긴다)
       return { args, env: {}, files: [], harnessSessionId: resumed ? ctx.harnessSessionId : null, resumed };
     },
     // 판의 인자 없이 뜬 이어 가기(`codex resume <id>`, 옛 터미널이 스스로 띄움)인가. 판이 친 줄인가
@@ -108,7 +108,7 @@ export const ADAPTERS = {
         files.push({ file, text: piExtensionText(c, modelsFor(ctx)) });
         ext = ['-e', file];
       }
-      const model = c ? (ctx.model ? `${providerIdOf(c)}/${ctx.model}` : null) : ctx.model || null;
+      const model = c ? (ctx.model ? (String(ctx.model).startsWith(`${providerIdOf(c)}/`) ? ctx.model : `${providerIdOf(c)}/${ctx.model}`) : null) : ctx.model || null; // P227: 이어 갈 지금 값은 이미 제공자/모델 꼴
       const args = ['--session-id', sid, ...ext, ...(model ? ['--model', model] : []), ...(ctx.instructions ? ['--append-system-prompt', ctx.instructions.file] : []), ...(ctx.launcherArgs || [])];
       return { args, env: {}, files, harnessSessionId: sid, resumed: !!ctx.resume };
     },
@@ -150,7 +150,7 @@ export function harnessLaunch(o) {
   const a = adapterOf(o.kind);
   if (!a) throw Object.assign(new Error(`하네스가 아닙니다: ${o.kind}`), { code: 'bad_request' });
   if (o.connection && !protocolsOf(o.kind).includes(o.connection.protocol)) throw Object.assign(new Error(`${o.kind}는 연결 프로토콜 ${o.connection.protocol}을 쓰지 않습니다.`), { code: 'connection_protocol', key: 'connections.err.protocolMismatch', vars: { harness: o.kind, protocol: o.connection.protocol } });
-  const r = a.build({ sessionId: o.sessionId, resume: !!o.resume, harnessSessionId: o.harnessSessionId || null, model: o.model || null, launcherArgs: o.launcherArgs || [], instructions: a === GENERIC || !ADAPTERS[o.kind] ? null : o.instructions || null, connection: o.connection || null, connectionModels: o.connectionModels || [], filesDir: o.filesDir || null, forkFrom: o.forkFrom || null });
+  const r = a.build({ sessionId: o.sessionId, resume: !!o.resume, harnessSessionId: o.harnessSessionId || null, model: o.model || null, effort: o.effort || null, launcherArgs: o.launcherArgs || [], instructions: a === GENERIC || !ADAPTERS[o.kind] ? null : o.instructions || null, connection: o.connection || null, connectionModels: o.connectionModels || [], filesDir: o.filesDir || null, forkFrom: o.forkFrom || null, statusLine: o.statusLine || null }); // P211: statusLine(AGY 상태 줄 명령 만들기)
   // P115: 연결이 있는 pi는 -e 없이 띄우지 않는다(빠지면 pi가 조용히 다른 실제 제공자로 넘어간다)
   if (o.kind === 'pi' && o.connection && !r.args.includes('-e')) throw Object.assign(new Error('pi 연결 확장(-e)이 없어 띄우지 않았습니다.'), { code: 'pi_extension_missing', key: 'connections.err.piExtension' });
   const command = o.startWords && o.startWords.length ? [...o.startWords] : [a.command];

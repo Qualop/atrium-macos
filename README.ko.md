@@ -13,7 +13,7 @@
 
 Atrium은 AI 코딩 세션, 프로젝트, 메모와 위임한 일을 한 캔버스에 놓는 앱입니다. Claude Code, Codex, Gemini CLI, Antigravity와 셸은 herdr 터미널에서 실행되고, Atrium은 배치·연결·메시지 전달을 관리합니다.
 
-**0.4.0**은 원본 P111까지의 기능을 macOS 분기에 반영합니다. 휴대폰 화면, 선택적 패스키·푸시, Mac 앱 업데이트와 배치·절전 개선을 포함합니다. 관리 에이전트의 도구 자동승인과 부모 권한 변환을 지원하며, 질문·로그인·신뢰는 응답 필요 안내와 알림에서 해당 터미널로 연결합니다.
+**0.6.0**은 일하는 중인 세션에 보낸 글을 턴이 끝날 때까지 지켜 넣고, Codex 신뢰 화면을 알아보며, Finder·브라우저에서 끌어 온 파일을 판 어디에나 놓을 수 있게 하고, 터미널·메모의 링크를 열고, 세션이 일하는 동안 Mac이 잠들지 않게 합니다. 0.5의 터미널 엔진 교체(herdr-core), 여러 Claude 계정, 워커에게 일 맡기는 규칙도 함께 들어 있습니다. [0.6 기능](#06-기능)과 [릴리스 노트](https://github.com/Qualop/atrium-macos/releases/tag/v0.6.0)를 보세요.
 
 ![macOS의 Atrium: 한국어 화면과 Codex 모델 선택](docs/images/model-picker-macos.png)
 
@@ -21,13 +21,71 @@ Atrium은 AI 코딩 세션, 프로젝트, 메모와 위임한 일을 한 캔버�
 
 ## 다운로드와 빌드 상태
 
-Apple Silicon용 0.4.0을 제공합니다. DMG를 열어 Atrium.app을 Applications에 넣으세요.
+Apple Silicon용 0.6.0을 제공합니다. DMG를 열어 Atrium.app을 Applications에 넣으세요.
 
-- [DMG 다운로드](https://github.com/Qualop/atrium-macos/releases/download/v0.4.0/Atrium-0.4.0-macos-arm64.dmg)
-- [ZIP 다운로드](https://github.com/Qualop/atrium-macos/releases/download/v0.4.0/Atrium-0.4.0-macos-arm64.zip)
-- [SHA-256 체크섬](https://github.com/Qualop/atrium-macos/releases/download/v0.4.0/SHA256SUMS.txt) · [릴리스 노트](https://github.com/Qualop/atrium-macos/releases/tag/v0.4.0)
+- [DMG 다운로드](https://github.com/Qualop/atrium-macos/releases/download/v0.6.0/Atrium-0.6.0-macos-arm64.dmg)
+- [ZIP 다운로드](https://github.com/Qualop/atrium-macos/releases/download/v0.6.0/Atrium-0.6.0-macos-arm64.zip)
+- [SHA-256 체크섬](https://github.com/Qualop/atrium-macos/releases/download/v0.6.0/SHA256SUMS.txt) · [릴리스 노트](https://github.com/Qualop/atrium-macos/releases/tag/v0.6.0)
 
 macOS 패키지는 macOS 13 이상을 대상으로 하며 Node와 herdr를 포함합니다. 에이전트 CLI 설치·로그인은 별도입니다. 배포 패키지는 ad-hoc 서명을 사용하며 Apple 공증은 받지 않았습니다.
+
+## AI 에이전트로 설치하기
+
+코딩 에이전트(Claude Code, Codex, Cursor 등)가 사용자의 Mac에서 그대로 따라 하도록 쓴 순서입니다. 명령은 적힌 그대로 실행해도 됩니다. 표시한 곳에서는 멈추고 사람에게 묻습니다.
+
+1. **Mac 확인.** macOS 13 이상, Apple Silicon이 필요합니다.
+
+   ```sh
+   sw_vers -productVersion && uname -m   # 13.0 이상, arm64
+   ```
+
+2. **내려받고 확인하기.**
+
+   ```sh
+   cd "$(mktemp -d)"
+   V=0.6.0
+   curl -fLO "https://github.com/Qualop/atrium-macos/releases/download/v$V/Atrium-$V-macos-arm64.zip"
+   curl -fLO "https://github.com/Qualop/atrium-macos/releases/download/v$V/SHA256SUMS.txt"
+   grep "Atrium-$V-macos-arm64.zip" SHA256SUMS.txt | shasum -a 256 -c -   # OK가 나와야 합니다
+   ditto -x -k "Atrium-$V-macos-arm64.zip" .
+   ```
+
+3. **설치.** `/Applications/Atrium.app`이 이미 있으면 바꾸기 전에 사람에게 묻습니다. 실행 중이면 먼저 끕니다.
+
+   ```sh
+   ditto Atrium.app /Applications/Atrium.app
+   ```
+
+   Apple 공증을 받지 않은 빌드라 처음 열 때 macOS가 막을 수 있습니다. 사람이 **시스템 설정 → 개인정보 보호 및 보안**에서 **그래도 열기**를 누릅니다. 에이전트가 Gatekeeper 설정을 바꾸지 않습니다.
+
+4. **쓸 에이전트 CLI 설치.** Atrium에는 들어 있지 않습니다. 예: Claude Code(`claude`), Codex(`codex`), Gemini CLI(`gemini`), Antigravity(`agy`). 각 CLI의 로그인은 사람이 그 터미널에서 합니다.
+
+5. **Atrium을 켜고 판 확인.** 명령줄 도구는 앱 안에 있습니다.
+
+   ```sh
+   open -a /Applications/Atrium.app
+   A=/Applications/Atrium.app/Contents/Resources
+   "$A/runtime/node" "$A/backend/bin/atrium.mjs" status   # 백엔드 pid, 포트 47800, 터미널 엔진
+   ```
+
+6. 창에서 **+**로 프로젝트를 열고 **새 세션…**으로 세션을 띄웁니다. 신뢰·로그인·질문은 사람이 그 세션의 터미널에서 답합니다.
+
+### 판의 에이전트가 받는 것
+
+Atrium이 띄운 세션은 판 스킬(`atrium-herdr:atrium`)과 `atrium` 명령을 세션마다 `--plugin-dir`로 받습니다. 스킬은 백엔드가 실행할 때 만들어 넣으므로 앱에 늘 들어 있고, `~/.claude`에 설치하지 않으며 `~/.claude/settings.json`도 고치지 않습니다. 판 세션 안에서 `atrium help`를 치면 워커에게 일 맡기기(`atrium child`, `atrium prompt`, `atrium wait`, `atrium done`)와 글 보내기(`atrium send`) 명령이 나옵니다.
+
+**추가 스킬 묶음(선택).** `~/Library/Application Support/atrium/plugins/<이름>/`에 Claude Code 플러그인 폴더(`.claude-plugin/plugin.json` 포함)를 두면 판 세션에만 넘깁니다. 남이 만든 묶음은 여기서 다시 배포하지 않으니, 원래 저장소에서 그 라이선스대로 받습니다. 예:
+
+```sh
+mkdir -p ~/Library/Application\ Support/atrium/plugins
+git clone https://github.com/Gudals0320/gudals.git ~/Library/Application\ Support/atrium/plugins/gudals
+```
+
+새 묶음은 세션을 다시 띄우면 읽습니다.
+
+### 소스로 빌드하기
+
+아래 [macOS에서 시작하기](#macos에서-시작하기)를 따른 뒤 저장소 루트에서 `node app/scripts/package-macos.mjs`로 `out/Atrium.app`을 만듭니다([Finder용 앱 만들기](#finder용-앱-만들기)).
 
 ## macOS에서 시작하기
 
@@ -92,6 +150,20 @@ Gemini CLI는 별도 관리 프로필을 씁니다. Antigravity는 기존 hook�
 - 가져온 Codex 사본을 열거나 요청하면 `codex resume <사본의 대화 ID>`로 그 사본만 깨웁니다. ID를 잃었을 때 새 대화로 조용히 바꾸지 않습니다. 프로젝트를 깨워도 아직 사용하지 않은 가져오기 사본을 모두 띄우지는 않습니다.
 
 복사본도 원본과 같은 작업 폴더를 사용할 수 있습니다. 대화 복사는 프로젝트 파일이나 워크트리 복사를 뜻하지 않습니다. 개발용 가져오기는 명시적으로 분리한 기록 위치가 필요합니다. 기존 Claude의 판 밖 기록 색인과 다른 프로세스에 묶인 대화 검사는 별도 경로로 유지합니다.
+
+## 0.6 기능
+
+| 영역 | 동작 |
+|---|---|
+| 일하는 세션에 보낸 글 | 세션이 일하는 시간은 15분 전달 기한에 넣지 않고, 턴이 끝나면 넣습니다. `atrium send --now`는 일하는 Claude Code의 대기 메시지로 바로 넣습니다. 끝내 못 들어간 글은 `delivery_failed`로 남고 보낸 세션에 알립니다. |
+| Codex 신뢰 화면 | 지금 Codex의 폴더 신뢰 화면을 알아보고 신뢰 질문으로 보입니다. `atrium answer <세션> <번호>`는 화면을 다시 읽은 뒤 답하며, 판이 스스로 답하지는 않습니다. |
+| 끌어 놓기 | Finder의 파일·폴더, 브라우저의 그림을 터미널·세션 노드·명령 바에 놓을 수 있습니다. |
+| 링크 | 터미널 하이퍼링크(OSC 8)와 터미널·메모 속 웹 주소를 Cmd+누르기(터치는 탭)로 기본 브라우저에서 엽니다. 다른 스킴은 열지 않습니다. |
+| 잠들기 막기 | 판의 세션이 하나라도 일하는 동안 Mac이 잠들지 않게 합니다(`caffeinate`). 긴 턴이 잠들기로 끊기지 않습니다. |
+| 사이드바와 키 | 접힌 그룹에도 일하는 세션이 보이고, 폴더 머리를 누르면 그 폴더 영역으로 갑니다. Cmd는 앱 키, Ctrl은 터미널 프로그램 몫입니다. |
+| 판 스킬 | 만드는 워커·고침 워커·검토 두 차수 규칙과 화면 검토의 첫 화면 기준을 더했습니다. |
+
+0.5는 터미널 엔진을 herdr-core(hc)로 바꾸고(자동 이전), 여러 Claude 계정과 한도에 따른 전환, 노드의 중지 단추와 모델·추론 바꾸기, 더 안전한 맡기기 규칙을 넣었습니다. [0.5.0 릴리스 노트](https://github.com/Qualop/atrium-macos/releases/tag/v0.5.0)를 보세요.
 
 ## 0.4 기능
 

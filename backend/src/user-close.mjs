@@ -66,7 +66,7 @@ async function reopenInPlace(b, s, p) {
   try {
     if (claude) {
       const conv = convoOf(s, b.projectsOf ? b.projectsOf(s) : b.cfg.claudeProjects);
-      const w = wakeArgs(b.launchOf(s), conv);
+      const w = wakeArgs(b.launchOf(s), conv, b.modelNowFor ? b.modelNowFor(s) : s.rt.modelNow); // P227: 이어 갈 때는 지금 모델
       plan = w.plan;
       await b.adapter.waitShellReady(s.paneId, 8000);
       const st = await b.adapter.startAgent({ name: s.agentName, paneId: s.paneId, args: w.args, ...startOpt(s) }); // P97: 실행 명령

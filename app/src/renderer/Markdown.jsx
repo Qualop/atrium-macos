@@ -1,8 +1,9 @@
 // 마크다운 보기(P6c: 출력 보기 I1, 메모 노드 I3). lib/markdown.js가 만든 나무를 React 요소로 그린다(HTML을 끼워 넣지 않는다).
-// 링크는 판 창에서 열지 않는다(누르면 주소를 클립보드에 복사한다). 할 일 상자는 onToggle(차례, 참/거짓)을 주면 누를 수 있다(메모 노드, lib/markdown.js toggleTask).
+// 링크는 판 창 안에서 열지 않는다. P283: 누르면 open-link.js 규칙으로 연다(PC 창: 기본 브라우저, 원격 웹: 새 탭, http·https만). 할 일 상자는 onToggle(차례, 참/거짓)을 주면 누를 수 있다(메모 노드, lib/markdown.js toggleTask).
 import { useMemo } from 'react';
 import { parseMarkdown } from './lib/markdown.js';
 import { useT } from './lib/i18n.js';
+import { openLink } from './open-link.js';
 
 function Inline({ c }) {
   const t = useT();
@@ -12,7 +13,7 @@ function Inline({ c }) {
     if (n.t === 'b') return <strong key={i}><Inline c={n.c} /></strong>;
     if (n.t === 'i') return <em key={i}><Inline c={n.c} /></em>;
     if (n.t === 's') return <del key={i}><Inline c={n.c} /></del>;
-    if (n.t === 'a') return <a key={i} href={n.href} title={`${n.href}\n${t('markdown.copyLink')}`} onClick={(e) => { e.preventDefault(); try { navigator.clipboard.writeText(n.href); } catch {} }}><Inline c={n.c} /></a>;
+    if (n.t === 'a') return <a key={i} href={n.href} className="nodrag" data-link="" title={`${n.href}\n${t('markdown.openLink')}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLink(n.href); }}><Inline c={n.c} /></a>;
     return null;
   });
 }

@@ -12,6 +12,8 @@ import { deriveState } from './state.mjs';
 import { findSession, shownName } from './session-label.mjs';
 import { screenAnswerText, tailText } from './links.mjs';
 import { clip } from './text.mjs';
+import { LATE_CONFIRM_MS } from './delivery.mjs'; // P258
+import { checkAgentText } from './work-units.mjs'; // P180
 
 const ACCOUNT_SWITCH_MAX_MS = 15 * 60 * 1000; // 이보다 오래된 전환 표시는 끝난 것으로 본다(백엔드가 전환 도중 꺼진 경우)
 export const WAIT_DEFAULT_MS = 100000; // 한 번에 기다리는 기본(Claude Code Bash 도구의 기본 시간 제한 2분 안쪽). 더 길면 --timeout
@@ -88,7 +90,17 @@ export class AgentVerbs {
     this.stopSeen = new Set(); // macOS 판: 이미 알린 멈춘 턴(`${보낸}>${받는}@${턴 시작}`). 다시 기다리면 사람이 이어 가기를 기다린다
     this.sent = new Map(); // `${보낸 세션}>${받는 세션}` → 마지막으로 보낸 전달 ID(atrium wait가 그 글의 턴을 기다린다)
     this.pendingLinks = new Map(); // 전달 ID → { linkId, to, text }(들어가면 받는 쪽 openPromptFrom으로)
+    // P180: 판이 붙잡아 둔 일을 나중에 넣을 때도 atrium prompt처럼 연결과 기다림을 잇는다
+    if (branch && branch.units) branch.units.onDispatch = (unit, d) => {
+      const from = b.sessions.get(unit.from); const t = b.sessions.get(unit.to);
+      if (!from || !t) return;
+      const l = this.link(from, t);
+      b.linkEvent(l, 'prompt', unit.spec, { via: 'atrium', deliveryId: d.deliveryId, tag: 'assign', unitId: unit.id, later: true });
+      this.pendingLinks.set(d.deliveryId, { linkId: l.linkId, to: t.sessionId, text: unit.spec });
+      this.noteSent(from, t, d.deliveryId);
+    };
   }
+  units() { return this.branch && this.branch.units ? this.branch.units : null; }
   // 보낸 세션의 마지막 글(atrium prompt, atrium child --prompt의 첫 요청, atrium wake --prompt). atrium wait가 그 글의 턴을 기다린다
   // 너가 그 세션에 마지막으로 보낸 글과 같고 아직 끝나지 않았으면 그 전달(대기 중이거나, 받는 쪽이 그 글로 시작한 턴을 하는 중)
   duplicateOf(caller, t, text) {
@@ -109,7 +121,11 @@ export class AgentVerbs {
   onDeliveryEnd(d) {
     const p = this.pendingLinks.get(d.deliveryId);
     if (!p) return;
-    this.pendingLinks.delete(d.deliveryId);
+    // P258: 미확인은 늦게 들어갈 수 있다(늦은 확인, LATE_CONFIRM_MS). 그때 받는 쪽의 지금 지시로 두도록 그동안 남겨 둔다
+    const now = Date.now();
+    for (const [id, x] of this.pendingLinks) if (x.lateUntil && x.lateUntil < now) this.pendingLinks.delete(id);
+    if (d.status === 'unconfirmed' && !p.lateUntil) p.lateUntil = now + (this.b.cfg.lateConfirmMs ?? LATE_CONFIRM_MS);
+    else this.pendingLinks.delete(d.deliveryId);
     const b = this.b;
     const l = b.store.getLink(p.linkId);
     const t = b.sessions.get(p.to);
@@ -117,7 +133,7 @@ export class AgentVerbs {
     if (d.status !== 'confirmed' || !t) { b.linkEvent(l, 'prompt_result', null, { via: 'atrium', deliveryId: d.deliveryId, ok: false, status: d.status, reason: d.reason || null }, { quiet: true }); return; }
     const working = deriveState(t.rt).state === 'working'; // hook 없는 종류는 터미널 상태 working이 곧 제출 확인이다(그 상태 이벤트는 이미 지나갔다)
     t.openPromptFrom = { linkId: l.linkId, at: Date.now(), text: p.text, submitted: true, working };
-    b.linkEvent(l, 'target_submitted', null, { via: 'atrium', deliveryId: d.deliveryId, matches: true }, { quiet: true });
+    b.linkEvent(l, 'target_submitted', null, { via: 'atrium', deliveryId: d.deliveryId, matches: true, ...(d.reason === 'late' ? { late: true } : {}) }, { quiet: true });
     if (working) b.linkEvent(l, 'target_working', null, { from: 'ready' }, { quiet: true });
   }
 
@@ -161,6 +177,7 @@ export class AgentVerbs {
     const text = o.text == null ? '' : String(o.text);
     if (!text.trim()) throw apiError('bad_request', '보낼 글을 주세요: atrium prompt <이름> "<할 일>"');
     if (text.length > TEXT_MAX) throw apiError('bad_request', `글이 너무 길다(${text.length}자, ${TEXT_MAX}자까지). 파일에 쓰고 그 경로를 보낸다.`);
+    checkAgentText(text); // P180: 판 알림 머리로 시작할 수 없다
     // macOS 판: 같은 일을 다시 보내지 않는다. 너의 앞 글이 아직 대기열에 있거나 받는 쪽이 그 글의 턴을 하는 중인데 같은 글이면 넣지 않는다(두 번 하면 토큰이 두 배로 든다)
     const dup = this.duplicateOf(caller, t, text);
     if (dup) {
@@ -170,18 +187,28 @@ export class AgentVerbs {
       return { ...out, state: this.state(t), delivery: { status: dup.status, reason: 'duplicate' }, turn: null };
     }
     const woke = this.asleep(t);
-    const d = b.queue.enqueue(t.sessionId, text, o.now ? { typeNow: true, aside: true } : {}); // B1 규칙(대기열이 줄바꿈을 LF로 맞춘다). 잠든 세션이면 대기열이 판의 깨우기를 부른다
+    // P180: 일 하위에게 가는 글은 일 단위(머리를 붙인다). 자기에게서 열린 시도를 가진 하위에게는 이어지는 지시(보통 글). --now·동료·독립은 옛 그대로
+    const U = this.units();
+    const plan = U ? U.plan(caller, t, { now: !!o.now }) : { kind: 'plain' };
+    const made = plan.kind === 'unit' ? U.create(caller, t, text, 'prompt') : null;
+    if (made && made.held) return this.heldPrompt(caller, t, made, o, res, woke);
+    const d = made ? made.d : b.queue.enqueue(t.sessionId, text, { ...(o.now ? { typeNow: true, aside: true } : {}), fromSession: caller.sessionId }); // B1 규칙(대기열이 줄바꿈을 LF로 맞춘다). 잠든 세션이면 대기열이 판의 깨우기를 부른다
+    // 2026-11-23: --wait 없이 보낸 글이 끝내 들어가지 못하면(failed) 판이 보낸 세션에 알린다(--wait는 그 결과로 바로 본다)
+    if (!o.wait && b.noteSender) b.noteSender(d.deliveryId, caller.sessionId, 'prompt');
+    if (plan.kind === 'followup') U.noteFollowup(plan.tryRow, caller, d.deliveryId, { now: !!o.now });
+    if (U && U.stops) U.stops.notePrompt(caller.sessionId, t.sessionId); // P281: 받는 쪽 대기열에 들어간 글(부모에게 묻고 쉬면 멈춤을 알리지 않는다)
+    const unitOut = made ? { id: made.unit.id, kind: 'new', held: false } : plan.kind === 'followup' ? { id: plan.unit.id, kind: 'followup' } : null;
     const l = this.link(caller, t);
     // P156: 두 세션의 일 관계로 본 꼬리표(assign 위 → 하위 지시, report 하위 → 위 보고, share 동료끼리). 선·Thread가 보고와 공유를 가른다
     const tag = this.branch && this.branch.promptTagOf ? this.branch.promptTagOf(caller.sessionId, t.sessionId) : null;
-    b.linkEvent(l, 'prompt', text, { via: 'atrium', deliveryId: d.deliveryId, wait: !!o.wait, ...(o.now ? { now: true } : {}), ...(tag ? { tag } : {}) });
+    b.linkEvent(l, 'prompt', text, { via: 'atrium', deliveryId: d.deliveryId, wait: !!o.wait, ...(o.now ? { now: true } : {}), ...(tag ? { tag } : {}), ...(unitOut ? { unitId: unitOut.id, unitKind: unitOut.kind } : {}) });
     // 받는 쪽 상태(일하는 중, 끝남)는 이 글이 실제로 들어갈 때 이 지시의 기록에 붙인다(onDeliveryEnd). 대기열에 여럿이 쌓여도 들어간 순서대로 붙는다
     this.pendingLinks.set(d.deliveryId, { linkId: l.linkId, to: t.sessionId, text });
     this.noteSent(caller, t, d.deliveryId);
     b.store.addEvent(caller.sessionId, 'atrium_prompt', { target: t.name, sessionId: t.sessionId, deliveryId: d.deliveryId, chars: text.length, wait: !!o.wait, ...(o.now ? { now: true } : {}), woke });
     if (woke && b.sleeper && b.sleeper.wakeFor) b.sleeper.wakeFor(t, `atrium:${caller.name}`).catch(() => {}); // 대기열도 깨우지만 여기서 먼저 부른다(같은 깨우기로 묶인다)
     b.log(`atrium prompt ${caller.name} → ${t.name} (${d.deliveryId}${o.wait ? ', wait' : ''}${o.now ? ', now' : ''}${woke ? ', woke' : ''})`);
-    const out = { ...this.head(t), deliveryId: d.deliveryId, woke, tag, next: verbLines(t.name) };
+    const out = { ...this.head(t), deliveryId: d.deliveryId, woke, tag, unit: unitOut, next: verbLines(t.name) };
     if (o.wait) {
       const turn = await this.waitTurn(caller, t, { deliveryId: d.deliveryId, timeoutMs: o.timeoutMs, res });
       const row = b.store.getDelivery(d.deliveryId) || {};
@@ -191,6 +218,28 @@ export class AgentVerbs {
     // P143: how — typed(일하는 중이라 Claude Code 대기 메시지로 넣음) | queue(판 대기열: 바로 들어갔거나 차례를 기다림). --now일 때만
     const how = o.now ? (d.typed && row.status !== 'queued' ? 'typed' : 'queue') : undefined;
     return { ...out, state: this.state(t), delivery: { status: row.status, reason: row.reason ?? null, ...(how ? { how } : {}) }, turn: null };
+  }
+  // P180: 판이 붙잡아 둔 일(받는 세션에 다른 위 세션의 열린 시도가 있다). 앞 시도가 끝나면 판이 머리를 붙여 넣는다.
+  //   --wait면 넣을 때까지 기다린 뒤 그 턴(또는 done)을 기다린다
+  async heldPrompt(caller, t, made, o, res, woke) {
+    const b = this.b;
+    const tag = this.branch && this.branch.promptTagOf ? this.branch.promptTagOf(caller.sessionId, t.sessionId) : null;
+    b.store.addEvent(caller.sessionId, 'atrium_prompt', { target: t.name, sessionId: t.sessionId, deliveryId: null, unitId: made.unit.id, held: true, chars: made.unit.spec.length, wait: !!o.wait });
+    const unit = { id: made.unit.id, kind: 'new', held: true, ahead: made.ahead };
+    const out = { ...this.head(t), deliveryId: null, woke, tag, unit, next: verbLines(t.name) };
+    if (!o.wait) return { ...out, state: this.state(t), delivery: { status: 'queued', reason: 'unit_wait' }, turn: null };
+    const t0 = Date.now(); const gone = watchGone(res);
+    const limit = clamp(o.timeoutMs, 1000, WAIT_MAX_MS, WAIT_DEFAULT_MS);
+    let tr = null;
+    while (!gone() && Date.now() - t0 < limit && b.sessions.has(t.sessionId)) {
+      tr = b.store.lastTryOfUnit(made.unit.id);
+      if (tr) break;
+      await sleep(this.pollMs);
+    }
+    if (!tr) return { ...out, state: this.state(t), delivery: { status: 'queued', reason: 'unit_wait' }, turn: { status: b.sessions.has(t.sessionId) ? 'timeout' : 'closed', state: this.state(t), ms: Date.now() - t0, answer: null, ask: null, error: null, delivery: null, unit: null, next: verbLines(t.name) } };
+    const turn = await this.waitTurn(caller, t, { deliveryId: tr.deliveryId, timeoutMs: Math.max(1000, limit - (Date.now() - t0)), res });
+    const row = b.store.getDelivery(tr.deliveryId) || {};
+    return { ...out, deliveryId: tr.deliveryId, state: turn.state, delivery: { status: row.status || 'queued', reason: row.reason ?? null }, turn };
   }
   // 글이 들어가기(confirmed)나 끝내 못 들어가기를 잠깐 기다린다. 받는 쪽이 일하는 중이거나 사람의 답을 기다리면 바로 돌려준다(대기열이 나중에 넣는다)
   async settle(deliveryId, res) {
@@ -214,15 +263,31 @@ export class AgentVerbs {
     // 너의 마지막 글이 아직 대기열에 있거나, 들어간 뒤 그 턴이 마지막 턴이면(끝났어도) 그 글의 턴이다. 그 뒤에 다른 턴이 시작했으면 지금 턴을 본다
     const last = t.rt.turn || {};
     const mine = row && (!FINAL.has(row.status) || (row.status === 'confirmed' && !(last.startedAt && last.startedAt > (row.confirmedAt || 0) + 5000))) ? deliveryId : null;
-    const turn = await this.waitTurn(caller, t, { deliveryId: mine, timeoutMs: o.timeoutMs, res });
+    // P180: 너에게서 열린 시도가 없으면, 마지막으로 done이 닫은 시도의 값(대기열 것이 아직 안 들어갔으면 기다림이 가져가고 취소, 들어갔으면 "이미 전함")
+    const U = this.units();
+    const open = U ? this.b.store.openTryOf(t.sessionId) : null;
+    const mineOpen = open && (this.b.store.getUnit(open.unitId) || {}).from === caller.sessionId;
+    const claimed = U && !mineOpen ? U.claimForWait(caller, t, { after: row ? row.createdAt || 0 : 0 }) : null;
+    const turn = await this.waitTurn(caller, t, { deliveryId: mine, timeoutMs: o.timeoutMs, res, prior: claimed });
     return { ...this.head(t), ...turn };
   }
   // 받는 세션의 턴이 끝날 때까지. → { status, state, ms, answer, ask, error, delivery, next }
   // status: done(턴이 끝났다) | idle(기다릴 턴이 없었다) | waiting(사람의 답을 기다린다) | timeout | failed·unconfirmed(글이 들어가지 않았다) | closed | exited | sleeping | error(턴이 오류로 끝났다) | interrupted(macOS 판: 사람이 그 턴을 멈췄다, 답 없음)
-  async waitTurn(caller, t, { deliveryId = null, timeoutMs = null, res = null } = {}) {
+  // P180: unit — 그 하위가 done으로 닫은 일의 값 { id, result, text, alreadyDelivered, … }. 기다리는 동안 done이 오면 기다림이 받고(대기열로 보내지 않는다) 바로 돌아온다(status done)
+  async waitTurn(caller, t, { deliveryId = null, timeoutMs = null, res = null, prior = null } = {}) {
     const b = this.b; const t0 = Date.now();
     const limit = clamp(timeoutMs, 1000, WAIT_MAX_MS, WAIT_DEFAULT_MS);
     const gone = watchGone(res);
+    const U = this.units();
+    const waiter = U ? U.addWaiter(caller.sessionId, t.sessionId) : null;
+    try { return await this.waitLoop(caller, t, { deliveryId, limit, gone, t0, waiter, prior }); }
+    finally {
+      if (waiter) U.removeWaiter(caller.sessionId, t.sessionId, waiter);
+      if (waiter && waiter.got && gone()) U.requeue(waiter.got.tryId); // 받은 기다림의 명령이 끊겼다(셸 시간 제한 등) → 대기열로 한 번
+    }
+  }
+  async waitLoop(caller, t, { deliveryId, limit, gone, t0, waiter, prior }) {
+    const b = this.b;
     // want: 기다리는 턴의 시작 하한. 너의 글이 들어갔으면 그 때, 아니면 처음 본 일하는 턴의 시작. 없으면 기다릴 턴이 없다(idle)
     let want = null, readySince = null, status = null;
     const sum = () => (b.sessions.has(t.sessionId) ? b.summary(t) : null);
@@ -231,6 +296,7 @@ export class AgentVerbs {
     // macOS 판: 지금 턴이 사람이 멈춘 턴이면 그 턴을 기다린다(처음이면 멈춤을 알리고, 알렸으면 사람이 이어 가기를 기다린다)
     { const tu = turnOf(); if (tu.startedAt && tu.interruptedAt >= tu.startedAt && !(tu.endedAt >= tu.startedAt)) want = tu.startedAt - 1; }
     for (;;) {
+      if (waiter && waiter.got) { s = sum(); status = 'done'; break; } // P180: done이 왔다(끊긴 명령보다 먼저 본다)
       if (gone()) { status = 'aborted'; break; }
       s = sum();
       if (!s) { status = 'closed'; break; }
@@ -273,14 +339,17 @@ export class AgentVerbs {
     const ms = Date.now() - t0;
     const row = deliveryId ? b.store.getDelivery(deliveryId) : null;
     const st = s ? s.state : 'closed';
-    const answer = ['done', 'idle', 'error', 'sleeping', 'unconfirmed'].includes(status) ? this.answerOf(t) : null;
-    const out = { status, state: st, ms, answer, ask: status === 'waiting' && s && s.ask ? { kind: s.ask.kind || null, summary: clip(s.ask.summary || s.ask.question || s.ask.kind || '', 300) } : null,
+    // P180: 기다리는 동안 받은 done 값(이 기다림이 가져갔다), 없으면 앞서 가져온 값
+    const got = waiter && waiter.got ? waiter.got : null;
+    const unit = got ? { ...this.units().view(b.store.getTry(got.tryId)), claimedBy: 'wait', alreadyDelivered: false } : prior || null;
+    const answer = got ? { text: clip(got.text, ANSWER_MAX), clipped: got.text.length > ANSWER_MAX, source: 'done', at: Date.now() } : ['done', 'idle', 'error', 'sleeping', 'unconfirmed'].includes(status) ? this.answerOf(t) : null;
+    const out = { status, state: st, ms, answer, unit, ask: status === 'waiting' && s && s.ask ? { kind: s.ask.kind || null, summary: clip(s.ask.summary || s.ask.question || s.ask.kind || '', 300) } : null,
       error: status === 'error' && s && s.error ? { type: s.error.type || null, message: clip(s.error.message, 300) } : null,
       delivery: row ? { deliveryId, status: row.status, reason: row.reason ?? null } : null, next: verbLines(t.name) };
     if (status !== 'aborted' && b.sessions.has(caller.sessionId)) {
       const l = this.link(caller, t);
-      b.linkEvent(l, 'wait_result', null, { via: 'atrium', status, state: st, ms, deliveryId }, { quiet: true });
-      if (answer && (status === 'done' || status === 'error')) b.linkEvent(l, 'reply', answer.text, { via: 'atrium', source: answer.source, verb: 'wait' });
+      b.linkEvent(l, 'wait_result', null, { via: 'atrium', status, state: st, ms, deliveryId, ...(unit ? { unitId: unit.id, alreadyDelivered: unit.alreadyDelivered } : {}) }, { quiet: true });
+      if (answer && !got && (status === 'done' || status === 'error')) b.linkEvent(l, 'reply', answer.text, { via: 'atrium', source: answer.source, verb: 'wait' }); // P180: done 값은 done이 이미 답으로 적었다
       b.store.addEvent(caller.sessionId, 'atrium_wait', { target: t.name, sessionId: t.sessionId, status, ms, deliveryId });
     }
     return out;

@@ -189,7 +189,7 @@ export default {
     emptyFiltered: ' 다른 필터를 선택하세요.',
   },
   markdown: {
-    copyLink: '클릭하면 링크 주소를 복사합니다.',
+    openLink: '클릭하면 링크를 엽니다.',
   },
   sidebar: {
     loadFail: '사이드바를 불러오지 못했습니다: {error}',

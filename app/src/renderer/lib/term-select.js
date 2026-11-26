@@ -5,6 +5,7 @@
 // - 셸(buffer): 터미널 기록(pane.read recent)을 xterm scrollback에 넣고, 새 출력으로 밀려난 줄도 scrollback으로 보낸다(TerminalView).
 //   문서 줄 = xterm 버퍼의 절대 줄이다.
 // 선택은 문서 줄과 칸 경계({ line, col })로 들고, 보이는 부분만 xterm select()로 그린다.
+import { clientMac } from './keys.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -134,7 +135,8 @@ export function orderRange(a, b) { return before(b, a) ? [b, a] : [a, b]; }
 export const emptyRange = (a, b) => !a || !b || (a.line === b.line && a.col === b.col);
 
 // 고른 글. 줄마다 끝 빈칸을 빼고 \r\n으로 잇는다(지금의 복사 규칙). lineAt(i) → 칸 배열 또는 null
-export function rangeText(lineAt, a, b, cols) {
+// 줄바꿈: Mac 창은 \n(편집기에 ^M이 남지 않게), 그 밖은 Windows 터미널처럼 \r\n
+export function rangeText(lineAt, a, b, cols, eol = clientMac() ? '\n' : '\r\n') {
   if (emptyRange(a, b)) return '';
   const [s, e] = orderRange(a, b);
   const out = [];
@@ -145,7 +147,7 @@ export function rangeText(lineAt, a, b, cols) {
     if (c0 > 0 && cells[c0] === '') c0--; // 넓은 글자의 오른쪽 반에서 시작하면 그 글자부터
     out.push(cells.slice(c0, c1).join('').replace(/\s+$/, ''));
   }
-  return out.join('\r\n');
+  return out.join(eol);
 }
 
 // 보이는 문서 줄 first..last 안의 부분을 xterm select(col, row, length)로 바꾼다(row = 문서 줄 - rowBase). 보이는 부분이 없으면 null

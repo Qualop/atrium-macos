@@ -62,14 +62,22 @@ export function veryClose(rect, viewport, screen, prev = false) {
 }
 // P124: 초점·고른 노드의 짝. 같은 덩어리(dock)의 노드와 부모·자식 세션은 초점·고른 노드처럼 터미널을 가질 수 있다(사용자 보고: 부모 곁에 붙은 작은
 //   하위 세션을 가운데 두고 보면 화면에 걸친 부모 터미널이 요약으로 바뀌었다). 화면에 보이는지와 터미널 단계는 예전대로 pickAttached가 본다.
+// P167: 판에 선으로 바로 이어진 세션도 짝이다(다른 워크스페이스여도). 판이 그리는 연결 선(띄움·시킴·역할. 동료·하위처럼 정한 관계도
+//   백엔드가 연결을 열어 선으로 보인다)이 seed에 닿고 두 끝이 판에 있으면 넣는다. 지운 연결(removedAt)은 빼고, 한 단계만 본다.
 // seeds: 초점·고른 노드 id들, docks: [{ members }], parentOf(id): 부모 세션 id 또는 null, ids: 판의 세션 id들(자식 찾기)
-export function matesOf({ seeds, docks = [], parentOf = () => null, ids = [] }) {
+// links: [{ from, to, removedAt? }](열린 연결), onBoard(id): 그 세션이 판에 노드로 있나(선이 보이는 쌍만)
+export function matesOf({ seeds, docks = [], parentOf = () => null, ids = [], links = [], onBoard = () => true }) {
   const set = new Set([...(seeds || [])].filter((x) => x != null));
   const out = new Set();
   if (!set.size) return out;
   for (const d of docks) if (d && d.members && d.members.some((m) => set.has(m))) for (const m of d.members) out.add(m);
   for (const id of set) { const p = parentOf(id); if (p) out.add(p); }
   for (const id of ids) { const p = parentOf(id); if (p && set.has(p)) out.add(id); }
+  for (const l of links) {
+    if (!l || l.removedAt || !l.from || !l.to || l.from === l.to) continue;
+    const other = set.has(l.from) ? l.to : set.has(l.to) ? l.from : null;
+    if (other && onBoard(l.from) && onBoard(l.to)) out.add(other);
+  }
   for (const id of set) out.delete(id);
   return out;
 }
@@ -77,7 +85,7 @@ export function matesOf({ seeds, docks = [], parentOf = () => null, ids = [] }) 
 // ws: 노드의 워크스페이스 키, focus: 초점 노드 id, selected: 고른 노드 id 모음(Set), near: 아주 가까이(veryClose)
 export function termAllowed({ id, ws, viewWs, focus = null, selected = null, near = false, mates = null }) {
   if (near) return true;
-  if (mates && mates.has(id)) return true; // P124: 초점·고른 노드와 같은 덩어리, 부모·자식
+  if (mates && mates.has(id)) return true; // P124: 초점·고른 노드와 같은 덩어리, 부모·자식. P167: 선으로 바로 이어진 세션
   if (id != null && id === focus) return true;
   if (selected && selected.has(id)) return true;
   return viewWs != null && (ws || null) === viewWs;

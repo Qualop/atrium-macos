@@ -60,9 +60,11 @@ const sameNode = (a, b) => (a && a.id ? !!(b && b.id) && safeEq(a.id, b.id) : !(
 
 // P60: serve 켜기 명령(글). 실행하지 않는다. 개발용 판이면 --dev를 붙인다
 const quoteArg = (a) => (/[\s"]/.test(a) ? `"${a}"` : a);
-export function enableCommand(httpsPort, cfg = {}, root = BACKEND_ROOT) {
+// macOS 판: 앱은 Node를 품고 PATH에는 없을 수 있어(Finder로 띄운 앱) 이 백엔드의 node를 절대 경로로 쓴다
+export function enableCommand(httpsPort, cfg = {}, root = BACKEND_ROOT, { platform = process.platform, node = process.execPath } = {}) {
   const bin = path.join(root, 'bin', 'atrium.mjs');
-  return ['node', quoteArg(bin), ...(cfg.profile === 'dev' ? ['--dev'] : []), 'remote', 'enable', '--yes', ...(Number(httpsPort) && Number(httpsPort) !== 443 ? ['--https-port', String(Number(httpsPort))] : [])].join(' ');
+  const nodeCmd = platform === 'win32' ? 'node' : (/[\s"'$`\\]/.test(node) ? `'${node.replace(/'/g, `'\\''`)}'` : node);
+  return [nodeCmd, quoteArg(bin), ...(cfg.profile === 'dev' ? ['--dev'] : []), 'remote', 'enable', '--yes', ...(Number(httpsPort) && Number(httpsPort) !== 443 ? ['--https-port', String(Number(httpsPort))] : [])].join(' ');
 }
 
 // ---------- 기기(P56: 패스키의 공개 키를 판 기록에 둔다) ----------
@@ -298,8 +300,20 @@ export class StaticFiles {
 // ---------- 폴더 목록 ----------
 // 드라이브는 GetLogicalDrives(DriveInfo)로 읽는다. 글자마다 existsSync로 보면 끊긴 네트워크 드라이브에서 수십 초 멈춘다. 1분 동안 기억한다
 let drivesCache = null;
+// macOS: 시동 디스크(/)와 /Volumes의 다른 디스크(외장·네트워크). /Volumes의 시동 디스크 링크(→ /)는 뺀다
+export function macVolumes(dir = '/Volumes') {
+  const out = ['/'];
+  try {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      try { if (fs.realpathSync(p) === '/') continue; if (fs.statSync(p).isDirectory()) out.push(p); } catch {}
+    }
+  } catch {}
+  return out;
+}
 export function parseDrives(out) { return String(out || '').split(/\r?\n/).map((x) => x.trim()).filter((x) => /^[A-Za-z]:\\$/.test(x)).map((x) => x.toUpperCase()); }
 export async function driveRoots({ platform = process.platform, run = runDriveInfo, now = Date.now(), fresh = false } = {}) {
+  if (platform === 'darwin') return macVolumes();
   if (platform !== 'win32') return ['/'];
   if (!fresh && drivesCache && now - drivesCache.at < 60_000) return drivesCache.list;
   let list = [];

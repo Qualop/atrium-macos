@@ -318,7 +318,7 @@ test('P41 스킬 글과 짧은 안내: 말로 한 모델은 atrium models로 골
   assert.match(s, /정확한 ID를 사용자에게 묻지 않고, 보드가 후보 여럿을 돌려줄 때만 묻는다/);
   assert.match(s, /내부 하위 에이전트로 우회하지 않는다/);
   assert.match(s, /모델 오류로 답하지 못하면/);
-  assert.ok(Buffer.byteLength(s) < 12000, `스킬 글 ${Buffer.byteLength(s)}바이트`);
+  assert.ok(Buffer.byteLength(s) < 13400, `스킬 글 ${Buffer.byteLength(s)}바이트`); // macOS 판: 빌더·고침 워커·검토 두 차수 규칙(+800, 2026-11-21 실험 F), 첫 화면 줄이기(+600, 실험 G)
   assert.match(BOARD_SYSTEM_PROMPT, /`atrium models`에서 골라 띄운다/);
 });
 

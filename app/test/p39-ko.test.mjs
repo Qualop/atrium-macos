@@ -49,7 +49,7 @@ test('P39: 모든 값의 자리 표시와 복수형이 영어와 같다', () => 
 });
 
 test('P39: only platform guidance uses Mac wording; keyboard labels are adapted at runtime', () => {
-  const platformGuidance = new Set(['settings.tray', 'settings.trayNote']);
+  const platformGuidance = new Set(['settings.tray', 'settings.trayNote', 'keepAwake.name', 'keepAwake.hint']); // macOS 판: 잠들기 막기는 Mac 기능이다
   const koBad = [];
   for (const [k, v] of KO) {
     if (platformGuidance.has(k)) continue;
@@ -58,7 +58,7 @@ test('P39: only platform guidance uses Mac wording; keyboard labels are adapted 
   assert.deepEqual(koBad, []);
   // 영어 사전에서 Command는 "Command bar"처럼 보통 낱말로 쓰이므로 Mac 계열만 본다
   const enBad = [];
-  for (const [k, v] of EN) for (const s of texts(v)) if (/\bMac\b|macOS|⌘|\bCmd\b|Finder/.test(s)) enBad.push(`${k}: ${s}`);
+  for (const [k, v] of EN) if (!platformGuidance.has(k)) for (const s of texts(v)) if (/\bMac\b|macOS|⌘|\bCmd\b|Finder/.test(s)) enBad.push(`${k}: ${s}`);
   assert.deepEqual(enBad, []);
 });
 

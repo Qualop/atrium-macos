@@ -82,3 +82,8 @@ test('P151 막대 글: 영어·한국어', () => {
   setLanguage('ko'); assert.equal(t('termSelect.copy'), '복사');
   setLanguage('en');
 });
+
+test('rangeText: Mac 창은 줄바꿈을 \\n으로', () => {
+  const lines = [['o', 'n', 'e'], ['t', 'w', 'o']];
+  assert.equal(rangeText((i) => lines[i], { line: 0, col: 0 }, { line: 1, col: 3 }, 3, '\n'), 'one\ntwo');
+});

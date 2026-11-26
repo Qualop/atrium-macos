@@ -917,7 +917,7 @@ export default {
     emptyFiltered: ' (try another filter)',
   },
   markdown: {
-    copyLink: 'Click to copy the link',
+    openLink: 'Click to open the link',
   },
   sidebar: {
     loadFail: 'Could not load the sidebar: {error}',
@@ -1398,6 +1398,7 @@ export default {
     menu: 'More',
     wsTip: 'Click to go to its area (on the board or in the session map). The arrow folds it. Drag onto a group to move it',
     attnMore: { one: '{n} more needs a look', other: '{n} more need a look' },
+    pinMore: { one: '{n} more running', other: '{n} more running' },
     kindTitle: 'Filter by kind',
     kindAll: 'All kinds',
     clear: 'Clear',
@@ -2298,6 +2299,7 @@ export default {
     unseen: 'Finished work you have not looked at',
     here: 'The session you have open',
     pinned: 'Needs a look inside a folded workspace',
+    pinnedRun: 'Running inside a folded workspace',
   },
   // P104: phone key pad (raw keys to the session pane; works in any harness)
   phoneKeys: {
@@ -2704,6 +2706,30 @@ export default {
     failed: 'Paste failed: {error}',
     image: 'Pasted the image path',
   },
+  // macOS build: tokens used, on the node head (weighted) and the work tree total
+  usage: {
+    ownTitle: 'Tokens used by this session',
+    treeTitle: 'Work tree total ({n} sessions, closed workers included)',
+    parts: 'cache read {cr} · cache write {cw} · input {in} · output {out} ({msgs} responses)',
+    weighted: 'Weighted {w} (read 0.1 · write 1.25 · input 1 · output 5, relative cost in input-token units)',
+    span: '{span} from first to last response',
+    own: 'This session alone: {w}',
+  },
+  // macOS build: keep the Mac awake while sessions work (Settings › Sleep)
+  keepAwake: {
+    name: 'Stay awake while working',
+    hint: 'Keeps the Mac from sleeping while a session works. The display may still turn off; it lets go 2 minutes after everything is idle. Closing the lid still sleeps.',
+  },
+  // macOS build: drag and drop from Finder or a browser, capture button in the command bar
+  desktopDrop: {
+    done: { one: 'Inserted the file path', other: 'Inserted {n} file paths' },
+    queued: { one: 'The file path goes in once the terminal attaches', other: '{n} file paths go in once the terminal attaches' },
+    chips: { one: 'Attached a file', other: 'Attached {n} files' },
+    failed: { one: 'Could not take a file', other: 'Could not take {n} files' },
+    capture: 'Capture an area of the screen and attach it',
+    captureFailed: 'Capture failed: {error}',
+    folder: 'Folder',
+  },
   // P161: empty state of the Connections tab (what it is for, how to add one)
   connEmpty: {
     title: 'No connections yet',
@@ -2733,5 +2759,14 @@ export default {
     limit: 'Voice input stopped after 10 minutes.',
     dropped: 'Voice input stopped because the connection was lost.',
     failed: 'Voice input failed.',
+  },
+  // P258: a delivery first marked unconfirmed whose prompt was submitted later (e.g. after a compaction)
+  deliveryLate: {
+    reason: 'submitted late',
+  },
+  // P283: links in terminals and markdown views
+  urlLink: {
+    hint: 'Ctrl+click to open the link',
+    notOpened: 'Link not opened: only http and https links open ({scheme})',
   },
 };

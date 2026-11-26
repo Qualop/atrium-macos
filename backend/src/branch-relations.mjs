@@ -15,16 +15,16 @@ export function relationLine(me, other, rel, by) {
   const who = by === 'user' ? '사람이 판에서 정함' : `@${by}가 정함`;
   if (!rel) return `@${other}와의 관계를 자동으로 되돌렸다(띄움·역할 선을 따른다, ${who}).`;
   if (rel.relation === 'sub') return rel.up === me
-    ? `@${other}는 이제 너의 하위 워커다(${who}). 일을 맡기고 결과를 받는다.`
-    : `너는 이제 @${other}의 하위 워커다(${who}). 보고는 지시에 적힌 방법을 따른다(적힌 것이 없으면 그 턴의 마지막 답이 보고다).`;
+    ? `@${other}는 이제 너의 하위 워커다(${who}). 일을 맡기고(atrium prompt) 턴을 끝내면 보드가 done 보고를 가져다준다.`
+    : `너는 이제 @${other}의 하위 워커다(${who}). 맡은 일은 끝나면 \`atrium done ok|failed "<보고>"\`로 닫는다(일 머리 없이 받은 일은 지시에 적힌 방법으로 보고한다).`;
   if (rel.relation === 'peer') return `@${other}와 너는 이제 동료다(하위가 아니다, ${who}). 필요한 것을 atrium prompt로 주고받고, 끝나면 결과를 @${other}에게 공유한다.`;
   return `@${other}와 너는 이제 독립이다(${who}). 서로 보고하거나 일을 맡기지 않는다.`;
 }
 
-// 띄울 때 첫 요청 앞에 붙이는 한 줄(관계에 맞는 보고 방식). 하위는 지시의 보고 방법을 따르고, 동료는 서로 공유한다
+// 띄울 때 첫 요청 앞에 붙이는 한 줄(관계에 맞는 보고 방식). 하위는 atrium done으로 닫고(P180부터 하위의 첫 요청은 일 머리 unitHeader), 동료는 서로 공유한다
 export function relationHeader({ relation, parent }) {
-  if (relation === 'peer') return `[Atrium 보드] 관계: 너는 @${parent}의 동료다(하위 워커가 아니다). 필요한 것은 \`atrium prompt ${parent} "…"\`로 묻고 주고받는다. 끝나면 결과를 @${parent}에게 공유한다(\`atrium prompt ${parent} --now "<결과>"\`). 사람이 직접 물으면 사람에게 바로 답해도 된다.`;
-  return `[Atrium 보드] 관계: 너는 @${parent}의 하위 워커다. 보고는 아래 지시에 적힌 방법을 따른다(적힌 것이 없으면 이 턴의 마지막 답이 보고다).`;
+  if (relation === 'peer') return `[Atrium 보드] 관계: 너는 @${parent}의 동료다(하위 워커가 아니다). 필요한 것은 \`atrium prompt ${parent} "…"\`로 묻고 주고받는다. 끝나면 결과를 @${parent}에게 공유한다(\`atrium prompt ${parent} "<결과>"\`, 보드가 @${parent} 차례에 넣는다). 사람이 직접 물으면 사람에게 바로 답해도 된다.`;
+  return `[Atrium 보드] 관계: 너는 @${parent}의 하위 워커다. 맡은 일은 끝나면 \`atrium done ok|failed "<보고>"\`로 닫는다(일 머리 없이 받은 일은 지시에 적힌 방법으로 보고한다).`;
 }
 
 export function installRelations(Branch) {

@@ -53,6 +53,8 @@ export const SETTINGS = {
   // P111: 세션 하나가 이 시간(분) 동안 쉬면 그 리포가 바빠도 그 세션만 잠재운다(sleep.mjs sessionSleepPlan). 리포 규칙(sleepAfterMin)이 먼저다
   // macOS 판: 하위 워커(일 부모가 있는 세션)는 이 시간(분) 쉬면 혼자 잠든다. 워커 claude 하나가 130~330MB라 끝난 워커를 오래 두지 않는다. 0이면 세션 규칙(sessionSleepAfterMin)을 따른다
   workerSleepAfterMin: { type: 'number', default: 5, min: 0, max: 1440, label: '하위 워커가 지정한 시간(분) 동안 활동이 없으면 그 워커만 잠재워 메모리를 돌려줍니다. 다시 시키면 깨어나 같은 대화로 이어 갑니다(0: 세션 규칙을 따름).' },
+  // macOS 판: 일하는 세션이 있으면 Mac이 잠들지 않게 한다(keep-awake.mjs caffeinate). 밤새 돌릴 때 잠들기로 턴이 끊기지 않게
+  keepAwake: { type: 'boolean', default: true, label: '세션이 일하는 동안 Mac이 잠들지 않게 합니다(화면은 꺼질 수 있습니다). 모두 쉬면 2분 뒤 풀립니다.' },
   // macOS 판: 동시에 깨어 있는 하위 워커 수 상한(sleep.mjs capAwakeWorkers). 0이면 끔
   maxAwakeWorkers: { type: 'number', default: 6, min: 0, max: 64, label: '동시에 깨어 있는 하위 워커 수 상한입니다. 넘으면 쉬고 있는 워커를 오래된 것부터 잠재워 메모리를 돌려줍니다(일하는 워커는 그대로, 0: 끔).' },
   sessionSleepAfterMin: { type: 'number', default: 30, min: 0, max: 1440, label: '세션 하나에 지정한 시간(분) 동안 활동이 없으면 프로젝트의 다른 세션이 작업 중이어도 그 세션만 절전 모드로 전환합니다 (0: 사용 안 함).' },

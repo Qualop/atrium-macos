@@ -1,15 +1,25 @@
 // P162: 데스크톱 창의 파일·그림 붙여 넣기 순수 함수
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { uriListPaths, splitFolders, pastePathsText, imageLabel, imageTokens, mergeTokens, nextImageNo, expandImages, wantsDesktopPaste } from '../src/renderer/lib/desktop-paste.js';
+import { uriListPaths, splitFolders, pastePathsText, imageLabel, fileLabel, chipLabel, imageTokens, mergeTokens, nextImageNo, expandImages, wantsDesktopPaste, dropParts, isImagePath } from '../src/renderer/lib/desktop-paste.js';
 import { mentionTokens, mirrorParts, tagDeleteRange } from '../src/renderer/lib/cmd-input.js';
 import { insertAt } from '../src/renderer/lib/upload.js';
 
 test('uriListPaths: file 주소를 Windows 경로로(빈칸·한글·UNC·주석)', () => {
   const list = 'file:///C:/Work/a.txt\r\nfile:///C:/Work/b%20c.txt\r\n# comment\r\nhttps://x.example/y\r\nfile:///C:/Work/%ED%95%9C%EA%B8%80.png\r\nfile://server/share/d.txt\r\n';
-  assert.deepEqual(uriListPaths(list), ['C:\\Work\\a.txt', 'C:\\Work\\b c.txt', 'C:\\Work\\한글.png', '\\\\server\\share\\d.txt']);
-  assert.deepEqual(uriListPaths(''), []);
-  assert.deepEqual(uriListPaths('file://localhost/C:/x.txt'), ['C:\\x.txt']);
+  const win = { platform: 'win32' };
+  assert.deepEqual(uriListPaths(list, win), ['C:\\Work\\a.txt', 'C:\\Work\\b c.txt', 'C:\\Work\\한글.png', '\\\\server\\share\\d.txt']);
+  assert.deepEqual(uriListPaths('', win), []);
+  assert.deepEqual(uriListPaths('file://localhost/C:/x.txt', win), ['C:\\x.txt']);
+});
+
+test('uriListPaths: macOS는 POSIX 경로 그대로(빈칸·한글 NFD→NFC, localhost)', () => {
+  const mac = { platform: 'darwin' };
+  const nfd = encodeURIComponent('스크린샷'.normalize('NFD'));
+  const list = `file:///Users/me/Desktop/${nfd}%201.png\nfile://localhost/tmp/a%20b.txt\n# c\nfile:///Users/me/dir/`;
+  assert.deepEqual(uriListPaths(list, mac), ['/Users/me/Desktop/스크린샷 1.png', '/tmp/a b.txt', '/Users/me/dir/']);
+  assert.equal(uriListPaths(list, mac)[0], '/Users/me/Desktop/스크린샷 1.png'.normalize('NFC'));
+  assert.deepEqual(uriListPaths('file://nas/share/x.txt', mac), ['//nas/share/x.txt']);
 });
 
 test('pastePathsText: 여럿은 빈칸으로, 빈칸 든 경로는 따옴표, 끝에 빈칸 하나', () => {
@@ -50,13 +60,44 @@ test('그림 칩: 태그와 함께 겹에 그리고 Backspace·Delete로 통째�
   assert.equal(tagDeleteRange(text, s + 3, s + 3, 'Backspace', tokens), null);
 });
 
-test('wantsDesktopPaste: 데스크톱, 글 없음, 파일 있음일 때만', () => {
+test('wantsDesktopPaste: Windows는 데스크톱, 글 없음, 파일 있음일 때만', () => {
   const dt = (types, text = '') => ({ types, getData: (k) => (k === 'text/plain' ? text : '') });
-  assert.equal(wantsDesktopPaste(dt(['Files']), { desktop: true }), true);
-  assert.equal(wantsDesktopPaste(dt(['Files']), { desktop: false }), false); // 웹 화면(P48)
-  assert.equal(wantsDesktopPaste(dt(['text/plain', 'Files'], 'hello'), { desktop: true }), false); // 글이 있으면 글
-  assert.equal(wantsDesktopPaste(dt(['text/plain'], 'hello'), { desktop: true }), false);
-  assert.equal(wantsDesktopPaste(null, { desktop: true }), false);
+  const w = { desktop: true, platform: 'win32' };
+  assert.equal(wantsDesktopPaste(dt(['Files']), w), true);
+  assert.equal(wantsDesktopPaste(dt(['Files']), { desktop: false, platform: 'win32' }), false); // 웹 화면(P48)
+  assert.equal(wantsDesktopPaste(dt(['text/plain', 'Files'], 'hello'), w), false); // 글이 있으면 글
+  assert.equal(wantsDesktopPaste(dt(['text/plain'], 'hello'), w), false);
+  assert.equal(wantsDesktopPaste(null, w), false);
+});
+
+test('wantsDesktopPaste: macOS는 Finder가 파일 이름 글을 같이 넣어도 파일로 묻는다', () => {
+  const dt = (types, text = '') => ({ types, getData: (k) => (k === 'text/plain' ? text : '') });
+  const mac = { desktop: true, platform: 'darwin' };
+  assert.equal(wantsDesktopPaste(dt(['text/plain', 'Files'], 'a.png'), mac), true);
+  assert.equal(wantsDesktopPaste(dt(['text/plain'], 'hello'), mac), false);
+  assert.equal(wantsDesktopPaste(dt(['Files']), { desktop: false, platform: 'darwin' }), false);
+  assert.equal(wantsDesktopPaste(dt(['text/plain', 'Files'], 'a.png'), { desktop: true, platform: 'win32' }), false);
+});
+
+test('파일 칩: [File n]과 [Image n]은 번호를 함께 세고 종류가 맞아야 칩이다', () => {
+  const images = { 1: { path: '/u/a.png', kind: 'image' }, 2: { path: '/Users/me/My Docs/r.pdf', kind: 'file' } };
+  assert.equal(chipLabel(1, images[1]), imageLabel(1));
+  assert.equal(chipLabel(2, images[2]), fileLabel(2));
+  const text = `봐 ${imageLabel(1)} ${fileLabel(2)} ${imageLabel(2)} ${fileLabel(1)}`;
+  assert.deepEqual(imageTokens(text, images).map((x) => x.ref), ['[Image 1]', '[File 2]']); // 종류가 다른 번호는 글
+  assert.equal(nextImageNo(text, images), 3);
+  assert.equal(expandImages(text, images), '봐 /u/a.png "/Users/me/My Docs/r.pdf" [Image 2] [File 1]');
+});
+
+test('dropParts: 경로 있는 파일(Finder)과 없는 파일(브라우저 그림)을 나눈다', () => {
+  const f = (name, p) => ({ name, p });
+  const dt = { files: [f('a.png', '/Users/me/a.png'), f('web.png', ''), f('b', '/x/b')] };
+  const r = dropParts(dt, (x) => { if (x.name === 'b') throw new Error('x'); return x.p; });
+  assert.deepEqual(r.paths, ['/Users/me/a.png']);
+  assert.deepEqual(r.blobs.map((x) => x.name), ['web.png', 'b']);
+  assert.deepEqual(dropParts(null, () => ''), { paths: [], blobs: [] });
+  assert.equal(isImagePath('/a/B.HEIC'), true);
+  assert.equal(isImagePath('/a/b.pdf'), false);
 });
 
 test('splitFolders: 폴더는 빼고 수를 센다, 알 수 없는 것은 파일로', () => {

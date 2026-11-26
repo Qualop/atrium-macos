@@ -228,7 +228,7 @@ html:lang(en) .mt-cmd-input::placeholder { font-size: 14px; white-space: nowrap;
 .mt-node-head .mt-btn.small { height: 1.6em; font-size: .85em; padding: 0 .55em; border-radius: .5em; }
 .mt-node-head .mt-badge { font-size: .86em; }
 /* macOS 판: 출력 속도(.mt-tps)와 모델·추론(.mt-model-chip)은 작은 노드에서도 보인다(사용자 요청, 2026-11-19). 메모리 칸만 숨긴다 */
-.mt-node.z-small .mt-node-head .mt-node-meta:not(.mt-tps):not(.mt-model-chip), .mt-node.z-small .mt-node-head .mt-x, .mt-node.z-small .mt-node-head .mt-output-btn { display: none; }
+.mt-node.z-small .mt-node-head .mt-node-meta:not(.mt-tps):not(.mt-model-chip):not(.mt-usage.tree), .mt-node.z-small .mt-node-head .mt-x, .mt-node.z-small .mt-node-head .mt-output-btn { display: none; }
 /* macOS 판(사용성): 머리의 ⋯·× 단추. 화면에서 24px보다 작아지지 않게(--inv = 1/배율), 머리 높이 전체를 누를 칸으로 쓰고, 두 단추 사이를 띄운다.
    작은 노드(z-small)에서도 노드 위에 마우스를 올리면 보인다 */
 .mt-head-actions { display: inline-flex; align-items: stretch; align-self: stretch; gap: .2em; margin-left: .15em; margin-right: -.35em; padding: 0 .1em; flex: none; cursor: default; }
@@ -378,6 +378,7 @@ img.mt-kind-icon { object-fit: contain; }
 .mt-model-chip:hover { border-color: var(--panel-line); background: var(--chrome-bg-hi); color: var(--chrome-text); }
 .mt-model-chip.pending { border-style: dashed; border-color: var(--warn, #d97706); }
 .mt-tps { opacity: .9; } .mt-tps.old { opacity: .45; }
+.mt-usage { opacity: .75; font-variant-numeric: tabular-nums; } .mt-usage.tree { opacity: .95; } /* macOS 판: 쓴 토큰(가중) */
 .mt-model-menu .mt-btn.small.on { border-color: var(--accent, #3b82f6); color: var(--accent, #3b82f6); }
 
 /* 노드 오류 경계 */
@@ -2443,6 +2444,7 @@ html[data-work-light="off"] .mt-sm .blink, html[data-work-light="off"] .mt-sm .b
 .mt-voice-btn { position: relative; width: 30px; height: 30px; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
   border: 1.3px solid var(--cmd-btn-line); background: none; color: var(--chrome-text); }
 .mt-voice-btn .mt-i { width: 16px; height: 16px; }
+.mt-cmd-capture { margin-left: 4px; } /* macOS 판: 화면 캡처 칩 단추(음성 단추와 같은 모양) */
 .mt-voice-btn:hover { border-color: var(--chrome-text-3); }
 .mt-voice-btn[data-state="connecting"], .mt-voice-btn[data-state="stopping"] { color: var(--chrome-text-3); border-style: dashed; }
 .mt-voice-btn[data-state="listening"] { border-color: var(--badge); color: var(--badge-text); background: var(--badge-bg); }
@@ -2472,3 +2474,10 @@ html[data-work-light="off"] .mt-sm .blink, html[data-work-light="off"] .mt-sm .b
 .mt-acct-failover input { margin-top: 3px; }
 .mt-acct-failover .mt-set-note { margin: 0; }
 .mt-acct-add { display: grid; grid-template-columns: minmax(120px, 200px) minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+
+/* macOS 판: 노드·터미널 위로 파일을 끌고 오면 받을 곳을 보인다(lib/desktop-drop.js) */
+.mt-node.mt-drop-on { outline: 2px dashed var(--accent, #4ade80); outline-offset: 3px; }
+.mt-node.mt-drop-on::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: color-mix(in srgb, var(--accent, #4ade80) 10%, transparent); pointer-events: none; z-index: 5; }
+
+/* P283: 터미널 링크에 마우스를 올리면 뜨는 알림 글(term-links.js). 판 변환 밖 body에 그리고 누르기를 가로채지 않는다 */
+.mt-link-hint { position: fixed; z-index: 99; pointer-events: none; padding: 3px 8px; border-radius: 6px; background: var(--panel-3); color: var(--text); border: 1px solid var(--line, transparent); box-shadow: var(--panel-shadow); font-size: 12px; white-space: nowrap; }

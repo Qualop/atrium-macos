@@ -1,5 +1,6 @@
 // 터미널 노드 입력 규칙(ARCH 7.2, E4). 제어기 프레임은 터미널 서버가 다시 그린 화면이라 괄호 붙여넣기와 마우스 추적 모드가
 // xterm.js에 오지 않는다. 그래서 창이 직접 감싸고 바꾼 뒤 terminal.input으로 보낸다. 순수 함수만 둔다(단위 시험 있음).
+import { clientMac, appMod } from './keys.js'; // macOS 판: Cmd가 앱 키
 
 export const PASTE_START = '\x1b[200~';
 export const PASTE_END = '\x1b[201~';
@@ -105,13 +106,15 @@ export function setsMouseMode(params) {
 //   'copy'          고른 글이 있으면 복사하고 ^C를 보내지 않는다
 //   'clear-selection' P42: 고른 글이 있을 때 Esc는 선택만 끝낸다(웹처럼). 앱에 보내지 않는다(Claude Code에서 Esc는 턴 끊기)
 //   'pass'          xterm이 처리한다
-export function keyAction(e, hasSelection) {
+// macOS(mac): 복사·붙여넣기는 Cmd+C·Cmd+V만(Terminal.app처럼). Ctrl+C는 늘 ^C(고른 글이 있어도 끊는다), Ctrl+V는 ^V로 프로그램에 간다
+export function keyAction(e, hasSelection, { mac = clientMac() } = {}) {
   if (e.type !== 'keydown' || e.isComposing || e.keyCode === 229) return 'pass';
   const k = String(e.key || '').toLowerCase();
   if (e.ctrlKey && !e.altKey && !e.metaKey && k === 'g') return 'block-ctrl-g';
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && k === 'v') return 'paste';
+  const mod = appMod(e, mac);
+  if (mod && !e.altKey && k === 'v') return 'paste';
   if (e.shiftKey && !e.ctrlKey && k === 'insert') return 'paste';
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && k === 'c' && (e.shiftKey || hasSelection)) return 'copy';
+  if (mod && !e.altKey && k === 'c' && (mac || e.shiftKey || hasSelection)) return 'copy';
   if (k === 'escape' && hasSelection && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) return 'clear-selection';
   return 'pass';
 }

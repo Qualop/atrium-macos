@@ -20,6 +20,7 @@
 import fs from 'node:fs';
 import { applyAgentAutoApprove } from './auto-approval.mjs';
 import { buildStartArgs, buildResumeArgs, transcriptPathFor } from './launch.mjs';
+import { resumeModel } from './model-now.mjs'; // P227: 이어 갈 모델·노력 수준
 import { deriveState } from './state.mjs';
 import { waitClaudeExitOr } from './worktree-exit.mjs'; // P71, P105
 import { startOpt } from './launchers.mjs'; // P97: 실행 명령
@@ -216,8 +217,11 @@ export function convoOf(s, claudeProjects) {
 }
 
 // 깨울 때의 실행 인자. 대화 기록이 있으면 그 대화로 이어 가고, 없으면(잠든 동안 지워짐) 같은 세션 ID로 새로 띄운다
-export function wakeArgs(launch, conv) {
-  return conv.exists ? { plan: 'resume', args: buildResumeArgs({ ...launch, sessionId: conv.convId }) } : { plan: 'fresh', args: buildStartArgs(launch) };
+// P227: 이어 갈 때 모델·노력 수준은 그 대화가 마지막으로 쓰던 값(now: s.rt.modelNow, resumeModel). 새로 띄울 때는 띄운 값
+export function wakeArgs(launch, conv, now = null) {
+  if (!conv.exists) return { plan: 'fresh', args: buildStartArgs(launch) };
+  const rm = resumeModel('claude', launch, now);
+  return { plan: 'resume', args: buildResumeArgs({ ...launch, model: rm.model, effort: rm.effort, sessionId: conv.convId }), model: rm };
 }
 
 export function attachSleep(b, opts) { return new Sleeper(b, opts); }
@@ -698,7 +702,7 @@ export class Sleeper {
       b.requireTerminal();
       if (!s.cwd || !fs.existsSync(s.cwd)) throw keyed(apiError('no_folder', `폴더를 찾을 수 없습니다: ${s.cwd}`), 'noFolder', { path: s.cwd });
       const conv = convoOf(s, b.projectsOf ? b.projectsOf(s) : b.cfg.claudeProjects);
-      const { plan, args } = wakeArgs(applyAgentAutoApprove({ kind: 'claude', ...b.launchOf(s) }, b.features?.settings?.get?.() || {}), conv);
+      const { plan, args, model: rm } = wakeArgs(applyAgentAutoApprove({ kind: 'claude', ...b.launchOf(s) }, b.features?.settings?.get?.() || {}), conv, b.modelNowFor ? b.modelNowFor(s) : s.rt.modelNow); // P227: 이어 갈 때는 지금 모델
       created = await b.withNewPane(() => b.adapter.createWorkspace({ cwd: s.cwd, label: s.name }), (r) => {
         s.paneId = r.paneId; s.termWorkspaceId = r.workspaceId;
         const rt = s.rt;
@@ -728,7 +732,7 @@ export class Sleeper {
       if (s.rt.exit) throw apiError('resume_failed', `대화를 재개한 직후 claude 프로세스가 종료되었습니다 (${s.rt.exit.kind})`);
       state = deriveState(s.rt).state;
       s.wokeAt = Date.now(); s.waking = null; s.draft = false;
-      const out = { woke: true, name: s.name, why, plan, convId: conv.convId, state, ms: Date.now() - t0, sleptMs: t0 - (z.at || t0), paneId: s.paneId };
+      const out = { woke: true, name: s.name, why, plan, convId: conv.convId, state, ms: Date.now() - t0, sleptMs: t0 - (z.at || t0), paneId: s.paneId, ...(rm ? { model: rm } : {}) }; // P227: 이어 간 모델·노력 수준과 출처
       b.store.addEvent(s.sessionId, 'woke', out);
       b.log(`woke ${s.name} why=${why} plan=${plan} in ${out.ms}ms`);
       b.broadcastSession(s, { cause: `wake:${why}` });
